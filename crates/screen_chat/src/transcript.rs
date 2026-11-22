@@ -532,6 +532,7 @@ impl ChatScreen {
                     .text_color(TEXT_MUTED)
                     .child(text.clone())
                     .into_any_element(),
+                Item::Divider(d) => divider(&d.text),
                 }
             })
             .collect()
@@ -1246,6 +1247,28 @@ fn mcp_args(server: &str, tool: &str, input: &Value) -> AnyElement {
                     )
                 }),
         )
+        .into_any_element()
+}
+
+/// System divider: `──── 📁 Moved to x · clean on main ────`.
+fn divider(text: &str) -> AnyElement {
+    let rule = || div().flex_1().min_w(px(24.)).h(px(1.)).bg(LINE);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .py(px(6.))
+        .text_size(px(12.))
+        .text_color(TEXT_MUTED)
+        .child(rule())
+        .child(ui::icon("folder", 12., TEXT_MUTED))
+        .child(
+            div()
+                .flex_none()
+                .max_w(gpui::relative(0.8))
+                .child(ui::selectable::text(gpui::StyledText::new(text.to_string()), "\n\n")),
+        )
+        .child(rule())
         .into_any_element()
 }
 

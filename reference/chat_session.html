@@ -1,19 +1,18 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-
-
+<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <title>Chat session</title>
 
-
-
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="ds/graphite/components/bundle.css">
 
 </head>
 <body>
 <x-dc>
 <helmet>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
 
 </helmet>
 <div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
@@ -28,19 +27,62 @@
     <a href="#" style="color: var(--text-muted); text-decoration: none;">Chat</a>
     <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
     <sc-if value="{{inChild}}" hint-placeholder-val="{{no}}">
-      <button type="button" class="ch-focus" sc-camel-on-click="{{openMain}}" style="padding: 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;">Fix double charge on retry</button>
+      <button type="button" class="ch-focus" onClick="{{openMain}}" style="padding: 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;">Fix double charge on retry</button>
       <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
     </sc-if>
     <span aria-current="page" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{sessionTitle}}</span>
   </nav>
-  <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line-strong); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">payments-api · fix/PAY-1423</span>
+  <div style="position: relative;">
+    <button type="button" class="ch-focus" aria-haspopup="listbox" aria-expanded="{{wdOpenAttr}}" aria-label="{{wdAria}}" onClick="{{toggleWd}}" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; box-sizing: border-box; border-radius: 999px; border: 1px solid {{wdChipBorder}}; background: {{wdChipBg}}; color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; cursor: pointer; transition: background-color 150ms ease;">
+      <span title="{{wd.provState}}" style="width: 6px; height: 6px; border-radius: 999px; box-sizing: border-box; background: {{wd.provDot}}; border: {{wd.provRing}};"></span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+      {{wd.label}}
+      <span style="display: inline-flex; color: var(--text-muted);"><x-import component-from-global-scope="Graphite.Icon" name="chevron-down" size="{{s12}}"></x-import></span>
+    </button>
+    <sc-if value="{{wdOpen}}" hint-placeholder-val="{{no}}">
+      <div role="listbox" aria-label="Working folder" style="position: absolute; left: 0; top: calc(100% + 6px); z-index: 7; width: 420px; max-width: calc(100vw - 48px); border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); overflow: hidden; font-family: var(--font-sans); font-size: 13px; font-weight: 400;">
+        <div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-bottom: 1px solid var(--line);">
+          <span style="font-size: 12px; color: var(--text-muted);">Working in</span>
+          <span style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 500;">{{wd.name}}</span><span style="display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; box-sizing: border-box; background: {{wd.provDot}}; border: {{wd.provRing}};"></span>{{wd.prov}}</span></span>
+          <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">mac-mini · {{wd.path}}</span>
+          <span style="font-size: 12px; color: var(--text-secondary);">{{wd.git}}</span>
+        </div>
+        <div style="padding: 4px;">
+          <sc-for list="{{wdRows}}" as="w" hint-placeholder-count="5">
+            <button type="button" role="option" aria-selected="{{w.selAttr}}" class="ch-opt ch-focus" onClick="{{w.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{w.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+              <span style="width: 14px; display: inline-flex; color: var(--accent-text); opacity: {{w.checkOpacity}};"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s14}}"></x-import></span>
+              <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;">
+                <span style="display: flex; align-items: center; gap: 6px;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{w.name}}</span><span style="display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; box-sizing: border-box; background: {{w.provDot}}; border: {{w.provRing}};"></span>{{w.prov}}</span></span>
+                <span style="font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{w.path}}</span>
+              </span>
+              <span style="font-size: 12px; color: {{w.noteColor}}; white-space: nowrap;">{{w.note}}</span>
+            </button>
+          </sc-for>
+        </div>
+        <sc-if value="{{wdChanged}}" hint-placeholder-val="{{no}}">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--warning-soft);">
+            <span style="color: var(--warning); font-weight: 500;">Move this chat to {{wdNext.name}}?</span>
+            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary);">{{agentLabel}} continues there with the same history. {{wd.leftBehind}}</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="primary" on-click="{{confirmWd}}">Move chat</x-import>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{forkWd}}">Fork a new chat there</x-import>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" on-click="{{cancelWd}}">Cancel</x-import>
+            </div>
+          </div>
+        </sc-if>
+        <div style="padding: 8px 10px; border-top: 1px solid var(--line);">
+          <a href="Workdir.dc.html" class="ch-focus" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--text-secondary); font-size: 12px; text-decoration: none;">All folders, runtimes and repos…</a>
+        </div>
+      </div>
+    </sc-if>
+  </div>
   <span style="flex: 1 1 auto;"></span>
   <sc-if value="{{shared}}" hint-placeholder-val="{{no}}">
     <x-import component-from-global-scope="Graphite.Badge" tone="accent">Shared · link copied</x-import>
   </sc-if>
   <div style="display: flex; flex-wrap: wrap; gap: 8px;">
     <x-import component-from-global-scope="Graphite.Button" variant="ghost" on-click="{{toggleShare}}">{{shareLabel}}</x-import>
-    <x-import component-from-global-scope="Graphite.Button" icon="plus">New session</x-import>
+    <a href="Workdir.dc.html" class="ch-focus" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-weight: 500; text-decoration: none;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s14}}"></x-import>New session</a>
   </div>
 </header>
 
@@ -100,7 +142,7 @@
         </div>
 
         <div style="border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden;">
-          <button type="button" class="ch-tool ch-focus" aria-expanded="{{diffOpenAttr}}" sc-camel-on-click="{{toggleDiff}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 6px 12px; box-sizing: border-box; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;">
+          <button type="button" class="ch-tool ch-focus" aria-expanded="{{diffOpenAttr}}" onClick="{{toggleDiff}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 6px 12px; box-sizing: border-box; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;">
             <span style="width: 56px; flex: 0 0 auto; font-family: var(--font-mono); color: var(--text-muted);">edit</span>
             <span style="flex: 1 1 auto; font-family: var(--font-mono); color: var(--text-secondary);">src/charges/retry.ts</span>
             <span style="font-family: var(--font-mono);"><span style="color: {{addColor}};">+3</span> <span style="color: {{delColor}};">−2</span></span>
@@ -177,6 +219,14 @@
             </div>
             <p style="margin: 0; color: var(--text-secondary);">{{m.text}}</p>
           </article>
+        </sc-if>
+        <sc-if value="{{m.sys}}" hint-placeholder-val="{{no}}">
+          <div role="status" style="display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; color: var(--text-muted);">
+            <span style="flex: 1 1 24px; height: 1px; background: var(--line);"></span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+            <span style="text-align: center;">{{m.text}}</span>
+            <span style="flex: 1 1 24px; height: 1px; background: var(--line);"></span>
+          </div>
         </sc-if>
         <sc-if value="{{m.pipe}}" hint-placeholder-val="{{no}}">
           <article style="display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
@@ -262,7 +312,7 @@
       <sc-if value="{{slashOpen}}" hint-placeholder-val="{{no}}">
         <div role="listbox" aria-label="Commands" style="position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 300px; overflow-y: auto; padding: 4px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised);">
           <sc-for list="{{cmds}}" as="c" hint-placeholder-count="6">
-            <button type="button" role="option" class="ch-opt ch-focus" sc-camel-on-click="{{c.pick}}" style="display: flex; align-items: center; gap: 12px; width: 100%; min-height: 34px; padding: 4px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+            <button type="button" role="option" class="ch-opt ch-focus" onClick="{{c.pick}}" style="display: flex; align-items: center; gap: 12px; width: 100%; min-height: 34px; padding: 4px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
               <span style="width: 88px; flex: 0 0 auto; font-family: var(--font-mono); font-size: 12px; color: var(--accent-text);">/{{c.name}}</span>
               <span style="flex: 1 1 auto; color: var(--text-secondary);">{{c.desc}}</span>
               <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{c.key}}</span>
@@ -275,7 +325,7 @@
       <sc-if value="{{atOpen}}" hint-placeholder-val="{{no}}">
         <div role="listbox" aria-label="Files and agents" style="position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 300px; overflow-y: auto; padding: 4px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised);">
           <sc-for list="{{mentions}}" as="f" hint-placeholder-count="5">
-            <button type="button" role="option" class="ch-opt ch-focus" sc-camel-on-click="{{f.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 4px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+            <button type="button" role="option" class="ch-opt ch-focus" onClick="{{f.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 4px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
               <span style="width: 14px; display: inline-flex; color: {{f.iconColor}};"><x-import component-from-global-scope="Graphite.Icon" name="{{f.icon}}" size="{{s14}}"></x-import></span>
               <span style="flex: 1 1 auto; font-family: var(--font-mono); font-size: 12px; color: {{f.color}};">{{f.label}}</span>
               <span style="font-size: 12px; color: var(--text-muted);">{{f.hint}}</span>
@@ -286,10 +336,10 @@
 
       <div style="border: 1px solid {{promptBorder}}; border-radius: 10px; background: var(--surface); transition: border-color 150ms ease;">
         <label for="ch-prompt" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Message</label>
-        <textarea id="ch-prompt" class="ch-input" rows="3" value="{{draft}}" sc-camel-on-change="{{onDraft}}" sc-camel-on-key-down="{{onKey}}" placeholder="{{placeholder}}" style="display: block; width: 100%; box-sizing: border-box; padding: 12px 14px 4px; border: 0; border-radius: 10px 10px 0 0; background: transparent; color: var(--text); font-family: {{draftFont}}; font-size: 13px; line-height: 20px; resize: none;"></textarea>
+        <textarea id="ch-prompt" class="ch-input" rows="3" value="{{draft}}" onChange="{{onDraft}}" onKeyDown="{{onKey}}" placeholder="{{placeholder}}" style="display: block; width: 100%; box-sizing: border-box; padding: 12px 14px 4px; border: 0; border-radius: 10px 10px 0 0; background: transparent; color: var(--text); font-family: {{draftFont}}; font-size: 13px; line-height: 20px; resize: none;"></textarea>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px;">
           <div style="position: relative;">
-            <button type="button" class="ch-focus" aria-haspopup="listbox" aria-expanded="{{pickAttr}}" aria-label="{{agentAria}}" sc-camel-on-click="{{togglePick}}" style="display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 4px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{ag.border}}; background: {{ag.bg}}; color: var(--text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease;">
+            <button type="button" class="ch-focus" aria-haspopup="listbox" aria-expanded="{{pickAttr}}" aria-label="{{agentAria}}" onClick="{{togglePick}}" style="display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 4px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{ag.border}}; background: {{ag.bg}}; color: var(--text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease;">
               <span style="width: 20px; height: 20px; border-radius: 4px; background: {{ag.tileBg}}; color: {{ag.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{ag.icon}}" size="{{s12}}"></x-import></span>
               {{ag.name}}<span style="font-weight: 400; color: var(--text-muted);">{{ag.kind}}</span>
               <span style="display: inline-flex; color: var(--text-muted);"><x-import component-from-global-scope="Graphite.Icon" name="chevron-down" size="{{s12}}"></x-import></span>
@@ -299,7 +349,7 @@
                 <sc-for list="{{pickGroups}}" as="g" hint-placeholder-count="3">
                   <div style="padding: 8px 8px 4px; font-size: 12px; color: var(--text-muted);">{{g.name}}</div>
                   <sc-for list="{{g.items}}" as="o" hint-placeholder-count="2">
-                    <button type="button" role="option" aria-selected="{{o.selAttr}}" class="ch-opt ch-focus" sc-camel-on-click="{{o.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{o.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+                    <button type="button" role="option" aria-selected="{{o.selAttr}}" class="ch-opt ch-focus" onClick="{{o.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{o.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
                       <span style="width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; background: {{o.tileBg}}; color: {{o.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{o.icon}}" size="{{s14}}"></x-import></span>
                       <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;"><span style="font-weight: 500;">{{o.name}}</span><span style="font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{o.desc}}</span></span>
                       <sc-if value="{{o.hasKey}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.Kbd">Tab</x-import></sc-if>
@@ -318,7 +368,7 @@
                       <span style="font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{sk.desc}}</span>
                       <span style="font-size: 11px; line-height: 16px; color: {{sk.stateColor}};">{{sk.state}}</span>
                     </span>
-                    <button type="button" class="ch-focus" aria-pressed="{{sk.pressed}}" aria-label="{{sk.aria}}" sc-camel-on-click="{{sk.toggle}}" style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{sk.btnBorder}}; background: {{sk.btnBg}}; color: {{sk.btnColor}}; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease;"><span style="display: inline-flex; opacity: {{sk.checkOpacity}};"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s12}}"></x-import></span>{{sk.label}}</button>
+                    <button type="button" class="ch-focus" aria-pressed="{{sk.pressed}}" aria-label="{{sk.aria}}" onClick="{{sk.toggle}}" style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{sk.btnBorder}}; background: {{sk.btnBg}}; color: {{sk.btnColor}}; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease;"><span style="display: inline-flex; opacity: {{sk.checkOpacity}};"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s12}}"></x-import></span>{{sk.label}}</button>
                   </div>
                 </sc-for>
                 <div style="padding: 8px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 12px; color: var(--text-muted);">Forced skills go into context before the first message and stay there, whichever agent you pick. Pipelines and orchestrators answer here like any agent. Their reviews still land in Inbox.</div>
@@ -326,16 +376,16 @@
             </sc-if>
           </div>
           <sc-for list="{{forcedChips}}" as="fc" hint-placeholder-count="1">
-            <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--accent-ring); background: var(--accent-soft); color: var(--accent-text); font-family: var(--font-mono); font-size: 12px;" title="Forced skill · always in context"><x-import component-from-global-scope="Graphite.Icon" name="policy" size="{{s12}}"></x-import>{{fc.name}}<button type="button" class="ch-focus" aria-label="{{fc.aria}}" sc-camel-on-click="{{fc.remove}}" style="width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;"><x-import component-from-global-scope="Graphite.Icon" name="x" size="{{s12}}"></x-import></button></span>
+            <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--accent-ring); background: var(--accent-soft); color: var(--accent-text); font-family: var(--font-mono); font-size: 12px;" title="Forced skill · always in context"><x-import component-from-global-scope="Graphite.Icon" name="policy" size="{{s12}}"></x-import>{{fc.name}}<button type="button" class="ch-focus" aria-label="{{fc.aria}}" onClick="{{fc.remove}}" style="width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;"><x-import component-from-global-scope="Graphite.Icon" name="x" size="{{s12}}"></x-import></button></span>
           </sc-for>
           <label for="ch-model" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Model</label>
-          <sc-raw-select id="ch-model" class="ch-input" value="{{model}}" sc-camel-on-change="{{setModel}}" style="height: 28px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px;">
+          <select id="ch-model" class="ch-input" value="{{model}}" onChange="{{setModel}}" style="height: 28px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px;">
             <option value="anthropic/opus-5.5">anthropic/opus-5.5</option>
             <option value="anthropic/sonnet-5.5">anthropic/sonnet-5.5</option>
             <option value="anthropic/haiku-5.5">anthropic/haiku-5.5</option>
             <option value="openai/gpt-5.2">openai/gpt-5.2</option>
             <option value="ollama/qwen3-coder">ollama/qwen3-coder</option>
-          </sc-raw-select>
+          </select>
           <span style="flex: 1 1 auto;"></span>
           <span style="display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--text-muted);">
             <span><x-import component-from-global-scope="Graphite.Kbd">@</x-import> files</span>
@@ -354,10 +404,17 @@
 </main>
 
 <aside aria-label="Session details" style="flex: 1 1 288px; max-width: 100%; box-sizing: border-box; background: var(--bg-sidebar); border-left: 1px solid var(--line); display: flex; flex-direction: column;">
+  <section aria-label="Workdir" style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;"><span style="font-weight: 500;">Workdir</span><button type="button" class="ch-focus" onClick="{{toggleWd}}" style="padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; font-size: 12px; cursor: pointer;">Change</button></div>
+    <div style="display: flex; align-items: center; gap: 8px; min-width: 0;"><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{wd.name}}</span><span style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; box-sizing: border-box; background: {{wd.provDot}}; border: {{wd.provRing}};"></span>{{wd.prov}}</span></div>
+    <div style="font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted); word-break: break-all;">mac-mini · {{wd.path}}</div>
+    <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 12px;"><span style="color: var(--text-muted);">git</span><span style="color: var(--text-secondary); text-align: right;">{{wd.git}}</span></div>
+    <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 12px;"><span style="color: var(--text-muted);">{{wd.prov}}</span><span style="color: {{wd.provColor}}; text-align: right;">{{wd.provState}}</span></div>
+  </section>
   <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
     <div style="display: flex; justify-content: space-between; align-items: baseline;"><span style="font-weight: 500;">Context</span><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{ctxText}}</span></div>
     <x-import component-from-global-scope="Graphite.Progress" value="{{ctxUsed}}" max="{{twoHundred}}" label="Context used"></x-import>
-    <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);"><span>{{ctxPct}} used · compacts at 90%</span><button type="button" class="ch-focus" sc-camel-on-click="{{compact}}" style="padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; cursor: pointer;">Compact now</button></div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);"><span>{{ctxPct}} used · compacts at 90%</span><button type="button" class="ch-focus" onClick="{{compact}}" style="padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; cursor: pointer;">Compact now</button></div>
     <div style="display: flex; justify-content: space-between; margin-top: 4px;"><span style="color: var(--text-muted);">Cost</span><span style="font-family: var(--font-mono); font-size: 12px;">{{cost}} this session</span></div>
   </section>
 
@@ -370,7 +427,7 @@
         <span style="color: {{sl.color}};">{{sl.how}}</span>
       </div>
     </sc-for>
-    <button type="button" class="ch-focus" sc-camel-on-click="{{togglePick}}" style="align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; font-size: 12px; cursor: pointer;">Manage skills</button>
+    <button type="button" class="ch-focus" onClick="{{togglePick}}" style="align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; font-size: 12px; cursor: pointer;">Manage skills</button>
   </section>
 
   <section style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
@@ -396,7 +453,7 @@
   <section style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
     <span style="font-weight: 500;">Sub-agents</span>
     <sc-for list="{{tasks}}" as="k" hint-placeholder-count="2">
-      <button type="button" class="ch-hover ch-focus" sc-camel-on-click="{{k.open}}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 2px 6px; margin: 0 -6px; box-sizing: content-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;">
+      <button type="button" class="ch-hover ch-focus" onClick="{{k.open}}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 2px 6px; margin: 0 -6px; box-sizing: content-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;">
         <x-import component-from-global-scope="Graphite.StatusDot" status="{{k.dot}}" size="sm"></x-import>
         <span style="font-family: var(--font-mono); color: var(--spawn-text);">{{k.agent}}</span>
         <span style="flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary);">{{k.short}}</span>
@@ -423,7 +480,7 @@
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:960}}">
+<script type="text/x-dc" data-dc-script data-props='{"wdOpen":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":960}}'>
 var CMDS = [
   { name: 'init', desc: 'Read the repo and write AGENTS.md', key: '' },
   { name: 'undo', desc: 'Revert the last message and its file changes', key: '⌘Z' },
@@ -460,6 +517,13 @@ var AT = {
   orch: { icon: 'router', kind: 'orchestrator', tileBg: 'var(--accent-soft)', tileFg: 'var(--accent-text)', bg: 'var(--accent-soft)', border: 'var(--accent-ring)' },
   pipe: { icon: 'pipelines', kind: 'pipeline', tileBg: 'var(--info-soft)', tileFg: 'var(--info-text)', bg: 'var(--info-soft)', border: '#23406b' }
 };
+var WDROWS = [
+  { id: 'wt-1423', name: 'payments-api · fix/PAY-1423', label: 'payments-api · fix/PAY-1423', path: '~/.harness/worktrees/payments-api/fix-PAY-1423', prov: 'GitHub', pd: 'live', provState: 'connected · PR checks on', note: 'worktree', nc: 'var(--text-muted)', git: '2 uncommitted · 1 ahead of main', left: 'The 2 uncommitted files stay in fix/PAY-1423, nothing is copied.' },
+  { id: 'main', name: 'payments-api · main', label: 'payments-api · main', path: '~/code/acme/payments-api', prov: 'GitHub', pd: 'live', provState: 'connected · PR checks on', note: 'clean', nc: 'var(--text-muted)', git: 'clean on main', left: 'Nothing to leave behind.' },
+  { id: 'wt-1436', name: 'payments-api · pay-1436-retry-budget', label: 'payments-api · pay-1436', path: '~/.harness/worktrees/payments-api/pay-1436', prov: 'GitHub', pd: 'live', provState: 'connected · PR checks on', note: 'Payments lead', nc: 'var(--info)', git: 'Payments lead is writing here', left: 'Payments lead keeps writing here; your edits will ask first.' },
+  { id: 'checkout', name: 'checkout-web · feat/saved-cards', label: 'checkout-web · feat/saved-cards', path: '~/code/acme/checkout-web', prov: 'GitLab', pd: 'waiting', provState: 'token expires in 3 days', note: 'token 3d', nc: 'var(--warning)', git: '3 uncommitted on feat/saved-cards', left: 'Nothing to leave behind.' },
+  { id: 'infra', name: 'infra · main', label: 'infra · main', path: '~/code/acme/infra', prov: 'Local', pd: 'draft', provState: 'no remote · PRs off', note: 'no remote', nc: 'var(--text-muted)', git: 'clean on main', left: 'Nothing to leave behind.' }
+];
 var SKILLS = [
   { id: 'payments-retries', desc: 'Idempotency keys, retry budgets, gateway timeouts', tok: 3.2, used: false },
   { id: 'write-failing-test', desc: 'Pin a bug with a test before touching code', tok: 1.8, used: true },
@@ -506,7 +570,7 @@ var DIFF = [
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { forced: { 'payments-retries': true }, pickOpen: false, session: 'main', agent: 'build', model: 'anthropic/opus-5.5', draft: '', perm: 'pending', diffOpen: true, reverted: false, shared: false, compacted: false, extra: [] };
+    this.state = { wd: 'wt-1423', wdOpen: !!(props && props.wdOpen), wdPending: null, forced: { 'payments-retries': true }, pickOpen: false, session: 'main', agent: 'build', model: 'anthropic/opus-5.5', draft: '', perm: 'pending', diffOpen: true, reverted: false, shared: false, compacted: false, extra: [] };
   }
   renderVals() {
     var self = this, st = this.state;
@@ -569,6 +633,8 @@ class Component extends DCLogic {
       return { n: d[0], sign: add ? '+' : del ? '−' : ' ', s: d[2], bg: add ? 'var(--diff-add-bg)' : del ? 'var(--diff-del-bg)' : 'transparent', color: add ? 'var(--diff-add-text)' : del ? 'var(--diff-del-text)' : 'var(--text-secondary)' };
     });
 
+    var wdBy = function (id) { return WDROWS.filter(function (r) { return r.id === id; })[0] || WDROWS[0]; };
+    var wdView = function (r) { return { name: r.name, label: r.label, path: r.path, prov: r.prov, git: r.git, leftBehind: r.left, provState: r.provState, provDot: r.pd === 'live' ? 'var(--success)' : r.pd === 'waiting' ? 'var(--warning)' : 'transparent', provRing: r.pd === 'draft' ? '1.5px solid var(--text-muted)' : '0', provColor: r.pd === 'live' ? 'var(--success)' : r.pd === 'waiting' ? 'var(--warning)' : 'var(--text-muted)' }; };
     var forcedOn = function (sk) { return !!st.forced[sk.id]; };
     var forcedTok = SKILLS.filter(forcedOn).reduce(function (a, sk) { return a + sk.tok; }, 0);
     var autoTok = SKILLS.filter(function (sk) { return sk.used && !forcedOn(sk); }).reduce(function (a, sk) { return a + sk.tok; }, 0);
@@ -653,6 +719,18 @@ class Component extends DCLogic {
       ag: { name: agentObj.name, kind: aty.kind, icon: aty.icon, tileBg: aty.tileBg, tileFg: aty.tileFg, bg: aty.bg, border: aty.border },
       pickOpen: st.pickOpen, pickAttr: st.pickOpen ? 'true' : 'false',
       togglePick: function () { self.setState({ pickOpen: !st.pickOpen }); },
+      wd: wdView(wdBy(st.wd)), wdNext: wdView(wdBy(st.wdPending || st.wd)), wdChanged: !!st.wdPending,
+      wdOpen: st.wdOpen, wdOpenAttr: st.wdOpen ? 'true' : 'false',
+      wdAria: 'Working folder: ' + wdBy(st.wd).name + ', ' + wdBy(st.wd).prov + '. Change',
+      wdChipBg: st.wdOpen ? 'var(--surface-hover)' : 'transparent', wdChipBorder: st.wdOpen ? 'var(--accent-ring)' : 'var(--line-strong)',
+      toggleWd: function () { self.setState({ wdOpen: !st.wdOpen, wdPending: null, pickOpen: false }); },
+      wdRows: WDROWS.map(function (r) {
+        var on = r.id === (st.wdPending || st.wd), v = wdView(r);
+        return { name: r.name, path: r.path, prov: r.prov, provDot: v.provDot, provRing: v.provRing, note: r.id === st.wd ? 'this chat' : r.note, noteColor: r.id === st.wd ? 'var(--text-muted)' : r.nc, selAttr: on ? 'true' : 'false', bg: on ? 'var(--surface-hover)' : 'transparent', checkOpacity: r.id === st.wd ? 1 : 0, pick: function () { self.setState({ wdPending: r.id === st.wd ? null : r.id }); } };
+      }),
+      confirmWd: function () { var from = wdBy(st.wd), to = wdBy(st.wdPending); self.setState({ wd: to.id, wdPending: null, wdOpen: false, extra: st.extra.concat([{ sys: true, text: 'Moved to ' + to.name + ' · ' + from.left }]) }); },
+      forkWd: function () { var to = wdBy(st.wdPending); self.setState({ wdPending: null, wdOpen: false, extra: st.extra.concat([{ sys: true, text: 'Forked a new chat in ' + to.name + ' · this one stays here' }]) }); },
+      cancelWd: function () { self.setState({ wdPending: null }); },
       forcedCount: SKILLS.filter(forcedOn).length,
       skillRows: SKILLS.map(function (sk) {
         var on = forcedOn(sk);
@@ -689,6 +767,5 @@ class Component extends DCLogic {
   }
 }
 </script>
-
-
-</body></html>
+</body>
+</html>

@@ -7,6 +7,8 @@
 //! - `todo` — the local `todo_write` tool.
 //! - `extensions` — skills (`skill` tool) and MCP servers (startup, tools, calls).
 //! - `picker` — the "Talk to" picker: Build / Plan, custom agents, forced skills.
+//! - `workdir` — each session's working folder: switching, move / fork, chip dropdown data.
+//! - `newchat` — the "New chat · pick a workdir" screen.
 
 mod agent;
 mod composer;
@@ -16,12 +18,18 @@ mod extensions;
 mod header;
 mod markdown;
 mod models;
+mod newchat;
 mod panel;
 mod picker;
 mod session;
 mod todo;
 mod transcript;
 mod widgets;
+mod workdir;
+mod history;
+mod history_index;
+
+pub use history::ChatHistory;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -84,6 +92,7 @@ impl Suggest {
 pub(crate) enum Trigger {
     Agent,
     Model,
+    Workdir,
 }
 
 pub struct ChatScreen {
@@ -128,8 +137,23 @@ pub struct ChatScreen {
     /// Deferred MCP tools whose schemas the model loaded with `tool_search`.
     pub(crate) loaded_mcp: BTreeSet<String>,
     pub(crate) run: Option<Run>,
+    /// How this session works in its folder (read-only is enforced in the agent loop).
+    pub(crate) work_mode: workdir::WorkMode,
+    /// Working-folder caches and the header chip dropdown.
+    pub(crate) wd: workdir::WdState,
+    /// The "New chat · pick a workdir" screen, while open.
+    pub(crate) newchat: Option<newchat::NewChat>,
+    pub(crate) nc_query: Entity<TextInput>,
+    pub(crate) nc_branch: Entity<TextInput>,
+    pub(crate) nc_clone: Entity<TextInput>,
+    /// Focused on the next render (set where no window is at hand).
+    pub(crate) focus_next: Option<gpui::FocusHandle>,
     /// Saved sessions (newest first) shown in the app sidebar.
     pub(crate) index: Vec<session::IndexEntry>,
+    /// Pinned / archived chats (`chat_flags.json`).
+    pub(crate) flags: history_index::Flags,
+    /// Last seen `nav.chats_version` (bumped by the history picker).
+    pub(crate) chats_version: u64,
     /// Bumped on every session switch so a late `load` for an older request is ignored.
     pub(crate) switch_seq: u64,
 
@@ -184,10 +208,18 @@ impl ChatScreen {
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         let note_input =
             cx.new(|cx| TextInput::new("Optional note for the agent, sent with Reject", cx));
+        let nc_query = cx.new(|cx| {
+            TextInput::new("Search folders, repos, worktrees or paste a path", cx)
+        });
+        let nc_branch = cx.new(|cx| TextInput::new("chat/session", cx));
+        let nc_clone = cx.new(|cx| TextInput::new("owner/name or URL", cx));
         let mut subs = vec![
             cx.subscribe_in(&input, window, Self::on_input_event),
             cx.subscribe_in(&model_search, window, Self::on_search_event),
             cx.subscribe_in(&note_input, window, Self::on_note_event),
+            cx.subscribe_in(&nc_query, window, Self::on_nc_query_event),
+            cx.subscribe_in(&nc_branch, window, Self::on_nc_branch_event),
+            cx.subscribe_in(&nc_clone, window, Self::on_nc_clone_event),
         ];
         // Every screen is built up-front by the shell; only the visible one may take focus.
         if ui::nav::nav_entity(cx).is_none() || ui::nav::current(cx) == ui::nav::Screen::Chat {
@@ -200,35 +232,22 @@ impl ChatScreen {
             |this, window, cx| this.focus_input(window, cx),
         ));
 
-        let workspace = Arc::new(Workspace::new(workspace_root()));
-        let ws = workspace.clone();
-        let info = cx.spawn(async move |this, cx| {
-            let (label, mut files, context) = cx
-                .background_spawn(
-                    async move { (ws.repo_label(), ws.files(2000), ws.context_summary()) },
-                )
-                .await;
-            files.sort();
-            this.update(cx, |this, cx| {
-                this.repo = Some(label);
-                this.files = Arc::new(files);
-                this.context = Some(context);
-                cx.notify();
-            })
-            .ok();
-        });
+        let default_root = workspace_root();
+        let workspace = Arc::new(Workspace::new(default_root.clone()));
         let restore = cx.spawn(async move |this, cx| {
-            let (index, saved) = cx
+            let (index, saved, flags) = cx
                 .background_spawn(async {
                     let dir = session::sessions_dir();
                     (
                         session::list(&dir, SESSION_LIST_LIMIT),
                         session::load_latest(&dir),
+                        history_index::Flags::load(),
                     )
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.index = index;
+                this.flags = flags;
                 if let Some(saved) = saved {
                     this.restore(saved, cx);
                 }
@@ -290,7 +309,16 @@ impl ChatScreen {
                 .unwrap_or_default(),
             loaded_mcp: BTreeSet::new(),
             run: None,
+            work_mode: workdir::WorkMode::default(),
+            wd: workdir::WdState::new(default_root),
+            newchat: None,
+            nc_query,
+            nc_branch,
+            nc_clone,
+            focus_next: None,
             index: Vec::new(),
+            flags: history_index::Flags::default(),
+            chats_version: 0,
             switch_seq: 0,
             // Dev hook for screenshots: open the agent picker on startup.
             pick_open: std::env::var("HARNESS_CHAT_PICKER_OPEN").is_ok_and(|v| v == "1"),
@@ -311,14 +339,26 @@ impl ChatScreen {
             skills_task: None,
             agents_task: None,
             model_tasks: Vec::new(),
-            _startup: vec![info, restore],
+            _startup: vec![restore],
             _subs: subs,
         };
         this.load_config(cx);
         this.discover_skills(cx);
         this.discover_agents(cx);
         this.load_mcp(cx);
+        this.load_workspace_info(cx);
+        // Dev hooks for screenshots: the new-chat screen / the workdir dropdown on start.
+        if std::env::var("HARNESS_CHAT_NEW").is_ok_and(|v| v == "1") {
+            this.open_new_chat(cx);
+        } else if std::env::var("HARNESS_CHAT_WD_OPEN").is_ok_and(|v| v == "1") {
+            this.open_wd_menu(cx);
+        }
         this
+    }
+
+    /// The chat screen is the visible one (only it may take focus).
+    pub(crate) fn visible(cx: &gpui::App) -> bool {
+        ui::nav::nav_entity(cx).is_none() || ui::nav::current(cx) == ui::nav::Screen::Chat
     }
 
     // ── Derived values ──────────────────────────────────────────────────
@@ -390,6 +430,12 @@ impl ChatScreen {
                 return format!("{} is waiting for your permission above", self.agent_name());
             }
             return format!("{} is working · Esc to interrupt", self.agent_name());
+        }
+        if self.work_mode == workdir::WorkMode::ReadOnly {
+            return format!(
+                "{} · read-only folder: only read tools are offered",
+                self.agent_name()
+            );
         }
         if let Some(name) = &self.custom_agent {
             let tools = match self.active_agent().and_then(|a| a.tools.as_ref()) {
@@ -497,9 +543,11 @@ impl ChatScreen {
                 }
             }
             TextInputEvent::Cancel => {
-                if self.pick_open || self.model_open {
+                if self.pick_open || self.model_open || self.wd.open {
                     self.pick_open = false;
                     self.model_open = false;
+                    self.wd.open = false;
+                    self.wd.pending = None;
                     cx.notify();
                 } else if self.busy() {
                     self.interrupt(cx);
@@ -564,8 +612,13 @@ impl ChatScreen {
         cx.notify();
     }
 
+    /// Focus the prompt (the folder search while the new-chat screen is open).
     pub(crate) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.input.focus_handle(cx).focus(window);
+        if self.newchat.is_some() {
+            self.nc_query.focus_handle(cx).focus(window);
+        } else {
+            self.input.focus_handle(cx).focus(window);
+        }
     }
 
     pub(crate) fn pick_suggestion(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -647,21 +700,33 @@ impl ChatScreen {
     }
 }
 
-/// How many saved sessions the sidebar lists.
-pub(crate) const SESSION_LIST_LIMIT: usize = 12;
+/// How many saved sessions the chat screen keeps in its index (pinned ones older than
+/// this drop out of the sidebar; the history picker scans everything).
+pub(crate) const SESSION_LIST_LIMIT: usize = 2000;
+
+/// Unpinned chats under "Recent" in the sidebar.
+pub(crate) const SIDEBAR_RECENT: usize = 8;
 
 /// Show a search field in the model menu above this many models.
 pub(crate) const SEARCH_THRESHOLD: usize = 12;
 
 impl Render for ChatScreen {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(h) = self.focus_next.take()
+            && Self::visible(cx)
+        {
+            h.focus(window);
+        }
+        let root = div()
             .size_full()
             .flex()
             .flex_col()
             .bg(BG)
-            .child(self.render_header(cx))
-            .child(
+            .child(self.render_header(cx));
+        if self.newchat.is_some() {
+            return root.child(self.render_new_chat(cx));
+        }
+        root.child(
                 div()
                     .flex()
                     .flex_1()

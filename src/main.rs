@@ -6,6 +6,8 @@ use ui::nav::{self, Nav, Screen};
 struct Shell {
     nav: Entity<Nav>,
     sidebar: Entity<sidebar::Sidebar>,
+    home: Entity<screen_home::HomeScreen>,
+    history: Entity<screen_chat::ChatHistory>,
     editor: Entity<screen_editor::PipelineEditorScreen>,
     review: Entity<screen_review::ReviewScreen>,
     chat: Entity<screen_chat::ChatScreen>,
@@ -20,6 +22,8 @@ impl Shell {
         Self {
             nav,
             sidebar: cx.new(|cx| sidebar::Sidebar::new(window, cx)),
+            home: cx.new(|cx| screen_home::HomeScreen::new(window, cx)),
+            history: cx.new(|cx| screen_chat::ChatHistory::new(window, cx)),
             editor: cx.new(|cx| screen_editor::PipelineEditorScreen::new(window, cx)),
             review: cx.new(|cx| screen_review::ReviewScreen::new(window, cx)),
             chat: cx.new(|cx| screen_chat::ChatScreen::new(window, cx)),
@@ -29,9 +33,10 @@ impl Shell {
     }
 }
 
-/// `HARNESS_SCREEN=chat|editor|inbox|issues|agents` picks the start screen (default: chat).
+/// `HARNESS_SCREEN=chat|home|editor|inbox|issues|agents` picks the start screen (default: chat).
 fn initial_screen() -> Screen {
     match std::env::var("HARNESS_SCREEN").as_deref() {
+        Ok("home") => Screen::Home,
         Ok("editor") => Screen::PipelineEditor,
         Ok("inbox") | Ok("review") => Screen::Inbox,
         Ok("issues") => Screen::Issues,
@@ -42,17 +47,26 @@ fn initial_screen() -> Screen {
 
 impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let screen: AnyView = match self.nav.read(cx).screen {
+        let nav = self.nav.read(cx);
+        let history_open = nav.history_open;
+        let screen: AnyView = match nav.screen {
+            Screen::Home => self.home.clone().into(),
             Screen::PipelineEditor => self.editor.clone().into(),
             Screen::Inbox => self.review.clone().into(),
             Screen::Chat => self.chat.clone().into(),
             Screen::Issues => self.issues.clone().into(),
             Screen::Agents => self.agents.clone().into(),
         };
+        // The history picker is always in the tree (it renders nothing while closed) so
+        // it keeps its state and can take focus when ⌘K opens it.
         ui::root()
+            .relative()
             .flex()
             .child(self.sidebar.clone())
             .child(div().flex_1().min_w_0().h_full().child(screen))
+            .when(history_open, |d| {
+                d.child(div().absolute().inset_0().child(self.history.clone()))
+            })
     }
 }
 

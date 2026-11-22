@@ -23,6 +23,7 @@ mod tests;
 
 pub mod agents;
 pub mod skills;
+pub mod workdir;
 
 use std::path::PathBuf;
 use std::sync::Arc;

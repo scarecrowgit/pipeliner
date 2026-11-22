@@ -8,6 +8,7 @@ use llm::{ContentBlock, Message, Role, StopReason, StreamEvent, Usage};
 use serde_json::{Value, json};
 
 use crate::data::Mode;
+use crate::workdir::WorkMode;
 use crate::markdown;
 
 // ── Transcript items ────────────────────────────────────────────────────
@@ -20,6 +21,17 @@ pub enum Item {
     Turn(Turn),
     Error(String),
     Notice(String),
+    /// System divider ("Moved to …"): shown as a rule in the transcript; its `note` goes
+    /// into the next user turn as context (not a message of its own).
+    Divider(Divider),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Divider {
+    /// Shown in the transcript.
+    pub text: String,
+    /// Sent to the model with the next user turn.
+    pub note: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -275,6 +287,7 @@ impl Turn {
 // ── Context encoding (user message blocks) ──────────────────────────────
 
 const FILE_OPEN: &str = "<file path=\"";
+const NOTE_OPEN: &str = "<workdir_note text=\"";
 const SHELL_OPEN: &str = "<shell_output command=\"";
 
 fn escape_attr(s: &str) -> String {
@@ -314,6 +327,25 @@ pub fn decode_shell(s: &str) -> Option<(String, String, bool)> {
     let body = body.strip_suffix("\n</shell_output>")?;
     let body = body.strip_prefix(SHELL_PREFACE).unwrap_or(body);
     Some((unescape_attr(cmd), body.to_string(), failed == "true"))
+}
+
+pub fn encode_note(d: &Divider) -> String {
+    format!(
+        "{NOTE_OPEN}{}\">\n{}\n</workdir_note>",
+        escape_attr(&d.text),
+        d.note
+    )
+}
+
+/// A [`Divider`] from an [`encode_note`] block.
+pub fn decode_note(s: &str) -> Option<Divider> {
+    let rest = s.strip_prefix(NOTE_OPEN)?;
+    let (text, body) = rest.split_once("\">\n")?;
+    let note = body.strip_suffix("\n</workdir_note>")?;
+    Some(Divider {
+        text: unescape_attr(text),
+        note: note.to_string(),
+    })
 }
 
 // ── History ─────────────────────────────────────────────────────────────
@@ -380,6 +412,9 @@ pub fn build_history(items: &[Item]) -> Vec<Message> {
                 push(&mut out, Role::Assistant, assistant);
                 push(&mut out, Role::User, results);
             }
+            Item::Divider(d) => {
+                push(&mut out, Role::User, vec![ContentBlock::Text(encode_note(d))]);
+            }
             Item::Error(_) | Item::Notice(_) => {}
         }
     }
@@ -443,7 +478,10 @@ pub fn items_from_history(messages: &[Message], model: &str) -> Vec<Item> {
                             current_user = false;
                         }
                         ContentBlock::Text(t) => {
-                            if let Some((command, output, is_error)) = decode_shell(t) {
+                            if let Some(d) = decode_note(t) {
+                                items.push(Item::Divider(d));
+                                current_user = false;
+                            } else if let Some((command, output, is_error)) = decode_shell(t) {
                                 items.push(Item::Shell(ShellRun {
                                     command,
                                     output: Some(ToolResult {
@@ -530,6 +568,9 @@ pub struct Saved {
     pub agent: Option<String>,
     /// Skills forced into the system prompt for this session.
     pub forced_skills: Vec<String>,
+    /// Working folder; `None` for sessions saved before workdirs (use the default).
+    pub workdir: Option<PathBuf>,
+    pub work_mode: WorkMode,
 }
 
 pub fn sessions_dir() -> PathBuf {
@@ -578,6 +619,8 @@ pub fn to_json(s: &Saved, title: Option<&str>) -> Value {
         },
         "agent": s.agent,
         "forced_skills": s.forced_skills,
+        "workdir": s.workdir.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        "work_mode": s.work_mode.as_str(),
     })
 }
 
@@ -617,7 +660,19 @@ pub fn from_json(mut v: Value) -> Option<Saved> {
             .filter(|a| !a.is_empty())
             .map(str::to_string),
         forced_skills: strings(&v["forced_skills"]),
+        workdir: workdir_of(&v),
+        work_mode: v["work_mode"]
+            .as_str()
+            .and_then(WorkMode::parse)
+            .unwrap_or_default(),
     })
+}
+
+fn workdir_of(v: &Value) -> Option<PathBuf> {
+    v["workdir"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
 }
 
 fn strings(v: &Value) -> Vec<String> {
@@ -645,6 +700,14 @@ pub fn save(dir: &Path, saved: &Saved, title: Option<&str>) -> std::io::Result<(
 pub struct IndexEntry {
     pub id: String,
     pub title: String,
+    pub workdir: Option<PathBuf>,
+    /// Last write, unix seconds.
+    pub updated: u64,
+    /// "Build", "Plan" or a custom agent name.
+    pub agent: String,
+    pub cost_usd: f64,
+    /// `repo · branch` of the workdir (see `history_index::folder_label`).
+    pub wd_label: String,
 }
 
 /// Saved sessions in `dir`, newest first (by file mtime), at most `limit`.
@@ -662,20 +725,48 @@ pub fn list(dir: &Path, limit: usize) -> Vec<IndexEntry> {
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
     files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    let mut labels: std::collections::HashMap<PathBuf, String> = Default::default();
     files
         .into_iter()
         .take(limit)
-        .filter_map(|(_, path)| {
+        .filter_map(|(modified, path)| {
             let v: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+            let workdir = workdir_of(&v);
+            let wd_label = workdir
+                .as_ref()
+                .map(|w| {
+                    labels
+                        .entry(w.clone())
+                        .or_insert_with(|| crate::history_index::folder_label(w))
+                        .clone()
+                })
+                .unwrap_or_default();
             Some(IndexEntry {
                 id: v["id"].as_str()?.to_string(),
                 title: v["title"]
                     .as_str()
                     .unwrap_or("Untitled session")
                     .to_string(),
+                workdir,
+                updated: modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                agent: agent_label(&v),
+                cost_usd: v["cost_usd"].as_f64().unwrap_or(0.),
+                wd_label,
             })
         })
         .collect()
+}
+
+/// "Build", "Plan" or the custom agent's name of a saved session's JSON.
+pub fn agent_label(v: &Value) -> String {
+    match (v["agent"].as_str().filter(|a| !a.is_empty()), v["mode"].as_str()) {
+        (Some(a), _) => a.to_string(),
+        (None, Some("plan")) => "Plan".to_string(),
+        _ => "Build".to_string(),
+    }
 }
 
 /// Load one saved session by id.
@@ -962,6 +1053,8 @@ mod tests {
             mode: Mode::Build,
             agent: None,
             forced_skills: Vec::new(),
+            workdir: None,
+            work_mode: WorkMode::InPlace,
         };
         let back = from_json(to_json(&saved, None)).unwrap();
         let restored = items_from_history(&back.messages, "p/m");
@@ -993,6 +1086,8 @@ mod tests {
             mode: Mode::Plan,
             agent: Some("ext-reviewer".into()),
             forced_skills: vec!["gpui-elements".into()],
+            workdir: Some("/tmp/wt".into()),
+            work_mode: WorkMode::ReadOnly,
         };
         let back = from_json(to_json(&saved, Some("x"))).unwrap();
         assert_eq!(back.id, "1-2");
@@ -1002,13 +1097,17 @@ mod tests {
         assert_eq!(back.last_usage.as_ref().map(|(u, m)| (u.input_tokens, m.as_str())), Some((7, "m")));
         // Files written before these fields existed still load.
         let mut old = to_json(&saved, None);
-        for k in ["mode", "agent", "forced_skills"] {
+        assert_eq!(back.workdir.as_deref(), Some(Path::new("/tmp/wt")));
+        assert_eq!(back.work_mode, WorkMode::ReadOnly);
+        for k in ["mode", "agent", "forced_skills", "workdir", "work_mode"] {
             old.as_object_mut().unwrap().remove(k);
         }
         let old = from_json(old).unwrap();
         assert_eq!(old.mode, Mode::Build);
         assert_eq!(old.agent, None);
         assert!(old.forced_skills.is_empty());
+        assert_eq!(old.workdir, None);
+        assert_eq!(old.work_mode, WorkMode::InPlace);
         assert_eq!(back.loaded_tools, ["mcp__g__a"]);
         assert_eq!(back.messages, saved.messages);
         assert_eq!(back.usage, saved.usage);
@@ -1029,6 +1128,8 @@ mod tests {
             mode: Mode::Build,
             agent: None,
             forced_skills: Vec::new(),
+            workdir: None,
+            work_mode: WorkMode::InPlace,
         };
         save(&dir, &mk("a", "first"), None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1036,6 +1137,30 @@ mod tests {
         let latest = load_latest(&dir).unwrap();
         assert_eq!(latest.id, "b");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn divider_is_a_note_in_the_next_user_turn() {
+        let d = Divider {
+            text: "Moved to \"x\" · clean on main".into(),
+            note: "The working folder is now /x.".into(),
+        };
+        let items = vec![
+            user("first"),
+            Item::Turn(turn_with(vec![StreamEvent::TextDelta("ok".into())])),
+            Item::Divider(d.clone()),
+            user("second"),
+        ];
+        let h = build_history(&items);
+        assert_eq!(h.len(), 3);
+        assert_eq!(h[2].content.len(), 2);
+        assert_eq!(h[2].content[0], ContentBlock::Text(encode_note(&d)));
+        assert_eq!(h[2].content[1], ContentBlock::Text("second".into()));
+        let restored = items_from_history(&h, "p/m");
+        assert!(matches!(&restored[2], Item::Divider(r) if *r == d));
+        assert!(matches!(&restored[3], Item::User(u) if u.text == "second"));
+        assert_eq!(build_history(&restored), h);
+        assert_eq!(title(&restored).as_deref(), Some("first"));
     }
 
     #[test]

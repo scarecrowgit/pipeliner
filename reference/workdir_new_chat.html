@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>New chat · pick a workdir</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+
+<div style="flex: 1 1 232px; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="chat" hint-size="232px,860px"></dc-import>
+</div>
+
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line); background: var(--bg-sidebar);">
+    <nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500;">
+      <a href="Chat.dc.html" style="color: var(--text-muted); text-decoration: none;">Chat</a>
+      <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
+      <span aria-current="page">New session</span>
+    </nav>
+    <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 999px; border: 1px {{chip.style}} {{chip.border}}; font-family: var(--font-mono); font-size: 12px; color: {{chip.color}};">
+      <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>{{chip.text}}
+    </span>
+  </header>
+
+  <main style="flex: 1 1 auto; padding: 32px 24px; box-sizing: border-box;">
+    <div style="max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <h1 style="margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em;">Where should {{agentName}} work?</h1>
+        <p style="margin: 0; color: var(--text-secondary);">The agent sees only this folder. Pick a runtime, then a repo or worktree.</p>
+      </div>
+
+      <sc-if value="{{started}}" hint-placeholder-val="{{no}}">
+        <div role="status" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+          <span style="color: var(--success); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s16}}"></x-import></span>
+          <span style="flex: 1 1 320px; color: var(--text-secondary);"><span style="color: var(--success); font-weight: 500;">Ready.</span> {{startedText}}</span>
+          <a href="Chat.dc.html" class="wd-focus" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Open chat</a>
+        </div>
+      </sc-if>
+
+      <section aria-label="Workdir picker" style="display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden;">
+
+        <div style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line);">
+          <div role="radiogroup" aria-label="Runtime" style="display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line);">
+            <sc-for list="{{runtimes}}" as="rt" hint-placeholder-count="3">
+              <button type="button" role="radio" aria-checked="{{rt.checked}}" class="wd-seg wd-focus" sc-camel-on-click="{{rt.pick}}" style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 10px; border-radius: 8px; border: 1px solid {{rt.border}}; background: {{rt.bg}}; color: {{rt.color}}; font: inherit; text-align: left; cursor: pointer; transition: background-color 150ms ease;">
+                <span style="display: flex; align-items: center; gap: 6px; font-weight: 500;"><x-import component-from-global-scope="Graphite.StatusDot" status="{{rt.dot}}" size="sm"></x-import>{{rt.name}}</span>
+                <span style="font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;">{{rt.sub}}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="position: relative; border-bottom: 1px solid var(--line);">
+            <label for="wd-q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Search folders, repos and worktrees</label>
+            <span style="position: absolute; left: 14px; top: 12px; color: var(--text-muted); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="search" size="{{s14}}"></x-import></span>
+            <input id="wd-q" class="wd-input" value="{{q}}" sc-camel-on-change="{{setQ}}" placeholder="Search folders, repos, worktrees or paste a path" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px 0 36px; border: 0; background: transparent; color: var(--text); font: inherit;">
+          </div>
+          <div role="listbox" aria-label="Folders" style="flex: 1 1 auto; max-height: 470px; overflow-y: auto; padding: 4px 6px 8px;">
+            <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+              <div style="display: flex; justify-content: space-between; padding: 10px 8px 4px; font-size: 12px; color: var(--text-muted);"><span>{{g.name}}</span><span>{{g.hint}}</span></div>
+              <sc-for list="{{g.items}}" as="it" hint-placeholder-count="3">
+                <button type="button" role="option" aria-selected="{{it.selAttr}}" class="wd-row" sc-camel-on-click="{{it.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 8px 6px {{it.pad}}px; box-sizing: border-box; border: 1px solid {{it.border}}; border-radius: 8px; background: {{it.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background-color 150ms ease;">
+                  <span style="width: 26px; height: 26px; flex: 0 0 auto; border-radius: 6px; background: {{it.tileBg}}; color: {{it.tileFg}}; display: inline-flex; align-items: center; justify-content: center;">
+                    <sc-if value="{{it.isFolder}}" hint-placeholder-val="{{yes}}"><svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></sc-if>
+                    <sc-if value="{{it.isTree}}" hint-placeholder-val="{{no}}"><svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg></sc-if>
+                    <sc-if value="{{it.isRepo}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.Icon" name="source" size="{{s14}}"></x-import></sc-if>
+                  </span>
+                  <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;">
+                    <span style="display: flex; align-items: center; gap: 8px; min-width: 0;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{it.name}}</span><span title="{{it.provTitle}}" style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; line-height: 16px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; background: {{it.provDot}}; box-sizing: border-box; border: {{it.provRing}};"></span>{{it.prov}}</span><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); white-space: nowrap;">{{it.branch}}</span></span>
+                    <span style="font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{it.path}}</span>
+                  </span>
+                  <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{it.noteColor}}; white-space: nowrap;"><sc-if value="{{it.hasDot}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.StatusDot" status="{{it.dot}}" size="sm"></x-import></sc-if>{{it.note}}</span>
+                </button>
+              </sc-for>
+            </sc-for>
+            <sc-if value="{{empty}}" hint-placeholder-val="{{no}}">
+              <div style="padding: 16px 8px; color: var(--text-muted);">Nothing matches “{{q}}”. Paste a full path or clone a repo.</div>
+            </sc-if>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border-top: 1px solid var(--line);">
+            <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="plus">Open folder…</x-import>
+            <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="source">Clone from GitHub…</x-import>
+          </div>
+        </div>
+
+        <div style="flex: 1 1 400px; min-width: 0; display: flex; flex-direction: column;">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+            <span style="width: 36px; height: 36px; flex: 0 0 auto; border-radius: 8px; background: var(--surface-hover); color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center;"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span>
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <h2 style="margin: 0; font-size: 18px; line-height: 24px; font-weight: 600;">{{sel.name}}</h2>
+              <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{sel.where}}</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: {{sel.provBg}};">
+            <span style="display: inline-flex; align-items: center; gap: 8px; font-weight: 500;"><x-import component-from-global-scope="Graphite.StatusDot" status="{{sel.provStatus}}" size="sm" label="{{sel.provState}}"></x-import>{{sel.prov}}</span>
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{sel.provHost}}</span>
+            <span style="flex: 1 1 auto;"></span>
+            <span style="font-size: 12px; color: {{sel.provColor}};">{{sel.provState}}</span>
+            <sc-if value="{{sel.provFix}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{reauth}}">{{sel.provFixLabel}}</x-import></sc-if>
+          </div>
+          <sc-if value="{{sel.hasBusy}}" hint-placeholder-val="{{yes}}">
+            <div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--line);">
+              <span style="font-size: 12px; color: var(--text-muted);">Also working in this repo</span>
+              <sc-for list="{{sel.busy}}" as="b" hint-placeholder-count="2">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
+                  <x-import component-from-global-scope="Graphite.StatusDot" status="running" size="sm"></x-import>
+                  <span style="font-weight: 500;">{{b.who}}</span>
+                  <span style="font-family: var(--font-mono); color: var(--text-muted);">{{b.where}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <fieldset style="margin: 0; padding: 16px 20px; border: 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px;">
+            <legend style="float: left; width: 100%; padding: 0; margin-bottom: 4px; font-weight: 500;">How to work here</legend>
+            <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+              <label style="display: flex; gap: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid {{m.border}}; background: {{m.bg}}; cursor: {{m.cursor}}; opacity: {{m.opacity}};">
+                <input type="radio" name="wd-mode" class="wd-focus" checked="{{m.checked}}" disabled="{{m.disabled}}" sc-camel-on-change="{{m.pick}}" style="margin: 3px 0 0; accent-color: #5e6ad2;">
+                <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                  <span style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"><span style="font-weight: 500;">{{m.title}}</span><sc-if value="{{m.rec}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.Badge" tone="accent">Recommended</x-import></sc-if></span>
+                  <span style="font-size: 12px; line-height: 18px; color: var(--text-muted);">{{m.desc}}</span>
+                </span>
+              </label>
+            </sc-for>
+            <sc-if value="{{showBranch}}" hint-placeholder-val="{{yes}}">
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 4px;">
+                <div>
+                  <label for="wd-base" style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">From</label>
+                  <sc-raw-select id="wd-base" class="wd-input" value="{{base}}" sc-camel-on-change="{{setBase}}" style="width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-family: var(--font-mono); font-size: 12px;">
+                    <sc-for list="{{sel.branches}}" as="br" hint-placeholder-count="3"><option value="{{br}}">{{br}}</option></sc-for>
+                  </sc-raw-select>
+                </div>
+                <div>
+                  <label for="wd-branch" style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">New branch</label>
+                  <input id="wd-branch" class="wd-input" value="{{branch}}" sc-camel-on-change="{{setBranch}}" style="width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-family: var(--font-mono); font-size: 12px;">
+                </div>
+              </div>
+            </sc-if>
+          </fieldset>
+
+          <div style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+            <span style="font-weight: 500;">Found in this folder</span>
+            <sc-for list="{{sel.found}}" as="fd" hint-placeholder-count="3">
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
+                <span style="display: inline-flex; color: {{fd.color}};"><x-import component-from-global-scope="Graphite.Icon" name="{{fd.icon}}" size="{{s12}}"></x-import></span>
+                <span style="font-family: var(--font-mono); color: var(--text-secondary);">{{fd.k}}</span>
+                <span style="color: var(--text-muted);">{{fd.v}}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 20px; margin-top: auto;">
+            <span style="flex: 1 1 200px; font-size: 12px; color: var(--text-muted);">{{summary}}</span>
+            <x-import component-from-global-scope="Graphite.Button" variant="primary" icon="play" on-click="{{start}}">{{startLabel}}</x-import>
+          </div>
+        </div>
+      </section>
+
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12px; color: var(--text-muted);">
+        <span><x-import component-from-global-scope="Graphite.Kbd">↑</x-import> <x-import component-from-global-scope="Graphite.Kbd">↓</x-import> move</span>
+        <span><x-import component-from-global-scope="Graphite.Kbd">Enter</x-import> start</span>
+        <span><x-import component-from-global-scope="Graphite.Kbd">⌘O</x-import> open folder</span>
+        <span>Default for new chats: last used folder · change in Settings</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+var RUNTIMES = [
+  { id: 'mac', name: 'mac-mini', sub: 'local · online · 3 agents', dot: 'live' },
+  { id: 'cloud', name: 'Cloud sandbox', sub: 'fresh VM, clones on start', dot: 'live' },
+  { id: 'laptop', name: 'laptop', sub: 'offline for 2h', dot: 'draft' }
+];
+var PROV = {
+  github: { label: 'GitHub', host: 'github.com/acme', state: 'connected · PRs and checks on', dot: 'live' },
+  gitlab: { label: 'GitLab', host: 'gitlab.acme.dev/platform', state: 'token expires in 3 days', dot: 'waiting', fix: 'Renew token' },
+  gitlabOk: { label: 'GitLab', host: 'gitlab.acme.dev/platform', state: 'connected · MRs and pipelines on', dot: 'live' },
+  local: { label: 'Local', host: 'no remote', state: 'git only · PRs and checks off', dot: 'draft', fix: 'Add remote…' }
+};
+var FOLDERS = [
+  { id: 'payments-api', prov: 'github', name: 'payments-api', path: '~/code/acme/payments-api', branch: 'main', note: '4 sessions', branches: ['main', 'release/2026.11', 'feat/sdk-v9'],
+    busy: [{ who: 'Fixer', where: 'worktree fix/PAY-1423' }, { who: 'Payments lead', where: 'worktree pay-1436-retry-budget' }],
+    found: [{ k: 'AGENTS.md', v: '32 lines · loaded every session', ok: true }, { k: '.harness/skills', v: 'payments-retries, write-failing-test', ok: true }, { k: '.harness/command', v: '/release-check, /bump-sdk', ok: true }, { k: 'git status', v: 'clean on main', ok: true }] },
+  { id: 'checkout-web', prov: 'gitlab', name: 'checkout-web', path: '~/code/acme/checkout-web', branch: 'feat/saved-cards', note: '3 changed', noteWarn: true, branches: ['feat/saved-cards', 'main'],
+    busy: [],
+    found: [{ k: 'AGENTS.md', v: '18 lines', ok: true }, { k: '.harness/', v: 'not set up', ok: false }, { k: 'git status', v: '3 uncommitted files on feat/saved-cards', ok: false }] },
+  { id: 'infra', prov: 'local', name: 'infra', path: '~/code/acme/infra', branch: 'main', note: 'no sessions', branches: ['main'],
+    busy: [],
+    found: [{ k: 'AGENTS.md', v: 'missing · run /init after start', ok: false }, { k: 'git status', v: 'clean on main', ok: true }] }
+];
+var TREES_PROV = 'github';
+var TREES = [
+  { id: 'wt-1423', parent: 'payments-api', name: 'fix/PAY-1423', path: '~/.harness/worktrees/payments-api/fix-PAY-1423', who: 'Fixer', dot: 'running' },
+  { id: 'wt-1436', parent: 'payments-api', name: 'pay-1436-retry-budget', path: '~/.harness/worktrees/payments-api/pay-1436', who: 'Payments lead', dot: 'running' },
+  { id: 'wt-refund', parent: 'payments-api', name: 'chat/refund-timeout', path: '~/.harness/worktrees/payments-api/chat-refund-timeout', who: 'your chat · 1d', dot: 'live', mine: true }
+];
+var REPOS = [
+  { id: 'gh-ledger', prov: 'github', name: 'acme/ledger', path: 'github.com/acme/ledger · private · 12 MB', branches: ['main'] },
+  { id: 'gh-sdk', prov: 'gitlab', name: 'platform/gateway-sdk', path: 'gitlab.acme.dev/platform/gateway-sdk · 4 MB', branches: ['main', 'v9'] }
+];
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { renewed: false, runtime: 'mac', sel: 'payments-api', mode: 'worktree', q: '', base: 'main', branch: 'chat/fix-double-charge-retry', started: false };
+  }
+  renderVals() {
+    var self = this, st = this.state, q = st.q.toLowerCase();
+    var cloud = st.runtime === 'cloud', offline = st.runtime === 'laptop';
+    var match = function (x) { return !q || (x.name + ' ' + x.path).toLowerCase().indexOf(q) >= 0; };
+    var pick = function (id) { return function () { self.setState({ sel: id, started: false, mode: id.indexOf('wt-') === 0 ? 'inplace' : (id.indexOf('gh-') === 0 ? 'worktree' : st.mode), base: 'main' }); }; };
+    var provOf = function (key) { return key === 'gitlab' && st.renewed ? PROV.gitlabOk : PROV[key || TREES_PROV]; };
+    var row = function (x, kind, extra) {
+      var on = x.id === st.sel, pv = provOf(x.prov);
+      return Object.assign({
+        name: x.name, path: x.path, branch: x.branch || '', selAttr: on ? 'true' : 'false',
+        bg: on ? 'var(--surface-hover)' : 'transparent', border: on ? 'var(--accent-ring)' : 'transparent',
+        isFolder: kind === 'folder', isTree: kind === 'tree', isRepo: kind === 'repo', pad: kind === 'tree' ? 26 : 8,
+        tileBg: kind === 'repo' ? 'var(--info-soft)' : 'var(--surface-hover)', tileFg: kind === 'repo' ? 'var(--info-text)' : 'var(--text-secondary)',
+        prov: pv.label, provTitle: pv.label + ' · ' + pv.state,
+        provDot: pv.dot === 'live' ? 'var(--success)' : pv.dot === 'waiting' ? 'var(--warning)' : 'transparent', provRing: pv.dot === 'draft' ? '1.5px solid var(--text-muted)' : '0',
+        note: '', noteColor: 'var(--text-muted)', hasDot: false, dot: 'draft', pick: pick(x.id)
+      }, extra || {});
+    };
+    var groups = [];
+    var folderRows = FOLDERS.filter(match).map(function (f) {
+      return row(f, 'folder', { path: cloud ? 'clones ' + f.name + ' from GitHub · ~20s' : f.path, note: cloud ? 'remote' : f.note, noteColor: !cloud && f.noteWarn ? 'var(--warning)' : 'var(--text-muted)' });
+    });
+    if (folderRows.length) groups.push({ name: 'Recent', hint: cloud ? 'from GitHub' : '~/code/acme', items: folderRows });
+    var treeRows = cloud ? [] : TREES.filter(match).map(function (t) {
+      return row(t, 'tree', { path: t.path, note: t.who, hasDot: true, dot: t.dot, noteColor: t.mine ? 'var(--text-muted)' : 'var(--info)' });
+    });
+    if (treeRows.length) groups.push({ name: 'Worktrees · payments-api', hint: '3 of 8', items: treeRows });
+    var repoRows = REPOS.filter(match).map(function (r) { return row(r, 'repo', { note: cloud ? 'clone' : 'clone here' }); });
+    if (repoRows.length) groups.push({ name: 'GitHub · not cloned', hint: 'acme', items: repoRows });
+
+    var folder = FOLDERS.filter(function (f) { return f.id === st.sel; })[0];
+    var tree = TREES.filter(function (t) { return t.id === st.sel; })[0];
+    var repo = REPOS.filter(function (r) { return r.id === st.sel; })[0];
+    var host = tree ? FOLDERS[0] : (folder || null);
+    var sel = {
+      name: tree ? tree.name : (folder ? folder.name : repo.name),
+      where: (RUNTIMES.filter(function (r) { return r.id === st.runtime; })[0].name) + ' · ' + (tree ? tree.path : folder ? (cloud ? 'github.com/acme/' + folder.name : folder.path) : repo.path),
+      branches: tree ? [tree.name] : (folder ? folder.branches : repo.branches),
+      busy: tree ? [] : (host ? host.busy : []),
+      found: (host ? host.found : [{ k: 'AGENTS.md', v: 'checked after clone', ok: false }]).map(function (f) { return { k: f.k, v: f.v, icon: f.ok ? 'check' : 'x', color: f.ok ? 'var(--success)' : 'var(--text-muted)' }; })
+    };
+    if (tree) sel.found = [{ k: 'owner', v: tree.who, icon: 'agent', color: tree.mine ? 'var(--text-muted)' : 'var(--info)' }, { k: 'git status', v: tree.mine ? '2 uncommitted files' : 'agent is writing here', icon: 'x', color: 'var(--text-muted)' }];
+    sel.hasBusy = sel.busy.length > 0;
+    var pvKey = tree ? TREES_PROV : (folder ? folder.prov : repo.prov), pvSel = provOf(pvKey);
+    sel.prov = pvSel.label; sel.provHost = pvSel.host; sel.provState = pvSel.state; sel.provStatus = pvSel.dot;
+    sel.provColor = pvSel.dot === 'waiting' ? 'var(--warning)' : pvSel.dot === 'live' ? 'var(--success)' : 'var(--text-muted)';
+    sel.provBg = pvSel.dot === 'waiting' ? 'var(--warning-soft)' : 'transparent';
+    sel.provFix = !!pvSel.fix; sel.provFixLabel = pvSel.fix || '';
+
+    var busyTree = tree && !tree.mine;
+    var MODES = [
+      { id: 'worktree', title: 'New worktree', desc: 'Own branch and folder. Other agents in this repo are not affected.', rec: !tree && (sel.hasBusy || !!repo), disabled: !!tree },
+      { id: 'inplace', title: tree ? 'Join this worktree' : 'In place on ' + (folder ? folder.branch : 'main'), desc: busyTree ? tree.who + ' is writing here. You can read along; edits will ask first.' : (tree ? 'Pick up where your earlier chat left off.' : (folder && folder.noteWarn ? 'Uses the 3 uncommitted files as they are.' : 'Edits land straight in your checkout.')), rec: !!tree && !busyTree, disabled: !!repo },
+      { id: 'readonly', title: 'Read-only', desc: 'Nothing is written. Good for Plan and for questions about the code.', rec: busyTree, disabled: false }
+    ];
+    var mode = st.mode;
+    var modeOk = MODES.filter(function (m) { return m.id === mode && !m.disabled; })[0];
+    if (!modeOk) mode = MODES.filter(function (m) { return !m.disabled; })[0].id;
+    var modes = MODES.map(function (m) {
+      var on = m.id === mode;
+      return { title: m.title, desc: m.desc, rec: m.rec, checked: on, disabled: m.disabled, opacity: m.disabled ? 0.45 : 1, cursor: m.disabled ? 'not-allowed' : 'pointer', border: on ? 'var(--accent-ring)' : 'var(--line)', bg: on ? 'var(--accent-glow)' : 'transparent', pick: function () { self.setState({ mode: m.id, started: false }); } };
+    });
+
+    var modeText = mode === 'worktree' ? 'new worktree ' + st.branch + ' from ' + st.base : mode === 'readonly' ? 'read-only' : (tree ? 'in worktree ' + tree.name : 'in place');
+    var rtName = RUNTIMES.filter(function (r) { return r.id === st.runtime; })[0].name;
+    return {
+      s12: 12, s14: 14, s16: 16, yes: true, no: false, agentName: 'Build',
+      runtimes: RUNTIMES.map(function (r) {
+        var on = r.id === st.runtime;
+        return { name: r.name, sub: r.sub, dot: r.dot, checked: on ? 'true' : 'false', bg: on ? 'var(--surface-hover)' : 'transparent', border: on ? 'var(--line-strong)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-secondary)', pick: function () { self.setState({ runtime: r.id, started: false }); } };
+      }),
+      q: st.q, setQ: function (e) { self.setState({ q: e.target.value }); },
+      groups: groups, empty: groups.length === 0,
+      sel: sel, modes: modes, showBranch: mode === 'worktree',
+      base: st.base, setBase: function (e) { self.setState({ base: e.target.value }); },
+      branch: st.branch, setBranch: function (e) { self.setState({ branch: e.target.value }); },
+      summary: offline ? 'laptop is offline. The session will start when it reconnects.' : sel.name + ' on ' + rtName + ' · ' + modeText,
+      startLabel: offline ? 'Queue for laptop' : (repo || cloud ? 'Clone and start' : 'Start in ' + sel.name),
+      start: function () { self.setState({ started: true }); },
+      reauth: function () { if (pvKey === 'gitlab') self.setState({ renewed: true }); },
+      started: st.started,
+      startedText: 'Build works in ' + sel.name + ' on ' + rtName + ', ' + modeText + '. Type your first message.',
+      chip: st.started ? { text: sel.name + ' · ' + (mode === 'worktree' ? st.branch : mode === 'readonly' ? 'read-only' : (tree ? tree.name : 'main')), border: 'var(--line-strong)', style: 'solid', color: 'var(--text-secondary)' } : { text: 'no folder yet', border: 'var(--line-strong)', style: 'dashed', color: 'var(--text-muted)' }
+    };
+  }
+}
+</script>
+
+
+</body></html>

@@ -441,32 +441,19 @@ impl ChatScreen {
         };
         self.mcp.phase = McpPhase::Ready;
         self.mcp.warnings = warnings;
-        self.mcp.servers = configs
-            .into_iter()
-            .map(|config| McpServer {
-                status: if config.enabled {
-                    ServerStatus::Starting
-                } else {
-                    ServerStatus::Disabled
-                },
-                config,
-                client: None,
-                tools: Vec::new(),
-                open: false,
-                generation: 0,
-            })
-            .collect();
-        let names: Vec<String> = self
-            .mcp
-            .servers
-            .iter()
-            .filter(|s| s.config.enabled)
-            .map(|s| s.config.name.clone())
-            .collect();
+        // Reloads (another workdir) keep servers whose config is unchanged running — the
+        // user / global ones — and only (re)start or stop what differs (`.mcp.json`).
+        let (servers, names, removed) = merge_servers(std::mem::take(&mut self.mcp.servers), configs);
+        self.mcp.servers = servers;
+        for mut s in removed {
+            self.mcp.start_tasks.remove(&s.config.name);
+            release(s.client.take().into_iter().collect());
+        }
+        self.mcp.rebuild_index();
         for name in names {
             self.start_server(name, cx);
         }
-        if !self.mcp.servers.is_empty() {
+        if !self.mcp.servers.is_empty() && self.mcp.liveness_task.is_none() {
             self.start_liveness(cx);
         }
         cx.notify();
@@ -793,6 +780,51 @@ impl ChatScreen {
     }
 }
 
+/// New server list from `configs`: an existing server with an identical config is kept
+/// as it is; others are fresh (a same-named one keeps its generation so a late start
+/// result of the old process is dropped). Returns the list, the names to start, and the
+/// servers no longer configured (to stop).
+fn merge_servers(
+    mut old: Vec<McpServer>,
+    configs: Vec<mcp::ServerConfig>,
+) -> (Vec<McpServer>, Vec<String>, Vec<McpServer>) {
+    let mut servers = Vec::with_capacity(configs.len());
+    let mut start = Vec::new();
+    let mut replaced = Vec::new();
+    for config in configs {
+        if let Some(pos) = old.iter().position(|s| s.config == config) {
+            servers.push(old.remove(pos));
+            continue;
+        }
+        let generation = match old.iter().position(|s| s.config.name == config.name) {
+            Some(pos) => {
+                let prev = old.remove(pos);
+                let g = prev.generation;
+                replaced.push(prev);
+                g
+            }
+            None => 0,
+        };
+        if config.enabled {
+            start.push(config.name.clone());
+        }
+        servers.push(McpServer {
+            status: if config.enabled {
+                ServerStatus::Starting
+            } else {
+                ServerStatus::Disabled
+            },
+            config,
+            client: None,
+            tools: Vec::new(),
+            open: false,
+            generation,
+        });
+    }
+    old.extend(replaced);
+    (servers, start, old)
+}
+
 fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or("")
 }
@@ -862,6 +894,44 @@ mod tests {
             .unwrap();
         assert_eq!((r.text.as_str(), r.is_error), ("hi", false));
         release(vec![client]);
+    }
+
+    #[test]
+    fn merge_keeps_unchanged_servers() {
+        let cfg = |name: &str, cmd: &str| mcp::ServerConfig {
+            name: name.into(),
+            command: cmd.into(),
+            args: Vec::new(),
+            env: Default::default(),
+            cwd: None,
+            enabled: true,
+            auto_approve: Vec::new(),
+            source: mcp::ServerSource::HarnessConfig,
+        };
+        let server = |c: mcp::ServerConfig| McpServer {
+            config: c,
+            status: ServerStatus::Ready,
+            client: None,
+            tools: Vec::new(),
+            open: false,
+            generation: 3,
+        };
+        let old = vec![
+            server(cfg("global", "g")),
+            server(cfg("proj", "p1")),
+            server(cfg("gone", "x")),
+        ];
+        let (servers, start, removed) = merge_servers(
+            old,
+            vec![cfg("global", "g"), cfg("proj", "p2"), cfg("new", "n")],
+        );
+        assert_eq!(start, ["proj", "new"]);
+        assert_eq!(servers[0].status, ServerStatus::Ready);
+        assert_eq!(servers[1].status, ServerStatus::Starting);
+        assert_eq!(servers[1].generation, 3);
+        assert_eq!(servers[2].generation, 0);
+        let gone: Vec<&str> = removed.iter().map(|s| s.config.name.as_str()).collect();
+        assert_eq!(gone, ["gone", "proj"]);
     }
 
     #[test]

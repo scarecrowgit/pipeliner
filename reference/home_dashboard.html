@@ -1,0 +1,214 @@
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+
+<div style="flex: 1 1 232px; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="home" hint-size="232px,900px"></dc-import>
+</div>
+
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line);">
+    <h1 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Home</h1>
+    <span style="font-size: 12px; color: var(--text-muted);">Sunday, 22 November · Acme · Payments</span>
+    <span style="flex: 1 1 auto;"></span>
+    <div role="radiogroup" aria-label="Period" style="display: inline-flex; padding: 2px; border-radius: 8px; background: var(--bg-sidebar); border: 1px solid var(--line);">
+      <sc-for list="{{ranges}}" as="r" hint-placeholder-count="3">
+        <button type="button" role="radio" aria-checked="{{r.checked}}" class="hm-focus" sc-camel-on-click="{{r.pick}}" style="height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: {{r.bg}}; color: {{r.color}}; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;">{{r.label}}</button>
+      </sc-for>
+    </div>
+    <a href="Workdir.dc.html" class="hm-focus" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 16px; box-sizing: border-box; border-radius: 8px; background: var(--accent-strong); color: var(--on-accent); font-weight: 500; text-decoration: none;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s14}}"></x-import>New chat</a>
+  </header>
+
+  <main style="display: flex; flex-direction: column; gap: 16px; padding: 20px 24px 24px; box-sizing: border-box;">
+
+    <section aria-label="Totals" style="display: flex; flex-wrap: wrap; gap: 16px 0; padding: 14px 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+      <sc-for list="{{kpis}}" as="k" hint-placeholder-count="5">
+        <div style="flex: 1 1 160px; padding: 0 20px; border-left: 1px solid {{k.divider}};">
+          <x-import component-from-global-scope="Graphite.Stat" label="{{k.label}}" value="{{k.value}}" sub="{{k.sub}}" tone="{{k.tone}}" size="lg"></x-import>
+        </div>
+      </sc-for>
+    </section>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch;">
+      <section aria-label="Working now" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line);">
+          <h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Working now</h2>
+          <span style="flex: 1 1 auto;"></span>
+          <sc-for list="{{kinds}}" as="kd" hint-placeholder-count="4">
+            <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);"><span style="width: 18px; height: 18px; border-radius: 4px; background: {{kd.bg}}; color: {{kd.fg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{kd.icon}}" size="{{s12}}"></x-import></span><b style="font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums;">{{kd.n}}</b> {{kd.label}}</span>
+          </sc-for>
+        </div>
+        <div style="overflow-x: auto;">
+          <div style="min-width: 620px;">
+            <sc-for list="{{live}}" as="l" hint-placeholder-count="6">
+              <a href="{{l.href}}" class="hm-row" style="display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.5fr) 90px 56px 60px 120px; gap: 12px; align-items: center; min-height: 44px; padding: 6px 14px; box-sizing: border-box; border-top: 1px solid var(--line-subtle); color: var(--text); text-decoration: none; transition: background-color 150ms ease;">
+                <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <span style="width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; background: {{l.bg}}; color: {{l.fg}}; border: 1px {{l.bs}} {{l.bc}}; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{l.icon}}" size="{{s12}}"></x-import></span>
+                  <span style="display: flex; flex-direction: column; min-width: 0;"><span style="font-weight: 500; color: {{l.nameColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{l.name}}</span><span style="font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{l.kind}}</span></span>
+                </span>
+                <span style="display: flex; flex-direction: column; min-width: 0;"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary);">{{l.what}}</span><span style="font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted);">{{l.ref}}</span></span>
+                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{l.runtime}}</span>
+                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); text-align: right;">{{l.elapsed}}</span>
+                <span style="font-family: var(--font-mono); font-size: 12px; text-align: right;">{{l.cost}}</span>
+                <span style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{l.stColor}};"><x-import component-from-global-scope="Graphite.StatusDot" status="{{l.dot}}" size="sm"></x-import>{{l.st}}</span>
+                  <sc-if value="{{l.hasPct}}" hint-placeholder-val="{{yes}}"><x-import component-from-global-scope="Graphite.Progress" value="{{l.pct}}" label="{{l.pctLabel}}"></x-import></sc-if>
+                </span>
+              </a>
+            </sc-for>
+          </div>
+        </div>
+        <a href="Agents.dc.html" style="padding: 10px 14px; margin-top: auto; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-muted); text-decoration: none;">All agents &amp; pipelines · 14 →</a>
+      </section>
+
+      <section aria-label="Needs you" style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line);">
+          <h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Needs you</h2>
+          <x-import component-from-global-scope="Graphite.Badge" tone="count">4</x-import>
+        </div>
+        <sc-for list="{{needs}}" as="n" hint-placeholder-count="4">
+          <a href="{{n.href}}" class="hm-row" style="display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-subtle); color: var(--text); text-decoration: none; transition: background-color 150ms ease;">
+            <span style="margin-top: 6px; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 999px; background: var(--warning);"></span>
+            <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-weight: 500;">{{n.title}}</span>
+              <span style="font-size: 12px; line-height: 18px; color: var(--text-muted);">{{n.who}} · <span style="font-family: var(--font-mono);">{{n.ref}}</span> · {{n.age}}</span>
+            </span>
+            <span style="align-self: center; font-size: 12px; color: var(--accent-text); white-space: nowrap;">{{n.action}}</span>
+          </a>
+        </sc-for>
+        <a href="Review.dc.html" style="padding: 10px 14px; margin-top: auto; font-size: 12px; color: var(--text-muted); text-decoration: none;">Open inbox →</a>
+      </section>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch;">
+      <section aria-label="Spend per day" style="flex: 1.4 1 380px; min-width: 0; padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: baseline; gap: 8px;"><h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Spend per day</h2><span style="font-size: 12px; color: var(--text-muted);">last 7 days · limit $10.00 a day</span></div>
+        <div style="position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 8px;">
+          <div aria-hidden="true" style="position: relative; height: 140px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">
+            <span style="position: absolute; right: 0; top: -8px;">$10</span><span style="position: absolute; right: 0; top: 62px;">$5</span><span style="position: absolute; right: 0; bottom: -8px;">$0</span>
+          </div>
+          <div style="position: relative; height: 140px; border-bottom: 1px solid var(--line-strong);">
+            <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; border-top: 1px dashed var(--line-strong);"></div>
+            <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 70px; border-top: 1px solid var(--line-subtle);"></div>
+            <div role="list" style="position: absolute; inset: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; align-items: end; padding: 0 6px;">
+              <sc-for list="{{days}}" as="d" hint-placeholder-count="7">
+                <div role="listitem" class="hm-bar" title="{{d.tip}}" aria-label="{{d.tip}}" style="position: relative; height: 100%; display: flex; align-items: flex-end; justify-content: center;">
+                  <div class="hm-fill" style="width: 100%; max-width: 28px; height: {{d.h}}%; border-radius: 4px 4px 0 0; background: {{d.fill}}; transition: background-color 150ms ease;"></div>
+                  <sc-if value="{{d.label}}" hint-placeholder-val="{{no}}"><span style="position: absolute; bottom: calc({{d.h}}% + 4px); font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);">{{d.v}}</span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <span></span>
+          <div aria-hidden="true" style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: center;">
+            <sc-for list="{{days}}" as="d" hint-placeholder-count="7"><span>{{d.day}}</span></sc-for>
+          </div>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted);">Today so far is lighter: $3.81 of $10.00. Hover a bar for the day total.</span>
+      </section>
+
+      <section aria-label="Spend by agent" style="flex: 1 1 320px; min-width: 0; padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: baseline; gap: 8px;"><h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Spend by agent</h2><span style="font-size: 12px; color: var(--text-muted);">{{rangeLabel}}</span></div>
+        <sc-for list="{{byAgent}}" as="b" hint-placeholder-count="7">
+          <div title="{{b.tip}}" style="display: grid; grid-template-columns: 112px minmax(0, 1fr) 52px; gap: 8px; align-items: center; min-height: 24px;">
+            <span style="display: flex; align-items: center; gap: 6px; min-width: 0;"><span style="display: inline-flex; color: {{b.iconColor}};"><x-import component-from-global-scope="Graphite.Icon" name="{{b.icon}}" size="{{s12}}"></x-import></span><span style="font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{b.name}}</span></span>
+            <span style="height: 8px; border-radius: 0 4px 4px 0; background: var(--line-subtle);"><span style="display: block; height: 8px; width: {{b.w}}%; border-radius: 0 4px 4px 0; background: var(--accent);"></span></span>
+            <span style="font-family: var(--font-mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums;">{{b.v}}</span>
+          </div>
+        </sc-for>
+      </section>
+
+      <section aria-label="Runtimes" style="flex: 1 1 260px; min-width: 0; padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 12px;">
+        <h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Runtimes</h2>
+        <sc-for list="{{runtimes}}" as="rt" hint-placeholder-count="3">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><x-import component-from-global-scope="Graphite.StatusDot" status="{{rt.dot}}" size="sm" label="{{rt.state}}"></x-import><span style="font-family: var(--font-mono); font-size: 12px; flex: 1 1 auto;">{{rt.name}}</span><span style="font-size: 12px; color: var(--text-muted);">{{rt.use}}</span></div>
+            <x-import component-from-global-scope="Graphite.Progress" value="{{rt.used}}" max="{{rt.max}}" label="{{rt.label}}"></x-import>
+            <span style="font-size: 12px; color: var(--text-muted);">{{rt.note}}</span>
+          </div>
+        </sc-for>
+      </section>
+    </div>
+  </main>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:960}}">
+var K = {
+  orch: { icon: 'router', label: 'Orchestrator', bg: 'var(--accent-soft)', fg: 'var(--accent-text)' },
+  agent: { icon: 'agent', label: 'Agent', bg: 'var(--surface-hover)', fg: 'var(--text-secondary)' },
+  pipe: { icon: 'pipelines', label: 'Pipeline', bg: 'var(--info-soft)', fg: 'var(--info-text)' },
+  made: { icon: 'spawn', label: 'Created by an agent', bg: 'var(--spawn-soft)', fg: 'var(--spawn-text)' }
+};
+var LIVE = [
+  { k: 'orch', name: 'Payments lead', what: 'Retry budget per merchant', ref: 'PAY-1436', runtime: 'cloud', elapsed: '31m', cost: '$0.44', st: 'running', pct: 40, href: 'Agents.dc.html' },
+  { k: 'pipe', name: 'PAY triage', what: 'Refund webhook times out · Reproducer', ref: 'PAY-1427', runtime: 'cloud', elapsed: '20m', cost: '$0.12', st: 'running', pct: 64, href: 'Main.dc.html' },
+  { k: 'made', name: 'Migration checker', by: 'Payments lead', what: 'Read SDK v9 diff for Codex', ref: 'PAY-1438', runtime: 'cloud', elapsed: '9m', cost: '$0.08', st: 'running', pct: 50, href: 'Agents.dc.html' },
+  { k: 'made', name: 'Log digger', by: 'Reproducer', what: 'Search 24h of logs', ref: 'PAY-1427', runtime: 'cloud', elapsed: '6m', cost: '$0.02', st: 'running', pct: 70, href: 'Main.dc.html' },
+  { k: 'agent', name: 'Build', what: 'Chat · Fix double charge on retry', ref: 'fix/PAY-1423', runtime: 'mac-mini', elapsed: '12m', cost: '$0.21', st: 'waiting', stText: 'asks to run bun test', href: 'Chat.dc.html' },
+  { k: 'agent', name: 'Auditor', what: 'Audit PCI log redaction', ref: 'PAY-1435', runtime: 'cloud', elapsed: '40m', cost: '$0.15', st: 'waiting', stText: 'asks which sinks', href: 'Board.dc.html' }
+];
+var NEEDS = [
+  { title: 'Allow bun test src/charges', who: 'Build in chat', ref: 'fix/PAY-1423', age: '12m', action: 'Answer', href: 'Chat.dc.html' },
+  { title: 'Pick 1 of 3 variants', who: 'PAY triage · Fixer ×3', ref: 'PAY-1423', age: '40m', action: 'Review', href: 'Review.dc.html' },
+  { title: 'Which log sinks are in scope?', who: 'Auditor', ref: 'PAY-1435', age: '40m', action: 'Reply', href: 'Board.dc.html' },
+  { title: 'Pick 1 of 2 specs', who: 'PAY triage · Analyst ×2', ref: 'PAY-1431', age: '3h', action: 'Review', href: 'Review.dc.html' }
+];
+var DAYS = [['Mon', 5.2], ['Tue', 7.9], ['Wed', 6.4], ['Thu', 8.8], ['Fri', 4.1], ['Sat', 2.3], ['Sun', 3.81]];
+var BY = {
+  today: [['Payments lead', 'orch', 1.12], ['PAY triage', 'pipe', 0.94], ['Build', 'agent', 0.62], ['Fixer', 'agent', 0.41], ['Codex', 'agent', 0.18], ['Auditor', 'agent', 0.15], ['Others · 6', 'agent', 0.39]],
+  week: [['Payments lead', 'orch', 9.4], ['PAY triage', 'pipe', 8.1], ['Fixer', 'agent', 6.2], ['Build', 'agent', 5.3], ['Codex', 'agent', 3.1], ['Nightly audit', 'pipe', 2.2], ['Others · 8', 'agent', 4.21]],
+  month: [['PAY triage', 'pipe', 41.2], ['Payments lead', 'orch', 33.8], ['Fixer', 'agent', 27.5], ['Build', 'agent', 22.9], ['Nightly audit', 'pipe', 9.6], ['Codex', 'agent', 8.4], ['Others · 11', 'agent', 17.3]]
+};
+var KPI = {
+  today: [['Working now', '6', 'of 12 slots'], ['Waiting for you', '4', 'oldest 3h', 'warning'], ['Runs', '61', '92% finished'], ['Spend', '$3.81', 'of $10.00'], ['Shipped', '7', 'PRs and specs']],
+  week: [['Working now', '6', 'of 12 slots'], ['Waiting for you', '4', 'oldest 3h', 'warning'], ['Runs', '412', '89% finished'], ['Spend', '$38.51', 'of $70.00'], ['Shipped', '43', 'PRs and specs']],
+  month: [['Working now', '6', 'of 12 slots'], ['Waiting for you', '4', 'oldest 3h', 'warning'], ['Runs', '1,730', '90% finished'], ['Spend', '$160.70', 'of $300.00'], ['Shipped', '171', 'PRs and specs']]
+};
+var RANGE_LABEL = { today: 'today', week: 'last 7 days', month: 'last 30 days' };
+
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { range: 'today' }; }
+  renderVals() {
+    var self = this, st = this.state;
+    var by = BY[st.range], max = by[0][2];
+    var counts = { orch: 0, agent: 0, pipe: 0, made: 0 };
+    LIVE.forEach(function (l) { counts[l.k]++; });
+    return {
+      s12: 12, s14: 14, yes: true, no: false,
+      ranges: [['today', 'Today'], ['week', '7 days'], ['month', '30 days']].map(function (r) {
+        var on = st.range === r[0];
+        return { label: r[1], checked: on ? 'true' : 'false', bg: on ? 'var(--surface-hover)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-secondary)', pick: function () { self.setState({ range: r[0] }); } };
+      }),
+      rangeLabel: RANGE_LABEL[st.range],
+      kpis: KPI[st.range].map(function (k, i) { return { label: k[0], value: k[1], sub: k[2], tone: k[3], divider: i ? 'var(--line)' : 'transparent' }; }),
+      kinds: [['orch', 'orchestrator'], ['agent', 'agents'], ['pipe', 'pipeline'], ['made', 'created by agents']].map(function (x) { var t = K[x[0]]; return { n: counts[x[0]], label: x[1], icon: t.icon, bg: t.bg, fg: t.fg }; }),
+      live: LIVE.map(function (l) {
+        var t = K[l.k], w = l.st === 'waiting';
+        return {
+          name: l.name, kind: l.by ? 'created by ' + l.by : t.label, what: l.what, ref: l.ref, runtime: l.runtime, elapsed: l.elapsed, cost: l.cost, href: l.href,
+          icon: t.icon, bg: t.bg, fg: t.fg, bs: l.k === 'made' ? 'dashed' : 'solid', bc: l.k === 'made' ? 'var(--spawn-line)' : 'transparent', nameColor: l.k === 'made' ? 'var(--spawn-text)' : 'var(--text)',
+          dot: w ? 'waiting' : (l.k === 'made' ? 'spawn' : 'running'), st: w ? l.stText : 'running · ' + l.pct + '%', stColor: w ? 'var(--warning)' : 'var(--text-secondary)',
+          hasPct: !w, pct: l.pct || 0, pctLabel: l.name + ' progress'
+        };
+      }),
+      needs: NEEDS,
+      days: DAYS.map(function (d, i) {
+        var today = i === DAYS.length - 1;
+        return { day: d[0], v: '$' + d[1].toFixed(2), h: Math.round(d[1] / 10 * 100), fill: today ? 'var(--accent-ring)' : 'var(--accent)', label: today || d[1] === 8.8, tip: d[0] + ': $' + d[1].toFixed(2) + ' of $10.00' + (today ? ' so far' : '') };
+      }),
+      byAgent: by.map(function (b) {
+        return { name: b[0], v: '$' + b[2].toFixed(2), w: Math.max(2, Math.round(b[2] / max * 100)), icon: K[b[1]].icon, iconColor: K[b[1]].fg, tip: b[0] + ': $' + b[2].toFixed(2) + ' ' + RANGE_LABEL[st.range] };
+      }),
+      runtimes: [
+        { name: 'mac-mini', dot: 'live', state: 'online', use: '3 of 4 slots', used: 3, max: 4, label: 'mac-mini slots used', note: 'Build, Fixer test runs · 61% CPU' },
+        { name: 'cloud', dot: 'live', state: 'online', use: '5 of 8 sandboxes', used: 5, max: 8, label: 'cloud sandboxes used', note: '$0.02 per sandbox-hour' },
+        { name: 'laptop', dot: 'draft', state: 'offline', use: 'offline 2h', used: 0, max: 2, label: 'laptop slots used', note: 'Codex queue waits for it · 1 run' }
+      ]
+    };
+  }
+}
+</script>
+
+
+</body></html>

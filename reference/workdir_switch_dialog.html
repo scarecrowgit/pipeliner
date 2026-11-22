@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>Switch workdir mid-session</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+
+
+</helmet>
+<div style="width: 560px; height: 640px; box-sizing: border-box; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px; display: flex; flex-direction: column;">
+  <header style="display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 20px; box-sizing: border-box; border-bottom: 1px solid var(--line); background: var(--bg-sidebar);">
+    <span style="font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Fix double charge on retry</span>
+    <span style="flex: 1 1 auto;"></span>
+    <button type="button" class="sw-focus" aria-haspopup="listbox" aria-expanded="{{openAttr}}" sc-camel-on-click="{{toggle}}" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--accent-ring); background: var(--accent-soft); color: var(--text); font-family: var(--font-mono); font-size: 12px; cursor: pointer;">
+      <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--success);"></span>
+      <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+      {{cur.label}}
+      <x-import component-from-global-scope="Graphite.Icon" name="chevron-down" size="{{s12}}"></x-import>
+    </button>
+  </header>
+
+  <div style="position: relative; flex: 1 1 auto; padding: 16px 20px;">
+    <p style="margin: 0; color: var(--text-muted);">Chat transcript behind the popover…</p>
+
+    <sc-if value="{{open}}" hint-placeholder-val="{{yes}}">
+      <div role="listbox" aria-label="Workdir" style="position: absolute; right: 20px; top: 8px; width: 420px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); overflow: hidden;">
+        <div style="padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px;">
+          <span style="font-size: 12px; color: var(--text-muted);">Working in</span>
+          <span style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 500;">{{cur.name}}</span><span style="display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; background: var(--success);"></span>GitHub</span></span>
+          <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">mac-mini · {{cur.path}}</span>
+          <span style="font-size: 12px; color: var(--text-secondary);">2 uncommitted files · 1 ahead of main</span>
+        </div>
+        <div style="padding: 4px;">
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="5">
+            <button type="button" role="option" aria-selected="{{r.selAttr}}" class="sw-row" sc-camel-on-click="{{r.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 10px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{r.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+              <span style="width: 14px; display: inline-flex; color: var(--accent-text); opacity: {{r.checkOpacity}};"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s14}}"></x-import></span>
+              <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;">
+                <span style="display: flex; align-items: center; gap: 6px;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.name}}</span><span style="display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);"><span style="width: 6px; height: 6px; border-radius: 999px; box-sizing: border-box; background: {{r.provDot}}; border: {{r.provRing}};"></span>{{r.prov}}</span></span>
+                <span style="font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.path}}</span>
+              </span>
+              <span style="font-size: 12px; color: {{r.noteColor}}; white-space: nowrap;">{{r.note}}</span>
+            </button>
+          </sc-for>
+        </div>
+        <sc-if value="{{changed}}" hint-placeholder-val="{{no}}">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--warning-soft);">
+            <span style="color: var(--warning); font-weight: 500;">Move this chat to {{next.name}}?</span>
+            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary);">Build continues there with the same history. The 2 uncommitted files stay in {{cur.name}}, nothing is copied.</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="primary" on-click="{{confirm}}">Move chat</x-import>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{fork}}">Fork a new chat there</x-import>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" on-click="{{cancel}}">Cancel</x-import>
+            </div>
+          </div>
+        </sc-if>
+        <div style="display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line);">
+          <a href="Workdir.dc.html" class="sw-focus" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--text-secondary); font-size: 12px; text-decoration: none;">All folders and runtimes…</a>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:560,&quot;height&quot;:640}}">
+var ROWS = [
+  { id: 'wt-1423', name: 'payments-api · fix/PAY-1423', label: 'payments-api · fix/PAY-1423', path: '~/.harness/worktrees/payments-api/fix-PAY-1423', prov: 'GitHub', pd: 'live', note: 'this chat', nc: 'var(--text-muted)' },
+  { id: 'main', name: 'payments-api · main', label: 'payments-api · main', path: '~/code/acme/payments-api', prov: 'GitHub', pd: 'live', note: 'clean', nc: 'var(--text-muted)' },
+  { id: 'wt-1436', name: 'payments-api · pay-1436-retry-budget', label: 'payments-api · pay-1436', path: '~/.harness/worktrees/payments-api/pay-1436', prov: 'GitHub', pd: 'live', note: 'Payments lead', nc: 'var(--info)' },
+  { id: 'checkout', name: 'checkout-web · feat/saved-cards', label: 'checkout-web · feat/saved-cards', path: '~/code/acme/checkout-web', prov: 'GitLab', pd: 'waiting', note: 'token expires 3d', nc: 'var(--warning)' },
+  { id: 'infra', name: 'infra · main', label: 'infra · main', path: '~/code/acme/infra', prov: 'Local', pd: 'draft', note: 'no remote', nc: 'var(--text-muted)' }
+];
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { open: true, cur: 'wt-1423', pending: null }; }
+  renderVals() {
+    var self = this, st = this.state;
+    var by = function (id) { return ROWS.filter(function (r) { return r.id === id; })[0]; };
+    var cur = by(st.cur), target = st.pending ? by(st.pending) : null;
+    return {
+      s12: 12, s14: 14, yes: true, no: false,
+      open: st.open, openAttr: st.open ? 'true' : 'false',
+      toggle: function () { self.setState({ open: !st.open, pending: null }); },
+      cur: cur, next: target || cur, changed: !!target,
+      rows: ROWS.map(function (r) {
+        var on = r.id === (st.pending || st.cur);
+        return { name: r.name, path: r.path, prov: r.prov, note: r.id === st.cur ? 'this chat' : r.note, noteColor: r.nc, selAttr: on ? 'true' : 'false', bg: on ? 'var(--surface-hover)' : 'transparent', checkOpacity: r.id === st.cur ? 1 : 0,
+          provDot: r.pd === 'live' ? 'var(--success)' : r.pd === 'waiting' ? 'var(--warning)' : 'transparent', provRing: r.pd === 'draft' ? '1.5px solid var(--text-muted)' : '0',
+          pick: function () { self.setState({ pending: r.id === st.cur ? null : r.id }); } };
+      }),
+      confirm: function () { self.setState({ cur: st.pending, pending: null, open: false }); },
+      fork: function () { self.setState({ pending: null, open: false }); },
+      cancel: function () { self.setState({ pending: null }); }
+    };
+  }
+}
+</script>
+
+
+</body></html>

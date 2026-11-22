@@ -184,6 +184,10 @@ impl TextInput {
     }
 
     fn delete_word_back(&mut self, _: &DeleteWordBack, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() && self.cursor_offset() == 0 {
+            cx.propagate();
+            return;
+        }
         if self.selected_range.is_empty() {
             let cursor = self.cursor_offset();
             let head = &self.content[..cursor];
@@ -236,6 +240,11 @@ impl TextInput {
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        // Nothing to delete: let an outer binding use the key (e.g. remove a filter chip).
+        if self.selected_range.is_empty() && self.cursor_offset() == 0 {
+            cx.propagate();
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }

@@ -7,6 +7,7 @@ pub mod nav;
 pub mod selectable;
 pub mod text_input;
 pub mod theme;
+pub mod time;
 
 pub use components::*;
 pub use text_input::{TextInput, TextInputEvent};
@@ -16,13 +17,21 @@ use gpui::{
     div, prelude::*, px, size,
 };
 
-actions!(harness, [Quit]);
+actions!(harness, [Quit, ToggleChatHistory]);
 
 /// Global setup every window needs: keybindings for text inputs, quit.
 pub fn init(cx: &mut App) {
     text_input::bind_keys(cx);
-    cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
+    cx.bind_keys([
+        KeyBinding::new("ctrl-q", Quit, None),
+        KeyBinding::new("ctrl-k", ToggleChatHistory, None),
+        KeyBinding::new("cmd-k", ToggleChatHistory, None),
+    ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &ToggleChatHistory, cx| {
+        let open = nav::history_open(cx);
+        nav::set_history_open(!open, cx);
+    });
 }
 
 /// Base text style for a window's root element: Inter 13/20, text color, bg.

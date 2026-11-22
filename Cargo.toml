@@ -23,6 +23,7 @@ screen_review = { path = "crates/screen_review" }
 screen_chat = { path = "crates/screen_chat" }
 screen_issues = { path = "crates/screen_issues" }
 screen_agents = { path = "crates/screen_agents" }
+screen_home = { path = "crates/screen_home" }
 
 [profile.dev]
 opt-level = 1

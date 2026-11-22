@@ -8,3 +8,4 @@ gpui.workspace = true
 anyhow.workspace = true
 rust-embed = "8"
 unicode-segmentation = "1"
+libc = "0.2"

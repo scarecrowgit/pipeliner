@@ -9,16 +9,22 @@ shared sidebar, Graphite dark design tokens, mock data and the mockup's interact
 nix-shell shell.nix --run 'cargo run'
 ```
 
-Start on a specific screen: `HARNESS_SCREEN=chat|editor|inbox|issues|agents` (default `chat`).
+Start on a specific screen: `HARNESS_SCREEN=chat|home|editor|inbox|issues|agents` (default `chat`).
 Each screen also runs standalone: `cargo run -p screen_editor --example screen_editor` (same for
-`screen_review`, `screen_chat`, `screen_issues`, `screen_agents`, `sidebar`). `Ctrl+Q` quits.
+`screen_home`, `screen_review`, `screen_chat`, `screen_issues`, `screen_agents`, `sidebar`). `Ctrl+Q` quits.
+
+`Ctrl+K` (or "Search chats" / "All chats" in the sidebar) opens the chat history picker: search over
+titles, messages, files and folders with `in:` `agent:` `is:` `has:files` chips, status filters, time
+groups, preview, Open / Fork / Pin / Archive (with Undo), and Select mode for bulk archive, Markdown
+export (to `~/Downloads`) and delete. Pins and archive live in `~/.local/share/harness/chat_flags.json`.
+Home shows the dashboard (mock pipeline data; running and waiting chats are real).
 
 ## Real chat (LLM over API)
 
 The Chat screen is a working coding agent (crates `llm` + `agent_tools`): streaming replies, tool
 calls (read_file, list_dir, grep auto; edit_file, write_file, bash ask first), Build/Plan modes,
 `!cmd`, `/new /clear /model /plan /build`, @file mentions, real token/cost panel, sessions saved to
-`~/.local/share/harness/sessions` and listed under Chat in the sidebar (click to switch, "New session"). Providers come from `~/.config/harness/config.toml`:
+`~/.local/share/harness/sessions` and listed under Chats in the sidebar (Pinned, Recent; click to switch, `+` for a new chat). Providers come from `~/.config/harness/config.toml`:
 
 ```toml
 default_model = "nr/cc/claude-opus-5-5"   # "<provider id>/<model id>" (split at the first '/')
@@ -47,7 +53,7 @@ Agent picker ("Talk to"): Build / Plan (Tab) plus Claude Code subagents from `~/
 *force* skills: their full text is in every request of the session (chips next to the agent button,
 "Skills in context" in the panel); other skills load on demand.
 
-Test hooks: `HARNESS_CHAT_PICKER_OPEN=1`, `HARNESS_CHAT_FORCE=skill-a,skill-b`; `HARNESS_CHAT_PROMPT="..."` sends a prompt in a fresh session on start; `HARNESS_CHAT_OPEN=<id>` opens a saved session.
+Test hooks: `HARNESS_CHAT_PICKER_OPEN=1`, `HARNESS_CHAT_FORCE=skill-a,skill-b`; `HARNESS_CHAT_PROMPT="..."` sends a prompt in a fresh session on start; `HARNESS_CHAT_OPEN=<id>` opens a saved session; `HARNESS_CHAT_HISTORY=1` opens the history picker (`HARNESS_CHAT_HISTORY_Q="in:repo text"` pre-fills it).
 CLI check without the GUI: `cargo run -p llm --example chat -- [--tools] provider/model "prompt"`.
 
 ## Screens

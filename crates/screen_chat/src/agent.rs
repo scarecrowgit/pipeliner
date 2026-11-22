@@ -25,6 +25,7 @@ use crate::session::{
     self, Attachment, Item, Saved, ShellRun, ToolResult, ToolStatus, Turn, TurnState, UserMsg,
 };
 use crate::todo::{self, TODO_TOOL};
+use crate::workdir::WorkMode;
 use crate::{ChatScreen, ConfigState};
 
 /// Model calls per send before the loop stops.
@@ -43,6 +44,10 @@ how it was verified.";
 
 const SYSTEM_MCP: &str = "\n- Tools named `mcp__<server>__<tool>` come from external MCP servers the \
 user configured; the user approves them unless they are auto-approved.";
+
+const SYSTEM_READ_ONLY: &str = "\n\nThis chat works in its folder read-only: only read-only \
+tools are available. Answer questions and propose changes, but do not try to edit files or run \
+commands.";
 
 const SYSTEM_PLAN: &str = "\n\nYou are in Plan mode: only read-only tools are available. \
 Investigate the code and reply with a concise, numbered implementation plan (files, changes, \
@@ -251,12 +256,34 @@ impl ChatScreen {
     /// An agent's `tools:` list names MCP tools explicitly: those are offered directly.
     pub(crate) fn mcp_deferred(&self) -> bool {
         self.mode == Mode::Build
+            && !self.read_only()
             && self.mcp.index.len() > deferred::EAGER_LIMIT
             && self.agent_grants().is_none()
     }
 
+    /// The session's folder is read-only (enforced whatever the agent / Build-Plan mode).
+    pub(crate) fn read_only(&self) -> bool {
+        self.work_mode == WorkMode::ReadOnly
+    }
+
     /// Tools for the next request (by the selected agent / mode) and the MCP targets.
+    /// A read-only folder offers only the workspace's read tools, todo and skills.
     fn request_tools(&self) -> (Vec<llm::ToolSpec>, BTreeMap<String, McpTarget>) {
+        let (mut tools, mcp_tools) = self.mode_tools();
+        if !self.read_only() {
+            return (tools, mcp_tools);
+        }
+        tools.retain(|t| {
+            t.name == TODO_TOOL
+                || t.name == SKILL_TOOL
+                || self.workspace.permission(&t.name) == Permission::Auto
+                    && !t.name.starts_with("mcp__")
+                    && t.name != deferred::TOOL_SEARCH
+        });
+        (tools, BTreeMap::new())
+    }
+
+    fn mode_tools(&self) -> (Vec<llm::ToolSpec>, BTreeMap<String, McpTarget>) {
         let grants = self.agent_grants();
         let allows = |tool: &str| grants.as_ref().is_none_or(|g| g.has(tool));
         let mut tools = self.workspace.tool_specs();
@@ -314,7 +341,10 @@ impl ChatScreen {
         if self.mode == Mode::Plan {
             s.push_str(SYSTEM_PLAN);
         }
-        let has_mcp = match &grants {
+        if self.read_only() {
+            s.push_str(SYSTEM_READ_ONLY);
+        }
+        let has_mcp = !self.read_only() && match &grants {
             Some(g) => self.mcp.index.keys().any(|k| g.grants_mcp(k)),
             None => self.mode == Mode::Build && self.mcp.has_tools(),
         };
@@ -549,6 +579,7 @@ impl ChatScreen {
             let offered = run.offered.clone();
             let mcp_target = |name: &str| run.mcp_tools.get(name).cloned();
             let mode = self.mode;
+            let read_only = self.read_only();
             let custom = self.active_agent().map(|a| a.name.clone());
             let Some(Item::Turn(turn)) = self.items.last_mut() else {
                 self.finish_run(cx);
@@ -564,7 +595,11 @@ impl ChatScreen {
             let input = call.input.clone().unwrap_or(Value::Null);
             let target = mcp_target(&name);
             if !offered.contains(&name) {
-                let why = if let Some(agent) = &custom {
+                let why = if read_only {
+                    format!(
+                        "Tool `{name}` is not available: this chat works in its folder read-only. Describe the change instead."
+                    )
+                } else if let Some(agent) = &custom {
                     format!("Tool `{name}` is not available to the agent `{agent}`.")
                 } else if mode == Mode::Plan {
                     format!(
@@ -825,7 +860,7 @@ impl ChatScreen {
     fn run_command(&mut self, line: &str, window: &mut Window, cx: &mut Context<Self>) {
         let name = line.split_whitespace().next().unwrap_or("");
         match name {
-            "new" => self.new_session(cx),
+            "new" => self.open_new_chat(cx),
             "clear" => self.clear_session(cx),
             "model" | "models" => self.open_model_menu(window, cx),
             "plan" => self.set_mode(Mode::Plan, cx),
@@ -842,7 +877,7 @@ impl ChatScreen {
         }
     }
 
-    fn reset_session_state(&mut self) {
+    pub(crate) fn reset_session_state(&mut self) {
         self.items.clear();
         self.todos.clear();
         self.modified.clear();
@@ -892,6 +927,8 @@ impl ChatScreen {
             mode: self.mode,
             agent: self.custom_agent.clone(),
             forced_skills: self.forced.iter().cloned().collect(),
+            workdir: Some(self.workspace.root.clone()),
+            work_mode: self.work_mode,
         };
         let title = session::title(&self.items);
         self.touch_index(title.clone());
@@ -911,13 +948,27 @@ impl ChatScreen {
             session::IndexEntry {
                 id: self.session_id.clone(),
                 title: title.unwrap_or_else(|| "Untitled session".into()),
+                workdir: Some(self.workspace.root.clone()),
+                updated: crate::history_index::now_secs(),
+                agent: self.agent_label(),
+                cost_usd: self.cost_usd,
+                wd_label: crate::history_index::folder_label(&self.workspace.root),
             },
         );
         self.index.truncate(crate::SESSION_LIST_LIMIT);
     }
 
+    /// "Build", "Plan" or the selected custom agent.
+    pub(crate) fn agent_label(&self) -> String {
+        match (&self.custom_agent, self.mode) {
+            (Some(a), _) => a.clone(),
+            (None, Mode::Plan) => "Plan".into(),
+            (None, Mode::Build) => "Build".into(),
+        }
+    }
+
     /// Status of the open session for the sidebar dot.
-    fn chat_status(&self) -> ui::nav::ChatStatus {
+    pub(crate) fn chat_status(&self) -> ui::nav::ChatStatus {
         use ui::nav::ChatStatus;
         let last_turn = self.items.iter().rev().find_map(|i| match i {
             Item::Turn(t) => Some(t),
@@ -938,62 +989,127 @@ impl ChatScreen {
         }
     }
 
-    /// Publish the session list (open session first if it is new) to `ui::nav`.
+    /// Publish pinned chats, the most recent ones and the open one to `ui::nav` (sidebar,
+    /// Home, history picker statuses).
     pub(crate) fn publish_sessions(&mut self, cx: &mut Context<Self>) {
         use ui::nav::{ChatSessionInfo, ChatStatus};
         let current_title = session::title(&self.items)
             .map(|t| session::truncate(&t, 60))
             .unwrap_or_else(|| "New session".into());
-        let mut list: Vec<ChatSessionInfo> = self
+        let info = |e: &session::IndexEntry| ChatSessionInfo {
+            id: e.id.clone().into(),
+            title: session::truncate(&e.title, 60).into(),
+            status: ChatStatus::Idle,
+            pinned: self.flags.is_pinned(&e.id),
+            updated: e.updated,
+            agent: e.agent.clone().into(),
+            workdir: e.wd_label.clone().into(),
+            cost_usd: e.cost_usd,
+        };
+        let current = ChatSessionInfo {
+            id: self.session_id.clone().into(),
+            title: current_title.into(),
+            status: self.chat_status(),
+            pinned: self.flags.is_pinned(&self.session_id),
+            updated: self
+                .index
+                .iter()
+                .find(|e| e.id == self.session_id)
+                .map_or_else(crate::history_index::now_secs, |e| e.updated),
+            agent: self.agent_label().into(),
+            workdir: self
+                .index
+                .iter()
+                .find(|e| e.id == self.session_id)
+                .map(|e| e.wd_label.clone())
+                .unwrap_or_else(|| crate::history_index::folder_label(&self.workspace.root))
+                .into(),
+            cost_usd: self.cost_usd,
+        };
+        let live: Vec<&session::IndexEntry> = self
             .index
             .iter()
-            .map(|e| ChatSessionInfo {
-                id: e.id.clone().into(),
-                title: if e.id == self.session_id {
-                    current_title.clone().into()
-                } else {
-                    session::truncate(&e.title, 60).into()
-                },
-                status: if e.id == self.session_id {
-                    self.chat_status()
-                } else {
-                    ChatStatus::Idle
-                },
-            })
+            .filter(|e| !self.flags.is_archived(&e.id))
             .collect();
+        let mut recent = 0;
+        let mut list: Vec<ChatSessionInfo> = Vec::new();
+        for e in &live {
+            if e.id == self.session_id {
+                list.push(current.clone());
+                if !current.pinned {
+                    recent += 1;
+                }
+            } else if self.flags.is_pinned(&e.id) {
+                list.push(info(e));
+            } else if recent < crate::SIDEBAR_RECENT {
+                recent += 1;
+                list.push(info(e));
+            }
+        }
+        let mut total = live.len();
         if !self.index.iter().any(|e| e.id == self.session_id) {
-            list.insert(
-                0,
-                ChatSessionInfo {
-                    id: self.session_id.clone().into(),
-                    title: current_title.into(),
-                    status: self.chat_status(),
-                },
-            );
+            list.insert(0, current);
+            total += 1;
         }
         let current = Some(self.session_id.clone().into());
         // Defer: nav observers (the sidebar) must not run inside our own update.
-        cx.defer(move |cx| ui::nav::set_chat_sessions(list, current, cx));
+        cx.defer(move |cx| ui::nav::set_chat_sessions(list, current, total, cx));
     }
 
-    /// Handle an open/new request coming from the sidebar.
+    /// Reload the session index and pin/archive flags (changed in the history picker).
+    pub(crate) fn reload_index(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let (index, flags) = cx
+                .background_spawn(async {
+                    (
+                        session::list(&session::sessions_dir(), crate::SESSION_LIST_LIMIT),
+                        crate::history_index::Flags::load(),
+                    )
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.index = index;
+                this.flags = flags;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Handle an open/new/fork request from the sidebar or the history picker, and
+    /// reload the list when chats changed on disk.
     pub(crate) fn handle_chat_request(&mut self, cx: &mut Context<Self>) {
+        if let Some(nav) = ui::nav::nav_entity(cx) {
+            let v = nav.read(cx).chats_version;
+            if v != self.chats_version {
+                self.chats_version = v;
+                self.reload_index(cx);
+            }
+        }
         let Some(request) = ui::nav::take_chat_request(cx) else {
             return;
         };
         match request {
-            ui::nav::ChatRequest::New => {
-                if !self.items.is_empty() || self.busy() {
-                    self.new_session(cx);
-                }
+            ui::nav::ChatRequest::New => self.open_new_chat(cx),
+            ui::nav::ChatRequest::Open(id) => {
+                self.close_new_chat(cx);
+                self.open_session(id.to_string(), false, cx)
             }
-            ui::nav::ChatRequest::Open(id) => self.open_session(id.to_string(), cx),
+            ui::nav::ChatRequest::Fork(id) => {
+                self.close_new_chat(cx);
+                self.open_session(id.to_string(), true, cx)
+            }
         }
     }
 
-    /// Switch to a saved session (the current one is saved first).
-    fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+    /// Switch to a saved session (the current one is saved first). `fork`: then continue
+    /// in a new session with a copy of its history, in its folder.
+    fn open_session(&mut self, id: String, fork: bool, cx: &mut Context<Self>) {
         if id == self.session_id {
+            if fork {
+                self.fork_chat(self.workspace.root.clone(), cx);
+            }
             return;
         }
         self.interrupt(cx);
@@ -1012,6 +1128,9 @@ impl ChatScreen {
                     Some(saved) => {
                         this.reset_session_state();
                         this.restore(saved, cx);
+                        if fork {
+                            this.fork_chat(this.workspace.root.clone(), cx);
+                        }
                     }
                     None => this.notice("That session could not be loaded.", cx),
                 }
@@ -1038,6 +1157,14 @@ impl ChatScreen {
         self.mode = saved.mode;
         self.custom_agent = saved.agent.clone();
         self.forced = saved.forced_skills.iter().cloned().collect();
+        self.work_mode = saved.work_mode;
+        // Sessions saved before workdirs (or whose folder is gone) use the default folder.
+        let dir = saved
+            .workdir
+            .clone()
+            .filter(|d| d.is_dir())
+            .unwrap_or_else(|| self.wd.default_root.clone());
+        self.apply_workdir(dir, cx);
         self.validate_agent(cx);
         self.refresh_placeholder(cx);
         let saved_model = saved.model.as_deref().and_then(ModelRef::parse);

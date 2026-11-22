@@ -4,6 +4,8 @@ use gpui::{App, AppContext, Context, Entity, Global, SharedString, Subscription,
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Screen {
+    /// Dashboard: totals, what is working now, what needs the user, spend.
+    Home,
     /// "Inbox" in the sidebar — the review queue (variants waiting for a person).
     Inbox,
     Issues,
@@ -24,6 +26,13 @@ pub struct Nav {
     pub chat_current: Option<SharedString>,
     /// One-shot request from the sidebar to the Chat screen (see [`take_chat_request`]).
     pub chat_request: Option<ChatRequest>,
+    /// Number of saved (not archived) chats, for "All chats · N".
+    pub chat_total: usize,
+    /// The chat history picker (⌘K) is open over the current screen.
+    pub history_open: bool,
+    /// Bumped when saved chats change outside the Chat screen (pin, archive, delete in
+    /// the history picker) so it reloads its list.
+    pub chats_version: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,16 +47,26 @@ pub enum ChatStatus {
     Error,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ChatSessionInfo {
     pub id: SharedString,
     pub title: SharedString,
     pub status: ChatStatus,
+    pub pinned: bool,
+    /// Last activity, unix seconds (0 = unknown).
+    pub updated: u64,
+    /// "Build", "Plan" or a custom agent name.
+    pub agent: SharedString,
+    /// Folder label, e.g. `pipeliner · main`.
+    pub workdir: SharedString,
+    pub cost_usd: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatRequest {
     Open(SharedString),
+    /// Open a copy of a saved chat as a new session.
+    Fork(SharedString),
     New,
 }
 
@@ -62,6 +81,9 @@ pub fn install(initial: Screen, cx: &mut App) -> Entity<Nav> {
         chat_sessions: Vec::new(),
         chat_current: None,
         chat_request: None,
+        chat_total: 0,
+        history_open: false,
+        chats_version: 0,
     });
     cx.set_global(GlobalNav(nav.clone()));
     nav
@@ -127,19 +149,49 @@ pub fn on_activate<V: 'static>(
     }))
 }
 
-/// Chat screen → sidebar: the session list and which one is open. No-op when unchanged.
+/// Chat screen → sidebar: the session list (pinned and recent), which one is open and
+/// how many chats exist. No-op when unchanged.
 pub fn set_chat_sessions(
     sessions: Vec<ChatSessionInfo>,
     current: Option<SharedString>,
+    total: usize,
     cx: &mut App,
 ) {
     if let Some(nav) = nav_entity(cx) {
         nav.update(cx, |n, cx| {
-            if n.chat_sessions != sessions || n.chat_current != current {
+            if n.chat_sessions != sessions || n.chat_current != current || n.chat_total != total
+            {
                 n.chat_sessions = sessions;
                 n.chat_current = current;
+                n.chat_total = total;
                 cx.notify();
             }
+        });
+    }
+}
+
+/// Show or hide the chat history picker (⌘K).
+pub fn set_history_open(open: bool, cx: &mut App) {
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            if n.history_open != open {
+                n.history_open = open;
+                cx.notify();
+            }
+        });
+    }
+}
+
+pub fn history_open(cx: &App) -> bool {
+    nav_entity(cx).is_some_and(|n| n.read(cx).history_open)
+}
+
+/// Saved chats changed on disk (pinned, archived, deleted): the Chat screen reloads.
+pub fn chats_changed(cx: &mut App) {
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            n.chats_version += 1;
+            cx.notify();
         });
     }
 }

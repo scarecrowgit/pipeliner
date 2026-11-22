@@ -10,6 +10,7 @@ use ui::{Status, icon, progress, status_dot, theme::*};
 use crate::extensions::{McpPhase, ServerStatus, fmt_k};
 use crate::picker::SkillState;
 use crate::session::truncate;
+use crate::workdir::{prov_view, row_name, show_path};
 
 use crate::models::{self, ProviderModels};
 use crate::todo::{self, TodoStatus};
@@ -232,20 +233,78 @@ impl ChatScreen {
                 }
             })),
         }
-        .child(
+    }
+
+    /// Mirrors the header chip: folder, runtime · path, git and remote state.
+    fn workdir_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let root = &self.workspace.root;
+        let fact = self.cur_fact();
+        let pv = prov_view(fact);
+        let git = match fact {
+            None => "checking…".to_string(),
+            Some(f) if f.summary.is_empty() => "not a repository".to_string(),
+            Some(f) => f.summary.clone(),
+        };
+        let line = |k: String, v: String, color| {
             div()
-                .mt(px(4.))
+                .flex()
+                .justify_between()
+                .gap(px(8.))
                 .text_size(px(12.))
-                .text_color(TEXT_MUTED)
-                .child("Workspace"),
-        )
-        .child(
-            div()
-                .font_family(FONT_MONO)
-                .text_size(px(11.))
-                .text_color(TEXT_SECONDARY)
-                .child(self.workspace.root.display().to_string()),
-        )
+                .child(div().flex_none().text_color(TEXT_MUTED).child(k))
+                .child(div().min_w_0().text_right().text_color(color).child(v))
+        };
+        panel_section(6.)
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().font_weight(FontWeight::MEDIUM).child("Workdir"))
+                    .child(
+                        div()
+                            .id("wd-change")
+                            .text_size(px(12.))
+                            .text_color(ACCENT_TEXT)
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(TEXT))
+                            .on_click(cx.listener(|this, _, _, cx| this.open_wd_menu(cx)))
+                            .child("Change"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(FONT_MONO)
+                            .text_size(px(12.))
+                            .text_color(TEXT)
+                            .child(row_name(root, fact)),
+                    )
+                    .child(prov_pill(pv.label.clone(), pv.status)),
+            )
+            .child(
+                div()
+                    .font_family(FONT_MONO)
+                    .text_size(px(11.))
+                    .line_height(px(16.))
+                    .text_color(TEXT_MUTED)
+                    .child(format!("{} · {}", self.wd.host, show_path(root))),
+            )
+            .child(line("git".into(), git, TEXT_SECONDARY))
+            .child(line(pv.label, pv.state, pv.state_color))
+            .child(line(
+                "mode".into(),
+                self.work_mode.label().to_string(),
+                if self.read_only() { WARNING } else { TEXT_SECONDARY },
+            ))
     }
 
     fn mcp_section(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
@@ -321,7 +380,7 @@ impl ChatScreen {
                                         .id(ElementId::Name(format!("mcp-retry-{ix}").into()))
                                         .flex_none()
                                         .text_color(DANGER)
-                                        .hover(|s| s.underline())
+                                        .hover(|s| s.text_color(TEXT))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.start_server(retry_name.clone(), cx);
@@ -436,6 +495,7 @@ impl ChatScreen {
             .bg(BG_SIDEBAR)
             .border_l_1()
             .border_color(LINE)
+            .child(self.workdir_section(cx))
             .child(self.context_section())
             .children(skills)
             .child(self.todo_section())

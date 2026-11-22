@@ -1,8 +1,9 @@
 //! App sidebar: the full 232px navigation column, or the 56px icon rail on the
-//! pipeline editor. Port of `reference/app_sidebar.html`.
+//! pipeline editor. Port of `reference/app_sidebar_v4.html`.
 //!
-//! The sidebar reads the current screen from [`ui::nav`] on every render and
-//! derives the mockup's `active` / `compact` / `current` props from it.
+//! The nav part is static; the "Chats" part (pinned, recent, "All chats · N") comes from
+//! the Chat screen through [`ui::nav`]. "Search chats" and "All chats" open the history
+//! picker (⌘K).
 
 mod data;
 mod tooltip;
@@ -11,24 +12,17 @@ use gpui::{
     ClickEvent, Context, ElementId, FontWeight, IntoElement, Render, SharedString, Stateful,
     Window, div, prelude::*, px,
 };
-use ui::nav::{self, Screen};
+use ui::nav::{self, ChatSessionInfo, ChatStatus, Screen};
 use ui::theme::*;
-use ui::{Badge, Tone, icon, kbd, progress, status_dot};
+use ui::{Badge, Status, Tone, icon, kbd, status_dot};
 
-use data::{NAV, RAIL_RUNNERS, RUNNERS, Runner};
+use data::NAV;
 use tooltip::tooltip;
 
 /// Hover group shared by every clickable row, so icons brighten with their row.
 const ROW_GROUP: &str = "sidebar-row";
 
 pub struct Sidebar {}
-
-/// What the screens pass to `<dc-import name="Sidebar" ...>` in the mockup.
-struct Props {
-    active: Option<Screen>,
-    compact: bool,
-    current: Option<&'static str>,
-}
 
 impl Sidebar {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -38,45 +32,10 @@ impl Sidebar {
         Self {}
     }
 
-    fn props(cx: &gpui::App) -> Props {
-        let screen = nav::current(cx);
-        match screen {
-            Screen::PipelineEditor => Props {
-                active: None,
-                compact: true,
-                current: Some("pay-triage"),
-            },
-            Screen::Inbox | Screen::Issues => Props {
-                active: Some(screen),
-                compact: false,
-                current: None,
-            },
-            Screen::Chat => Props {
-                active: Some(screen),
-                compact: false,
-                current: Some("build"),
-            },
-            Screen::Agents => Props {
-                active: Some(screen),
-                compact: false,
-                current: Some(selected_runner_id(cx)),
-            },
-        }
-    }
-
-    /// PAY triage opens the editor; every other entity is selected on the Agents screen.
-    fn runner_click(
-        runner: &'static Runner,
-    ) -> impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static {
-        move |_, _, cx| match runner.target() {
-            Screen::Agents => nav::select_agent(runner.name, true, cx),
-            target => nav::navigate(target, cx),
-        }
-    }
-
     // ── Full sidebar ────────────────────────────────────────────────────
 
-    fn render_full(&self, props: &Props, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_full(&self, screen: Screen, cx: &mut Context<Self>) -> gpui::Div {
+        let in_chat = screen == Screen::Chat;
         let mut column = div()
             .flex()
             .flex_col()
@@ -85,120 +44,88 @@ impl Sidebar {
             .child(workspace_row());
 
         for entry in NAV {
-            let active = props.active == Some(entry.screen);
-            let screen = entry.screen;
-            let item = nav_item(("sidebar-nav", entry.screen as usize), active)
-                .child(row_icon(
-                    entry.icon,
-                    16.,
-                    if active { TEXT } else { TEXT_SECONDARY },
-                ))
-                .child(div().flex_1().child(entry.label))
-                .when_some(entry.count, |item, count| {
-                    item.child(Badge::new(count.to_string()).tone(Tone::Count))
-                })
-                .on_click(move |_, _, cx| nav::navigate(screen, cx));
-            column = column.child(item);
-            if screen == Screen::Chat && active {
-                column = column.child(self.render_sessions(cx));
-            }
+            let active = screen == entry.screen;
+            let target = entry.screen;
+            column = column.child(
+                nav_item(("sidebar-nav", entry.screen as usize), active)
+                    .child(row_icon(
+                        entry.icon,
+                        16.,
+                        if active { TEXT } else { TEXT_SECONDARY },
+                    ))
+                    .child(div().flex_1().child(entry.label))
+                    .when_some(entry.count, |item, count| {
+                        item.child(Badge::new(count.to_string()).tone(Tone::Count))
+                    })
+                    .on_click(move |_, _, cx| nav::navigate(target, cx)),
+            );
         }
 
-        column
-            .child(section_header())
-            .children(RUNNERS.iter().enumerate().map(|(index, runner)| {
-                let active = props.current == Some(runner.id);
-                let name_color = if runner.created {
-                    Some(SPAWN_TEXT)
-                } else {
-                    None
-                };
-                let kind_color = if runner.created { SPAWN } else { TEXT_MUTED };
-                nav_item(("sidebar-runner", index), active)
-                    .child(status_dot(runner.status, false))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .when_some(name_color, |name, color| name.text_color(color))
-                                    .child(runner.name),
-                            )
-                            .child(div().ml_auto().flex().child(icon(
-                                runner.kind.icon(),
-                                12.,
-                                kind_color,
-                            ))),
-                    )
-                    .on_click(Self::runner_click(runner))
-            }))
-            .child(
-                div()
-                    .id("sidebar-all")
-                    .px(px(8.))
-                    .py(px(4.))
-                    .text_size(px(TEXT_LABEL))
-                    .text_color(TEXT_MUTED)
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(TEXT_SECONDARY))
-                    .child(data::ALL_SUMMARY)
-                    .on_click(|_, _, cx| nav::navigate(Screen::Agents, cx)),
-            )
-            .child(footer())
-    }
-
-    /// Real chat sessions published by the Chat screen (`ui::nav`), plus "New session".
-    fn render_sessions(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let (sessions, current) = nav::nav_entity(cx)
+        let (sessions, current, total) = nav::nav_entity(cx)
             .map(|n| {
                 let n = n.read(cx);
-                (n.chat_sessions.clone(), n.chat_current.clone())
+                (n.chat_sessions.clone(), n.chat_current.clone(), n.chat_total)
             })
             .unwrap_or_default();
-        let rows = sessions.into_iter().enumerate().map(move |(index, session)| {
-            let is_current = current.as_ref() == Some(&session.id);
-            let status = match session.status {
-                nav::ChatStatus::Running => ui::Status::Running,
-                nav::ChatStatus::Waiting => ui::Status::Waiting,
-                nav::ChatStatus::Error => ui::Status::Error,
-                nav::ChatStatus::Idle => ui::Status::Live,
+        let current = current.filter(|_| in_chat);
+        let now = ui::time::now_secs();
+        let offset = ui::time::utc_offset(now);
+        let row = |index: usize, s: &ChatSessionInfo| {
+            let meta = if s.updated > 0 {
+                ui::time::when_short(s.updated, now, offset)
+            } else {
+                String::new()
             };
-            let id = session.id.clone();
-            session_row(("sidebar-session", index), is_current)
-                .child(status_dot(status, true))
-                .child(ellipsis_cell(session.title))
-                .on_click(move |_: &ClickEvent, _, cx| {
-                    nav::request_chat(nav::ChatRequest::Open(id.clone()), cx)
-                })
-        });
-        let new_row = session_row("sidebar-session-new", false)
-            .text_color(TEXT_MUTED)
-            .child(row_icon("plus", 12., TEXT_MUTED))
-            .child(ellipsis_cell("New session"))
-            .on_click(|_: &ClickEvent, _, cx| nav::request_chat(nav::ChatRequest::New, cx));
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .pt(px(2.))
-            .pb(px(6.))
-            .pl(px(18.))
-            .ml(px(15.))
-            .border_l_1()
-            .border_color(LINE)
-            .children(rows)
-            .child(new_row)
+            chat_row(
+                ("sidebar-chat", index),
+                s,
+                meta,
+                current.as_ref() == Some(&s.id),
+            )
+        };
+        let pinned: Vec<_> = sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.pinned)
+            .map(|(i, s)| row(i, s))
+            .collect();
+        let recent: Vec<_> = sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.pinned)
+            .map(|(i, s)| row(i, s))
+            .collect();
+
+        column = column
+            .child(chats_header(in_chat))
+            .child(search_row());
+        if !pinned.is_empty() {
+            column = column.child(group_label("Pinned", 6.)).children(pinned);
+        }
+        if !recent.is_empty() {
+            column = column.child(group_label("Recent", 10.)).children(recent);
+        }
+        column.child(
+            div()
+                .id("sidebar-all-chats")
+                .flex_none()
+                .px(px(8.))
+                .py(px(6.))
+                .text_size(px(TEXT_LABEL))
+                .text_color(TEXT_MUTED)
+                .cursor_pointer()
+                .hover(|style| style.text_color(TEXT_SECONDARY))
+                .child(SharedString::from(match total {
+                    0 => "No chats yet".to_string(),
+                    n => format!("All chats · {}", group_thousands(n)),
+                }))
+                .on_click(|_, _, cx| nav::set_history_open(true, cx)),
+        )
     }
 
     // ── Compact rail ────────────────────────────────────────────────────
 
-    fn render_compact(props: &Props) -> gpui::Div {
+    fn render_compact(screen: Screen) -> gpui::Div {
         let logo = div()
             .id("sidebar-rail-logo")
             .size(px(32.))
@@ -213,8 +140,8 @@ impl Sidebar {
             .tooltip(tooltip(data::WORKSPACE));
 
         let nav_buttons = NAV.iter().map(|entry| {
-            let active = props.active == Some(entry.screen);
-            let screen = entry.screen;
+            let active = screen == entry.screen;
+            let target = entry.screen;
             rail_button(("sidebar-rail-nav", entry.screen as usize), active)
                 .child(row_icon(
                     entry.icon,
@@ -223,52 +150,16 @@ impl Sidebar {
                 ))
                 .when_some(entry.count, |button, count| button.child(rail_count(count)))
                 .tooltip(tooltip(entry.aria))
-                .on_click(move |_, _, cx| nav::navigate(screen, cx))
+                .on_click(move |_, _, cx| nav::navigate(target, cx))
         });
-
-        let runner_buttons = RUNNERS[..RAIL_RUNNERS]
-            .iter()
-            .enumerate()
-            .map(|(index, runner)| {
-                let current = props.current == Some(runner.id);
-                let (tile_bg, tile_fg) = if runner.created {
-                    (SPAWN_SOFT, SPAWN_TEXT)
-                } else {
-                    runner.kind.tile()
-                };
-                rail_button(("sidebar-rail-runner", index), current)
-                    .child(
-                        div()
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(RADIUS_MD))
-                            .bg(tile_bg)
-                            .border_1()
-                            .border_color(if runner.created {
-                                SPAWN_LINE
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .when(runner.created, |tile| tile.border_dashed())
-                            .child(icon(runner.kind.icon(), 14., tile_fg)),
-                    )
-                    .child(
-                        // 8px dot with a 2px sidebar-colored ring (`box-shadow: 0 0 0 2px`).
-                        div()
-                            .absolute()
-                            .right(px(3.))
-                            .bottom(px(3.))
-                            .size(px(12.))
-                            .rounded_full()
-                            .border_2()
-                            .border_color(BG_SIDEBAR)
-                            .bg(data::rail_dot_color(runner.status)),
-                    )
-                    .tooltip(tooltip(runner.aria()))
-                    .on_click(Self::runner_click(runner))
-            });
+        let chats = rail_button("sidebar-rail-chats", screen == Screen::Chat)
+            .child(row_icon("message", 16., TEXT_MUTED))
+            .tooltip(tooltip("Chats"))
+            .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx));
+        let search = rail_button("sidebar-rail-search", false)
+            .child(row_icon("search", 16., TEXT_MUTED))
+            .tooltip(tooltip("Search chats · ⌘K"))
+            .on_click(|_, _, cx| nav::set_history_open(true, cx));
 
         div()
             .flex()
@@ -279,29 +170,24 @@ impl Sidebar {
             .px(px(SPACE_2))
             .child(logo)
             .children(nav_buttons)
-            .child(div().w(px(24.)).h(px(1.)).my(px(8.)).flex_none().bg(LINE))
-            .children(runner_buttons)
-            .child(
-                rail_button("sidebar-rail-new", false)
-                    .child(row_icon("plus", 16., TEXT_MUTED))
-                    .tooltip(tooltip(data::NEW_ENTITY))
-                    .on_click(|_, _, cx| nav::navigate(Screen::Agents, cx)),
-            )
+            .child(chats)
+            .child(search)
     }
 }
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let props = Self::props(cx);
-        let width = if props.compact {
+        let screen = nav::current(cx);
+        let compact = screen == Screen::PipelineEditor;
+        let width = if compact {
             SIDEBAR_COMPACT_WIDTH
         } else {
             SIDEBAR_WIDTH
         };
-        let content = if props.compact {
-            Self::render_compact(&props)
+        let content = if compact {
+            Self::render_compact(screen)
         } else {
-            self.render_full(&props, cx)
+            self.render_full(screen, cx)
         };
         div()
             .id("app-sidebar")
@@ -318,14 +204,17 @@ impl Render for Sidebar {
 
 // ── Pieces ──────────────────────────────────────────────────────────────
 
-/// Runner id highlighted on the Agents screen: the shared nav selection (by name).
-fn selected_runner_id(cx: &gpui::App) -> &'static str {
-    let name = nav::selected_agent(cx);
-    let name = name.as_ref().map_or("Payments lead", |name| name.as_ref());
-    RUNNERS
-        .iter()
-        .find(|runner| runner.name == name)
-        .map_or("payments-lead", |runner| runner.id)
+/// `2418` → `2,418`.
+fn group_thousands(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Single-line text that ends with "…" when it does not fit. gpui measures nowrap
@@ -433,27 +322,32 @@ fn workspace_row() -> gpui::Div {
                 .font_weight(FontWeight::MEDIUM)
                 .child(data::WORKSPACE),
         )
-        .child(kbd("⌘K"))
 }
 
-fn section_header() -> gpui::Div {
+/// `Chats ………… +`: the label opens the Chat screen, `+` starts a new chat.
+fn chats_header(in_chat: bool) -> gpui::Div {
     div()
         .flex()
         .flex_none()
         .items_center()
         .justify_between()
-        .pt(px(14.))
+        .pt(px(16.))
         .px(px(8.))
-        .pb(px(4.))
+        .pb(px(6.))
         .child(
             div()
+                .id("sidebar-chats")
                 .text_size(px(TEXT_LABEL))
-                .text_color(TEXT_MUTED)
-                .child("Agents & pipelines"),
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(if in_chat { TEXT } else { TEXT_MUTED })
+                .cursor_pointer()
+                .hover(|style| style.text_color(TEXT))
+                .child("Chats")
+                .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx)),
         )
         .child(
             div()
-                .id("sidebar-new")
+                .id("sidebar-new-chat")
                 .group(ROW_GROUP)
                 .size(px(24.))
                 .flex()
@@ -463,53 +357,101 @@ fn section_header() -> gpui::Div {
                 .cursor_pointer()
                 .hover(|style| style.bg(SURFACE_RAISED))
                 .child(row_icon("plus", 14., TEXT_MUTED))
-                .tooltip(tooltip(data::NEW_ENTITY))
-                .on_click(|_, _, cx| nav::navigate(Screen::Agents, cx)),
+                .tooltip(tooltip("New chat"))
+                .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx)),
         )
 }
 
-fn footer() -> gpui::Div {
-    let stat_row = |label: &'static str, value: &'static str| {
-        div()
-            .flex()
-            .justify_between()
-            .text_size(px(TEXT_LABEL))
-            .child(div().text_color(TEXT_MUTED).child(label))
-            .child(div().font_family(FONT_MONO).child(value))
-    };
+/// The "Search chats ⌘K" field-like button.
+fn search_row() -> Stateful<gpui::Div> {
     div()
-        .mt(px(16.))
-        .pt(px(12.))
-        .px(px(8.))
-        .pb(px(4.))
-        .border_t_1()
-        .border_color(LINE)
+        .id("sidebar-search-chats")
+        .group(ROW_GROUP)
         .flex()
         .flex_none()
-        .flex_col()
-        .gap(px(6.))
-        .child(stat_row("Agents busy", data::AGENTS_BUSY))
-        .child(stat_row("Spend today", data::SPEND_TODAY))
-        .child(progress(data::SPEND_FRACTION, ACCENT))
+        .items_center()
+        .gap(px(8.))
+        .h(px(32.))
+        .px(px(8.))
+        .mb(px(6.))
+        .rounded(px(RADIUS_LG))
+        .border_1()
+        .border_color(LINE_STRONG)
+        .bg(SURFACE_RAISED)
+        .text_color(TEXT_MUTED)
+        .cursor_pointer()
+        .hover(|style| style.bg(SURFACE_HOVER))
+        .child(row_icon("search", 14., TEXT_MUTED))
+        .child(div().flex_1().child("Search chats"))
+        .child(kbd("⌘K"))
+        .on_click(|_, _, cx| nav::set_history_open(true, cx))
 }
 
-/// A session row under the Chat item (28px, hover, current = raised bg).
-fn session_row(id: impl Into<gpui::ElementId>, current: bool) -> gpui::Stateful<gpui::Div> {
+/// `Pinned` / `Recent` caption.
+fn group_label(text: &'static str, top: f32) -> gpui::Div {
+    div()
+        .flex_none()
+        .pt(px(top))
+        .px(px(8.))
+        .pb(px(2.))
+        .text_size(px(11.))
+        .line_height(px(16.))
+        .text_color(TEXT_MUTED)
+        .child(text)
+}
+
+/// A chat row: status dot · title … when. Opens the chat.
+fn chat_row(
+    id: impl Into<ElementId>,
+    s: &ChatSessionInfo,
+    meta: String,
+    current: bool,
+) -> Stateful<gpui::Div> {
+    let status = match s.status {
+        ChatStatus::Running => Status::Running,
+        ChatStatus::Waiting => Status::Waiting,
+        ChatStatus::Error => Status::Error,
+        ChatStatus::Idle => Status::Live,
+    };
+    let chat = s.id.clone();
     div()
         .id(id)
         .flex()
         .flex_none()
         .items_center()
         .gap(px(8.))
-        .w_full()
-        .min_h(px(28.))
+        .min_h(px(30.))
         .py(px(4.))
-        .pr(px(8.))
-        .pl(px(8.))
+        .px(px(8.))
         .rounded(px(RADIUS_MD))
         .text_size(px(TEXT_LABEL))
         .text_color(if current { TEXT } else { TEXT_SECONDARY })
         .cursor_pointer()
         .when(current, |row| row.bg(SURFACE_HOVER))
         .when(!current, |row| row.hover(|style| style.bg(SURFACE_RAISED)))
+        .child(status_dot(status, true))
+        .child(ellipsis_cell(s.title.clone()))
+        .when(!meta.is_empty(), |row| {
+            row.child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(TEXT_MUTED)
+                    .whitespace_nowrap()
+                    .child(meta),
+            )
+        })
+        .on_click(move |_: &ClickEvent, _, cx| {
+            nav::request_chat(nav::ChatRequest::Open(chat.clone()), cx)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn thousands() {
+        assert_eq!(super::group_thousands(7), "7");
+        assert_eq!(super::group_thousands(2418), "2,418");
+        assert_eq!(super::group_thousands(1234567), "1,234,567");
+    }
 }

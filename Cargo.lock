@@ -2432,6 +2432,7 @@ dependencies = [
  "screen_agents",
  "screen_chat",
  "screen_editor",
+ "screen_home",
  "screen_issues",
  "screen_review",
  "sidebar",
@@ -4768,6 +4769,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "screen_home"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "ui",
+]
+
+[[package]]
 name = "screen_issues"
 version = "0.1.0"
 dependencies = [
@@ -5909,6 +5918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "libc",
  "rust-embed",
  "unicode-segmentation",
 ]

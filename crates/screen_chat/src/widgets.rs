@@ -314,3 +314,23 @@ pub fn ellipsis_cell(text: impl Into<SharedString>) -> gpui::Div {
         .h(px(LINE_BODY))
         .child(div().absolute().inset_0().truncate().child(text.into()))
 }
+
+/// Provider pill: `● GitHub` (18px, rounded, line-strong border, 11px).
+pub fn prov_pill(label: impl Into<SharedString>, status: Status) -> gpui::Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(4.))
+        .h(px(18.))
+        .px(px(6.))
+        .rounded_full()
+        .border_1()
+        .border_color(LINE_STRONG)
+        .text_size(px(11.))
+        .line_height(px(16.))
+        .text_color(TEXT_SECONDARY)
+        .whitespace_nowrap()
+        .child(status_dot(status, true))
+        .child(label.into())
+}
