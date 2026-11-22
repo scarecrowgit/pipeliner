@@ -46,11 +46,20 @@ impl AgentsScreen {
                             .icon("plus")
                             .on_click(cx.listener(move |this, _, _, cx| this.set_new_open(!open, cx))),
                     )
-                    .when(open, |d| d.child(deferred(self.render_new_menu(cx)).with_priority(1))),
+                    .when(open, |d| {
+                        d.child(
+                            deferred(ui::motion::pop_in(
+                                "agents-new-menu-in",
+                                ui::motion::Pop::Below,
+                                self.render_new_menu(cx),
+                            ))
+                            .with_priority(1),
+                        )
+                    }),
             )
     }
 
-    fn render_new_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_new_menu(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id("agents-new-menu")
             .absolute()

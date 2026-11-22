@@ -30,18 +30,21 @@ fn menu_surface() -> gpui::Div {
         .shadow(popover_shadow())
 }
 
-/// Wrap a popover so it sits `gap` px above its relative parent, painted on top.
+/// Wrap a popover so it sits `gap` px above its relative parent, painted on top, at
+/// animation frame `f` (rises out of the trigger, see `ui::motion`).
 fn above(
     id: &'static str,
     gap: f32,
     width: Option<f32>,
+    f: ui::motion::PopFrame,
     menu: impl IntoElement,
 ) -> impl IntoElement {
-    let anchor = div().absolute().left_0().bottom_full().pb(px(gap));
+    let anchor = div().absolute().left_0().bottom_full();
     let anchor = match width {
         Some(w) => anchor.w(px(w)),
         None => anchor.right_0(),
     };
+    let anchor = ui::motion::pop_above(anchor, gap, f);
     deferred(anchor.child(div().id(id).occlude().child(menu))).with_priority(1)
 }
 
@@ -217,8 +220,8 @@ impl ChatScreen {
             .child(div().min_w_0().truncate().child(label))
             .child(icon("chevron-down", 12., TEXT_MUTED));
 
-        div().relative().child(trigger).when(self.model_open, |d| {
-            d.child(above("model-menu", 8., Some(340.), self.model_menu(cx)))
+        div().relative().child(trigger).when_some(self.pops.model, |d, f| {
+            d.child(above("model-menu", 8., Some(340.), f, self.model_menu(cx)))
         })
     }
 
@@ -296,8 +299,12 @@ impl ChatScreen {
                         };
                         let on = self.model.as_ref() == Some(&r);
                         rows.push(
-                            div()
-                                .id(eid("pick-model", ix))
+                            ui::motion::fade_row(
+                                div().id(eid("pick-model", ix)),
+                                eid("pick-model", ix),
+                                on,
+                                SURFACE_HOVER,
+                            )
                                 .flex()
                                 .items_center()
                                 .h(px(30.))
@@ -306,9 +313,7 @@ impl ChatScreen {
                                 .font_family(FONT_MONO)
                                 .text_size(px(12.))
                                 .text_color(if on { TEXT } else { TEXT_SECONDARY })
-                                .when(on, |d| d.bg(SURFACE_HOVER))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(SURFACE_HOVER))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.select_model(r.clone(), window, cx);
                                 }))
@@ -380,8 +385,7 @@ impl ChatScreen {
 
     fn suggest_popover(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let option = |id: ElementId, ix: usize, sel: usize| {
-            div()
-                .id(id)
+            ui::motion::fade_row(div().id(id.clone()), id, ix == sel, SURFACE_HOVER)
                 .flex()
                 .items_center()
                 .w_full()
@@ -390,9 +394,7 @@ impl ChatScreen {
                 .py(px(4.))
                 .rounded(px(RADIUS_MD))
                 .text_color(TEXT)
-                .when(ix == sel, |d| d.bg(SURFACE_HOVER))
                 .cursor_pointer()
-                .hover(|s| s.bg(SURFACE_HOVER))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.pick_suggestion(ix, cx);
                     this.focus_input(window, cx);
@@ -469,6 +471,7 @@ impl ChatScreen {
             "suggest",
             6.,
             None,
+            self.pops.suggest?,
             menu_surface()
                 .id("suggest-list")
                 .max_h(px(300.))

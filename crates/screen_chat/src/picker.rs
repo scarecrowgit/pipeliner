@@ -335,16 +335,15 @@ impl ChatScreen {
             )
             .child(icon("chevron-down", 12., TEXT_MUTED));
 
-        div().relative().child(trigger).when(self.pick_open, |d| {
+        div().relative().child(trigger).when_some(self.pops.picker, |d, f| {
             d.child(
                 deferred(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .bottom_full()
-                        .pb(px(8.))
-                        .w(px(PICKER_WIDTH))
-                        .child(
+                    ui::motion::pop_above(
+                        div().absolute().left_0().bottom_full().w(px(PICKER_WIDTH)),
+                        8.,
+                        f,
+                    )
+                    .child(
                             div()
                                 .id("agent-picker")
                                 .occlude()
@@ -371,8 +370,12 @@ impl ChatScreen {
                 (n.clone(), desc, false)
             }
         };
-        div()
-            .id(eid("pick-agent", ix))
+        ui::motion::fade_row(
+            div().id(eid("pick-agent", ix)),
+            eid("pick-agent", ix),
+            ix == self.pick_sel,
+            SURFACE_HOVER,
+        )
             .flex_none()
             .flex()
             .items_center()
@@ -383,9 +386,7 @@ impl ChatScreen {
             .py(px(6.))
             .rounded(px(RADIUS_MD))
             .text_color(TEXT)
-            .when(ix == self.pick_sel, |d| d.bg(SURFACE_HOVER))
             .cursor_pointer()
-            .hover(|s| s.bg(SURFACE_HOVER))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_agent(opt.clone(), window, cx);
             }))

@@ -146,6 +146,8 @@ pub struct ChatScreen {
     pub(crate) nc_query: Entity<TextInput>,
     pub(crate) nc_branch: Entity<TextInput>,
     pub(crate) nc_clone: Entity<TextInput>,
+    /// Popup frames for this render (enter / exit animations, see `ui::motion`).
+    pub(crate) pops: Pops,
     /// Focused on the next render (set where no window is at hand).
     pub(crate) focus_next: Option<gpui::FocusHandle>,
     /// Saved sessions (newest first) shown in the app sidebar.
@@ -316,6 +318,7 @@ impl ChatScreen {
             nc_branch,
             nc_clone,
             focus_next: None,
+            pops: Pops::default(),
             index: Vec::new(),
             flags: history_index::Flags::default(),
             chats_version: 0,
@@ -710,8 +713,28 @@ pub(crate) const SIDEBAR_RECENT: usize = 8;
 /// Show a search field in the model menu above this many models.
 pub(crate) const SEARCH_THRESHOLD: usize = 12;
 
+/// This frame's state of each chat popup: `None` = not drawn.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Pops {
+    pub model: Option<ui::motion::PopFrame>,
+    pub suggest: Option<ui::motion::PopFrame>,
+    pub picker: Option<ui::motion::PopFrame>,
+    pub workdir: Option<ui::motion::PopFrame>,
+    pub base_menu: Option<ui::motion::PopFrame>,
+}
+
 impl Render for ChatScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use ui::motion::{Pop, presence};
+        let suggest_open = !matches!(self.suggestions(), Suggest::None);
+        let base_open = self.newchat.as_ref().is_some_and(|nc| nc.base_open);
+        self.pops = Pops {
+            model: presence("pop-model", self.model_open, Pop::Above, window, cx),
+            suggest: presence("pop-suggest", suggest_open, Pop::Above, window, cx),
+            picker: presence("pop-picker", self.pick_open, Pop::Above, window, cx),
+            workdir: presence("pop-workdir", self.wd.open, Pop::Below, window, cx),
+            base_menu: presence("pop-base", base_open, Pop::Below, window, cx),
+        };
         if let Some(h) = self.focus_next.take()
             && Self::visible(cx)
         {

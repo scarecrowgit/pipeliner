@@ -146,16 +146,15 @@ impl ChatScreen {
             .child(icon("folder", 12., TEXT_SECONDARY))
             .child(self.wd_label())
             .child(icon("chevron-down", 12., TEXT_MUTED));
-        div().relative().child(trigger).when(open, |d| {
+        div().relative().child(trigger).when_some(self.pops.workdir, |d, f| {
             d.child(
                 deferred(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_full()
-                        .pt(px(6.))
-                        .w(px(WD_MENU_WIDTH))
-                        .child(div().id("wd-menu").occlude().child(self.wd_menu(cx))),
+                    ui::motion::pop_below(
+                        div().absolute().left_0().top_full().w(px(WD_MENU_WIDTH)),
+                        6.,
+                        f,
+                    )
+                    .child(div().id("wd-menu").occlude().child(self.wd_menu(cx))),
                 )
                 .with_priority(1),
             )
@@ -288,6 +287,17 @@ impl ChatScreen {
                 )
         });
 
+        // Revealed inside the open menu (`.gr-reveal`), replayed per target folder.
+        let confirm = confirm.map(|c| {
+            let key = self
+                .wd
+                .pending
+                .as_ref()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ui::motion::reveal(gpui::ElementId::Name(format!("wd-confirm-{key}").into()), c)
+        });
+
         div()
             .flex()
             .flex_col()
@@ -354,8 +364,7 @@ impl ChatScreen {
         let other = other_session(&self.wd.sessions, &dir, &self.session_id);
         let (note, tone) = menu_note(is_current, other.map(|e| e.title.as_str()), fact);
         let pick = dir.clone();
-        div()
-            .id(eid("wd-row", ix))
+        ui::motion::fade_row(div().id(eid("wd-row", ix)), eid("wd-row", ix), on, SURFACE_HOVER)
             .flex()
             .items_center()
             .gap(px(10.))
@@ -364,8 +373,6 @@ impl ChatScreen {
             .px(px(10.))
             .py(px(6.))
             .rounded(px(RADIUS_MD))
-            .when(on, |d| d.bg(SURFACE_HOVER))
-            .hover(|s| s.bg(SURFACE_HOVER))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.wd.pending = (pick != this.workspace.root).then(|| pick.clone());

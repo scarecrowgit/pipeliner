@@ -276,7 +276,11 @@ impl PipelineEditorScreen {
                             anchored()
                                 .offset(point(px(0.), px(4.)))
                                 .snap_to_window()
-                                .child(list),
+                                .child(ui::motion::pop_in(
+                                    ("menu-in", menu as usize),
+                                    ui::motion::Pop::Below,
+                                    list,
+                                )),
                         )
                         .with_priority(2),
                     ),

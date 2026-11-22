@@ -184,7 +184,9 @@ impl IssuesScreen {
     fn render_status_select(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
         let current = issue.status;
         let menu = self.status_menu_open.then(|| {
-            deferred(
+            deferred(ui::motion::pop_in(
+                "status-menu-in",
+                ui::motion::Pop::Below,
                 div()
                     .id("status-menu")
                     .absolute()
@@ -222,7 +224,7 @@ impl IssuesScreen {
                             .when(on, |d| d.child(icon("check", 12., ACCENT_TEXT)))
                             .on_click(cx.listener(move |this, _, _, cx| this.set_status(c, cx)))
                     })),
-            )
+            ))
             .with_priority(1)
         });
 

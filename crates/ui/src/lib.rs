@@ -3,6 +3,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod motion;
 pub mod nav;
 pub mod selectable;
 pub mod text_input;

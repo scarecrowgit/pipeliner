@@ -19,6 +19,17 @@ groups, preview, Open / Fork / Pin / Archive (with Undo), and Select mode for bu
 export (to `~/Downloads`) and delete. Pins and archive live in `~/.local/share/harness/chat_flags.json`.
 Home shows the dashboard (mock pipeline data; running and waiting chats are real).
 
+## Motion
+
+Animations follow the Graphite design system's motion spec (`crates/ui/src/motion.rs`):
+hover/selection colours on buttons, tabs, nav items, menu and list rows fade over 150ms;
+popovers and menus come out of their trigger (180ms in, 4px), the ⌘K history picker opens
+as a dialog with a fading scrim (220ms, 8px), toasts rise 8px (240ms), confirms revealed
+inside an open popup slide in (180ms), and every exit is 100ms. Only opacity and position
+move (gpui has no div transforms, so the 0.98 → 1 scale is left out); popups on the mock
+screens animate in only. `HARNESS_REDUCE_MOTION=1` (or GNOME `enable-animations` off) turns
+motion off; `HARNESS_MOTION_SLOW=10` plays everything 10× slower for checking by eye.
+
 ## Real chat (LLM over API)
 
 The Chat screen is a working coding agent (crates `llm` + `agent_tools`): streaming replies, tool

@@ -64,6 +64,11 @@ pub struct ChatHistory {
     confirm_delete: bool,
     sort_open: bool,
     toast: Option<Toast>,
+    /// The toast is up (its text stays in `toast` while it fades out).
+    toast_visible: bool,
+    /// Sort menu and toast animation frames for this render.
+    sort_frame: Option<ui::motion::PopFrame>,
+    toast_frame: Option<ui::motion::PopFrame>,
     /// Live statuses published by the Chat screen (the open chat may be running).
     live: HashMap<SharedString, ChatStatus>,
     current: Option<SharedString>,
@@ -128,6 +133,9 @@ impl ChatHistory {
             confirm_delete: false,
             sort_open: false,
             toast: None,
+            toast_visible: false,
+            sort_frame: None,
+            toast_frame: None,
             live: HashMap::new(),
             current: None,
             host: crate::workdir::hostname(),
@@ -153,6 +161,7 @@ impl ChatHistory {
         self.confirm_delete = false;
         self.sort_open = false;
         self.toast = None;
+        self.toast_visible = false;
         self.sel = self.current.as_ref().map(|s| s.to_string());
         if let Ok(q) = std::env::var("HARNESS_CHAT_HISTORY_Q") {
             for word in q.split_whitespace() {
@@ -173,7 +182,8 @@ impl ChatHistory {
         if let Some(h) = self.restore_focus.take() {
             h.focus(window);
         }
-        self.toast = None;
+        self.toast_visible = false;
+        self.sort_open = false;
         cx.notify();
     }
 
@@ -211,10 +221,11 @@ impl ChatHistory {
 
     fn show_toast(&mut self, text: String, undo: Vec<String>, cx: &mut Context<Self>) {
         self.toast = Some(Toast { text, undo });
+        self.toast_visible = true;
         self.toast_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(8)).await;
             this.update(cx, |this, cx| {
-                this.toast = None;
+                this.toast_visible = false;
                 cx.notify();
             })
             .ok();
@@ -459,6 +470,10 @@ impl ChatHistory {
     }
 
     fn undo(&mut self, cx: &mut Context<Self>) {
+        if !self.toast_visible {
+            return;
+        }
+        self.toast_visible = false;
         let Some(t) = self.toast.take() else {
             return;
         };
@@ -887,11 +902,12 @@ impl ChatHistory {
                         cx.notify();
                     })),
             )
-            .when(self.sort_open, |d| {
+            .when_some(self.sort_frame, |d, f| {
                 d.child(
                     div()
                         .absolute()
-                        .top(px(32.))
+                        .top(px(32. + f.dy))
+                        .opacity(f.opacity)
                         .right_0()
                         .w(px(160.))
                         .p(px(4.))
@@ -1203,8 +1219,9 @@ impl ChatHistory {
             "Plan" => "policy",
             _ => "agent",
         };
-        div()
-            .id(eid("hs-row", ix))
+        // Keyed by chat id so the fade follows the chat when the list re-sorts.
+        let key = ElementId::Name(format!("hs-row-{}", c.id).into());
+        ui::motion::fade_row(div().id(eid("hs-row", ix)), key, on, SURFACE_RAISED)
             .relative()
             .flex()
             .flex_none()
@@ -1215,8 +1232,6 @@ impl ChatHistory {
             .py(px(6.))
             .rounded(px(RADIUS_LG))
             .cursor_pointer()
-            .when(on, |d| d.bg(SURFACE_HOVER))
-            .when(!on, |d| d.hover(|s| s.bg(SURFACE_RAISED)))
             .when(on, |d| {
                 d.child(
                     div()
@@ -1560,11 +1575,13 @@ impl ChatHistory {
 
     fn render_toast(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let t = self.toast.as_ref()?;
-        let can_undo = !t.undo.is_empty();
+        let f = self.toast_frame?;
+        let can_undo = !t.undo.is_empty() && !f.leaving;
         Some(
             div()
                 .absolute()
-                .bottom(px(52.))
+                .bottom(px(52. - f.dy))
+                .opacity(f.opacity)
                 .left_0()
                 .right_0()
                 .flex()
@@ -1603,10 +1620,25 @@ impl Focusable for ChatHistory {
 }
 
 impl Render for ChatHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.open {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use ui::motion::{Pop, presence};
+        // Dialog + scrim enter over 220ms and leave over 100ms; the picker stays mounted
+        // while it leaves.
+        let scrim = presence("hs-scrim", self.open, Pop::Scrim, window, cx);
+        let panel = presence("hs-dialog", self.open, Pop::Dialog, window, cx);
+        self.sort_frame = presence("hs-sort", self.open && self.sort_open, Pop::Below, window, cx);
+        self.toast_frame =
+            presence("hs-toast", self.open && self.toast_visible, Pop::Toast, window, cx);
+        let (Some(scrim), Some(panel)) = (scrim, panel) else {
             return div().into_any_element();
-        }
+        };
+        let bulk = self.selecting.then(|| {
+            if self.confirm_delete {
+                ui::motion::reveal("hs-del-confirm", self.render_bulk(cx))
+            } else {
+                self.render_bulk(cx).into_any_element()
+            }
+        });
         let dialog = div()
             .id("chat-history")
             .key_context(CONTEXT)
@@ -1633,7 +1665,7 @@ impl Render for ChatHistory {
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(self.render_search(cx))
             .child(self.render_filters(cx))
-            .when(self.selecting, |d| d.child(self.render_bulk(cx)))
+            .children(bulk)
             .child(
                 div()
                     .flex()
@@ -1651,14 +1683,20 @@ impl Render for ChatHistory {
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(96.))
-            .bg(gpui::hsla(210. / 360., 0.11, 0.035, 0.72))
+            .pt(px(96. + panel.dy))
             .occlude()
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close(cx)),
             )
-            .child(dialog)
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(210. / 360., 0.11, 0.035, 0.72))
+                    .opacity(scrim.opacity),
+            )
+            .child(dialog.opacity(panel.opacity))
             .into_any_element()
     }
 }

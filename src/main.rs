@@ -48,7 +48,6 @@ fn initial_screen() -> Screen {
 impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let nav = self.nav.read(cx);
-        let history_open = nav.history_open;
         let screen: AnyView = match nav.screen {
             Screen::Home => self.home.clone().into(),
             Screen::PipelineEditor => self.editor.clone().into(),
@@ -58,15 +57,14 @@ impl Render for Shell {
             Screen::Agents => self.agents.clone().into(),
         };
         // The history picker is always in the tree (it renders nothing while closed) so
-        // it keeps its state and can take focus when ⌘K opens it.
+        // it keeps its state, can take focus when ⌘K opens it and can animate out.
         ui::root()
             .relative()
             .flex()
             .child(self.sidebar.clone())
             .child(div().flex_1().min_w_0().h_full().child(screen))
-            .when(history_open, |d| {
-                d.child(div().absolute().inset_0().child(self.history.clone()))
-            })
+            // Rendered empty while closed; kept mounted so it can play its exit.
+            .child(div().absolute().inset_0().child(self.history.clone()))
     }
 }
 

@@ -1004,8 +1004,7 @@ impl ChatScreen {
         };
         let path = r.path.clone();
         let kind = r.kind;
-        div()
-            .id(eid("nc-row", ix))
+        ui::motion::fade_row(div().id(eid("nc-row", ix)), eid("nc-row", ix), on, SURFACE_HOVER)
             .flex()
             .items_center()
             .gap(px(10.))
@@ -1021,8 +1020,6 @@ impl ChatScreen {
             } else {
                 gpui::transparent_black()
             })
-            .when(on, |d| d.bg(SURFACE_HOVER))
-            .when(!on, |d| d.hover(|s| s.bg(SURFACE_HOVER)))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 if kind == RowKind::Open {
@@ -1511,14 +1508,9 @@ impl ChatScreen {
             }))
             .child(div().flex_1().min_w_0().truncate().child(base_value))
             .child(icon("chevron-down", 14., TEXT_MUTED));
-        let menu = (nc.base_open && !branches.is_empty()).then(|| {
+        let menu = self.pops.base_menu.filter(|_| !branches.is_empty()).map(|f| {
             deferred(
-                div()
-                    .absolute()
-                    .top_full()
-                    .left_0()
-                    .right_0()
-                    .pt(px(4.))
+                ui::motion::pop_below(div().absolute().top_full().left_0().right_0(), 4., f)
                     .child(
                         div()
                             .id("nc-base-menu")
@@ -1542,8 +1534,12 @@ impl ChatScreen {
                             .children(branches.iter().enumerate().map(|(i, b)| {
                                 let on = nc.base.as_ref() == Some(b);
                                 let pick = b.clone();
-                                div()
-                                    .id(eid("nc-base-opt", i))
+                                ui::motion::fade_row(
+                                    div().id(eid("nc-base-opt", i)),
+                                    eid("nc-base-opt", i),
+                                    false,
+                                    SURFACE_HOVER,
+                                )
                                     .flex()
                                     .items_center()
                                     .gap(px(8.))
@@ -1554,7 +1550,6 @@ impl ChatScreen {
                                     .text_size(px(12.))
                                     .text_color(TEXT)
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(SURFACE_HOVER))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(nc) = this.newchat.as_mut() {
                                             nc.base = Some(pick.clone());

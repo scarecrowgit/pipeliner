@@ -16,6 +16,7 @@ use gpui::{
     Window, div, prelude::*, px, relative, svg,
 };
 
+use crate::motion;
 use crate::theme::*;
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -344,7 +345,7 @@ impl Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let small = self.size == ButtonSize::Sm;
         let (h, pad, font, radius, icon_size) =
             if small { (28., 10., 12., RADIUS_MD, 12.) } else { (40., 14., 13., RADIUS_LG, 14.) };
@@ -364,7 +365,16 @@ impl RenderOnce for Button {
         let disabled = self.disabled;
         let icon_only = self.label.is_none();
 
-        div()
+        // `.gr-btn`: background, border and colour fade over `duration-state`.
+        let border = border.unwrap_or(gpui::transparent_black());
+        let rest = motion::Look::bg(bg).fg(fg).border(border);
+        let hover = if disabled || self.selected {
+            rest
+        } else {
+            motion::Look::bg(hover_bg).fg(hover_fg).border(border)
+        };
+        let key = self.id.clone();
+        let el = div()
             .id(self.id)
             .flex()
             .flex_none()
@@ -377,16 +387,12 @@ impl RenderOnce for Button {
             .when(self.full_width, |d| d.w_full())
             .rounded(px(radius))
             .border_1()
-            .border_color(border.unwrap_or(gpui::transparent_black()))
-            .bg(bg)
-            .text_color(fg)
             .text_size(px(font))
             .font_weight(FontWeight::MEDIUM)
             .whitespace_nowrap()
             .when(disabled, |d| d.opacity(0.45).cursor_not_allowed())
-            .when(!disabled, |d| {
-                d.cursor_pointer().hover(move |s| s.bg(hover_bg).text_color(hover_fg))
-            })
+            .when(!disabled, |d| d.cursor_pointer());
+        motion::hover_fade(el, key, rest, hover, window, cx)
             .when_some(self.leading, |d, el| d.child(el))
             .when_some(self.icon, |d, name| d.child(icon(&name, icon_size, fg)))
             .when_some(self.label, |d, l| d.child(l))
@@ -439,23 +445,30 @@ impl Tabs {
 }
 
 impl RenderOnce for Tabs {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let id = self.id.clone();
-        div().id(self.id).flex().gap(px(SPACE_5)).h(px(self.height)).children(
-            self.items.into_iter().enumerate().map(|(i, it)| {
+        let tabs: Vec<_> = self
+            .items
+            .into_iter()
+            .enumerate()
+            .map(|(i, it)| {
                 let sel = i == self.selected;
                 let cb = self.on_select.clone();
-                div()
-                    .id(child_id(&id, &i.to_string()))
+                let tab_id = child_id(&id, &i.to_string());
+                let el = div()
+                    .id(tab_id.clone())
                     .flex()
                     .items_center()
                     .h_full()
                     .border_b_2()
                     .border_color(if sel { ACCENT } else { gpui::transparent_black() })
-                    .text_color(if sel { TEXT } else { TEXT_MUTED })
                     .when(sel, |d| d.font_weight(FontWeight::MEDIUM))
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(TEXT))
+                    .cursor_pointer();
+                // `.gr-tab`: the label colour fades over `duration-state`.
+                let clear = gpui::transparent_black();
+                let rest = motion::Look::bg(clear).fg(if sel { TEXT } else { TEXT_MUTED });
+                let hover = motion::Look::bg(clear).fg(TEXT);
+                motion::hover_fade(el, tab_id, rest, hover, window, cx)
                     .child(it.label)
                     .when_some(it.count, |d, c| {
                         d.child(
@@ -467,8 +480,14 @@ impl RenderOnce for Tabs {
                         )
                     })
                     .when_some(cb, |d, cb| d.on_click(move |_, w, cx| cb(i, w, cx)))
-            }),
-        )
+            })
+            .collect();
+        div()
+            .id(self.id)
+            .flex()
+            .gap(px(SPACE_5))
+            .h(px(self.height))
+            .children(tabs)
     }
 }
 

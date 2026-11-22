@@ -14,6 +14,7 @@ use gpui::{
 };
 use ui::nav::{self, ChatSessionInfo, ChatStatus, Screen};
 use ui::theme::*;
+use ui::motion::{self, Look};
 use ui::{Badge, Status, Tone, icon, kbd, status_dot};
 
 use data::NAV;
@@ -34,7 +35,7 @@ impl Sidebar {
 
     // ── Full sidebar ────────────────────────────────────────────────────
 
-    fn render_full(&self, screen: Screen, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_full(&self, screen: Screen, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let in_chat = screen == Screen::Chat;
         let mut column = div()
             .flex()
@@ -47,7 +48,7 @@ impl Sidebar {
             let active = screen == entry.screen;
             let target = entry.screen;
             column = column.child(
-                nav_item(("sidebar-nav", entry.screen as usize), active)
+                nav_item(("sidebar-nav", entry.screen as usize), active, window, cx)
                     .child(row_icon(
                         entry.icon,
                         16.,
@@ -70,35 +71,27 @@ impl Sidebar {
         let current = current.filter(|_| in_chat);
         let now = ui::time::now_secs();
         let offset = ui::time::utc_offset(now);
-        let row = |index: usize, s: &ChatSessionInfo| {
+        let mut pinned = Vec::new();
+        let mut recent = Vec::new();
+        for s in &sessions {
             let meta = if s.updated > 0 {
                 ui::time::when_short(s.updated, now, offset)
             } else {
                 String::new()
             };
-            chat_row(
-                ("sidebar-chat", index),
-                s,
-                meta,
-                current.as_ref() == Some(&s.id),
-            )
-        };
-        let pinned: Vec<_> = sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.pinned)
-            .map(|(i, s)| row(i, s))
-            .collect();
-        let recent: Vec<_> = sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.pinned)
-            .map(|(i, s)| row(i, s))
-            .collect();
+            // Keyed by chat id so hover/selection fades follow the chat, not the slot.
+            let key = ElementId::Name(format!("sidebar-chat-{}", s.id).into());
+            let row = chat_row(key, s, meta, current.as_ref() == Some(&s.id), window, cx);
+            if s.pinned {
+                pinned.push(row);
+            } else {
+                recent.push(row);
+            }
+        }
 
         column = column
-            .child(chats_header(in_chat))
-            .child(search_row());
+            .child(chats_header(in_chat, window, cx))
+            .child(search_row(window, cx));
         if !pinned.is_empty() {
             column = column.child(group_label("Pinned", 6.)).children(pinned);
         }
@@ -125,7 +118,7 @@ impl Sidebar {
 
     // ── Compact rail ────────────────────────────────────────────────────
 
-    fn render_compact(screen: Screen) -> gpui::Div {
+    fn render_compact(screen: Screen, window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
         let logo = div()
             .id("sidebar-rail-logo")
             .size(px(32.))
@@ -139,10 +132,11 @@ impl Sidebar {
             .child(icon("pipelines", 16., ACCENT_TEXT))
             .tooltip(tooltip(data::WORKSPACE));
 
-        let nav_buttons = NAV.iter().map(|entry| {
+        let mut nav_buttons = Vec::new();
+        for entry in NAV {
             let active = screen == entry.screen;
             let target = entry.screen;
-            rail_button(("sidebar-rail-nav", entry.screen as usize), active)
+            nav_buttons.push(rail_button(("sidebar-rail-nav", entry.screen as usize), active, window, cx)
                 .child(row_icon(
                     entry.icon,
                     16.,
@@ -150,13 +144,13 @@ impl Sidebar {
                 ))
                 .when_some(entry.count, |button, count| button.child(rail_count(count)))
                 .tooltip(tooltip(entry.aria))
-                .on_click(move |_, _, cx| nav::navigate(target, cx))
-        });
-        let chats = rail_button("sidebar-rail-chats", screen == Screen::Chat)
+                .on_click(move |_, _, cx| nav::navigate(target, cx)));
+        }
+        let chats = rail_button("sidebar-rail-chats", screen == Screen::Chat, window, cx)
             .child(row_icon("message", 16., TEXT_MUTED))
             .tooltip(tooltip("Chats"))
             .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx));
-        let search = rail_button("sidebar-rail-search", false)
+        let search = rail_button("sidebar-rail-search", false, window, cx)
             .child(row_icon("search", 16., TEXT_MUTED))
             .tooltip(tooltip("Search chats · ⌘K"))
             .on_click(|_, _, cx| nav::set_history_open(true, cx));
@@ -176,7 +170,7 @@ impl Sidebar {
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let screen = nav::current(cx);
         let compact = screen == Screen::PipelineEditor;
         let width = if compact {
@@ -185,9 +179,9 @@ impl Render for Sidebar {
             SIDEBAR_WIDTH
         };
         let content = if compact {
-            Self::render_compact(screen)
+            Self::render_compact(screen, window, cx)
         } else {
-            self.render_full(screen, cx)
+            self.render_full(screen, window, cx)
         };
         div()
             .id("app-sidebar")
@@ -236,10 +230,30 @@ fn row_icon(name: &str, size: f32, color: gpui::Hsla) -> gpui::Svg {
     icon(name, size, color).group_hover(ROW_GROUP, |style| style.text_color(TEXT))
 }
 
+/// Rest / hover looks of a selectable row: selected rows stay on `surface-hover`,
+/// others raise on hover. Both fade over `duration-state`.
+fn row_looks(active: bool, fg: gpui::Hsla) -> (Look, Look) {
+    if active {
+        let l = Look::bg(SURFACE_HOVER).fg(TEXT);
+        (l, l)
+    } else {
+        (
+            Look::bg(gpui::transparent_black()).fg(fg),
+            Look::bg(SURFACE_RAISED).fg(TEXT),
+        )
+    }
+}
+
 /// `.gr-nav-item`: 32px row, 10px gap, secondary text; hover raises, active is selected.
-fn nav_item(id: impl Into<ElementId>, active: bool) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
+fn nav_item(
+    id: impl Into<ElementId>,
+    active: bool,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Stateful<gpui::Div> {
+    let id = id.into();
+    let el = div()
+        .id(id.clone())
         .group(ROW_GROUP)
         .flex()
         .flex_none()
@@ -248,18 +262,21 @@ fn nav_item(id: impl Into<ElementId>, active: bool) -> Stateful<gpui::Div> {
         .h(px(NAV_ITEM_HEIGHT))
         .px(px(8.))
         .rounded(px(RADIUS_MD))
-        .cursor_pointer()
-        .text_color(if active { TEXT } else { TEXT_SECONDARY })
-        .when(active, |item| item.bg(SURFACE_HOVER))
-        .when(!active, |item| {
-            item.hover(|style| style.bg(SURFACE_RAISED).text_color(TEXT))
-        })
+        .cursor_pointer();
+    let (rest, hover) = row_looks(active, TEXT_SECONDARY);
+    motion::hover_fade(el, id, rest, hover, window, cx)
 }
 
 /// 40×40 `.sb-rail` button of the compact rail.
-fn rail_button(id: impl Into<ElementId>, current: bool) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
+fn rail_button(
+    id: impl Into<ElementId>,
+    current: bool,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Stateful<gpui::Div> {
+    let id = id.into();
+    let el = div()
+        .id(id.clone())
         .group(ROW_GROUP)
         .relative()
         .size(px(40.))
@@ -268,11 +285,14 @@ fn rail_button(id: impl Into<ElementId>, current: bool) -> Stateful<gpui::Div> {
         .items_center()
         .justify_center()
         .rounded(px(RADIUS_LG))
-        .cursor_pointer()
-        .when(current, |button| button.bg(SURFACE_HOVER))
-        .when(!current, |button| {
-            button.hover(|style| style.bg(SURFACE_RAISED))
-        })
+        .cursor_pointer();
+    let (rest, hover) = if current {
+        let l = Look::bg(SURFACE_HOVER);
+        (l, l)
+    } else {
+        (Look::bg(gpui::transparent_black()), Look::bg(SURFACE_RAISED))
+    };
+    motion::hover_fade(el, id, rest, hover, window, cx)
 }
 
 fn rail_count(count: u32) -> gpui::Div {
@@ -325,7 +345,7 @@ fn workspace_row() -> gpui::Div {
 }
 
 /// `Chats ………… +`: the label opens the Chat screen, `+` starts a new chat.
-fn chats_header(in_chat: bool) -> gpui::Div {
+fn chats_header(in_chat: bool, window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
     div()
         .flex()
         .flex_none()
@@ -346,25 +366,31 @@ fn chats_header(in_chat: bool) -> gpui::Div {
                 .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx)),
         )
         .child(
-            div()
-                .id("sidebar-new-chat")
-                .group(ROW_GROUP)
-                .size(px(24.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(RADIUS_MD))
-                .cursor_pointer()
-                .hover(|style| style.bg(SURFACE_RAISED))
-                .child(row_icon("plus", 14., TEXT_MUTED))
+            motion::hover_fade(
+                div()
+                    .id("sidebar-new-chat")
+                    .group(ROW_GROUP)
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(RADIUS_MD))
+                    .cursor_pointer(),
+                "sidebar-new-chat",
+                Look::bg(gpui::transparent_black()),
+                Look::bg(SURFACE_RAISED),
+                window,
+                cx,
+            )
+            .child(row_icon("plus", 14., TEXT_MUTED))
                 .tooltip(tooltip("New chat"))
                 .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx)),
         )
 }
 
 /// The "Search chats ⌘K" field-like button.
-fn search_row() -> Stateful<gpui::Div> {
-    div()
+fn search_row(window: &mut Window, cx: &mut gpui::App) -> Stateful<gpui::Div> {
+    let el = div()
         .id("sidebar-search-chats")
         .group(ROW_GROUP)
         .flex()
@@ -377,11 +403,17 @@ fn search_row() -> Stateful<gpui::Div> {
         .rounded(px(RADIUS_LG))
         .border_1()
         .border_color(LINE_STRONG)
-        .bg(SURFACE_RAISED)
         .text_color(TEXT_MUTED)
-        .cursor_pointer()
-        .hover(|style| style.bg(SURFACE_HOVER))
-        .child(row_icon("search", 14., TEXT_MUTED))
+        .cursor_pointer();
+    motion::hover_fade(
+        el,
+        "sidebar-search-chats",
+        Look::bg(SURFACE_RAISED),
+        Look::bg(SURFACE_HOVER),
+        window,
+        cx,
+    )
+    .child(row_icon("search", 14., TEXT_MUTED))
         .child(div().flex_1().child("Search chats"))
         .child(kbd("⌘K"))
         .on_click(|_, _, cx| nav::set_history_open(true, cx))
@@ -406,6 +438,8 @@ fn chat_row(
     s: &ChatSessionInfo,
     meta: String,
     current: bool,
+    window: &mut Window,
+    cx: &mut gpui::App,
 ) -> Stateful<gpui::Div> {
     let status = match s.status {
         ChatStatus::Running => Status::Running,
@@ -414,8 +448,9 @@ fn chat_row(
         ChatStatus::Idle => Status::Live,
     };
     let chat = s.id.clone();
-    div()
-        .id(id)
+    let id = id.into();
+    let el = div()
+        .id(id.clone())
         .flex()
         .flex_none()
         .items_center()
@@ -425,10 +460,9 @@ fn chat_row(
         .px(px(8.))
         .rounded(px(RADIUS_MD))
         .text_size(px(TEXT_LABEL))
-        .text_color(if current { TEXT } else { TEXT_SECONDARY })
-        .cursor_pointer()
-        .when(current, |row| row.bg(SURFACE_HOVER))
-        .when(!current, |row| row.hover(|style| style.bg(SURFACE_RAISED)))
+        .cursor_pointer();
+    let (rest, hover) = row_looks(current, TEXT_SECONDARY);
+    motion::hover_fade(el, id, rest, hover, window, cx)
         .child(status_dot(status, true))
         .child(ellipsis_cell(s.title.clone()))
         .when(!meta.is_empty(), |row| {
