@@ -149,6 +149,10 @@ pub struct ChatScreen {
     /// Optional note sent with "Reject" in a permission prompt.
     pub(crate) note_input: Entity<TextInput>,
     pub(crate) scroll: ScrollHandle,
+    /// Mouse text selection over the transcript (see `ui::selectable`).
+    pub(crate) selection: ui::selectable::Selection,
+    /// Focused when transcript text is pressed, so ctrl-c copies the selection.
+    pub(crate) transcript_focus: gpui::FocusHandle,
 
     config_task: Option<Task<()>>,
     skills_task: Option<Task<()>>,
@@ -170,6 +174,13 @@ fn workspace_root() -> PathBuf {
 impl ChatScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| TextInput::new(Self::placeholder_for(Mode::Build), cx));
+        let transcript_focus = cx.focus_handle();
+        let selection = ui::selectable::new_selection();
+        selection.borrow_mut().set_focus(transcript_focus.clone());
+        // Dev/test hook: `HARNESS_CHAT_SELECT_ALL=1` selects the whole transcript on start.
+        if std::env::var("HARNESS_CHAT_SELECT_ALL").is_ok_and(|v| v == "1") {
+            selection.borrow_mut().select_all();
+        }
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         let note_input =
             cx.new(|cx| TextInput::new("Optional note for the agent, sent with Reject", cx));
@@ -294,6 +305,8 @@ impl ChatScreen {
             model_query: String::new(),
             note_input,
             scroll: ScrollHandle::new(),
+            selection,
+            transcript_focus,
             config_task: None,
             skills_task: None,
             agents_task: None,

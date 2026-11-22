@@ -248,6 +248,7 @@ fn output_body(output: &str) -> gpui::Div {
     let skip = lines.len().saturating_sub(MAX_OUTPUT_LINES);
     let text = lines[skip..].join("\n");
     div()
+        .overflow_hidden()
         .px(px(12.))
         .py(px(8.))
         .border_t_1()
@@ -264,7 +265,7 @@ fn output_body(output: &str) -> gpui::Div {
                     .child(format!("… {skip} earlier lines")),
             )
         })
-        .child(text)
+        .child(ui::selectable::plain(text, "\n\n"))
 }
 
 fn exit_meta(display: Option<&ToolDisplay>, is_error: bool) -> gpui::Div {
@@ -332,13 +333,40 @@ impl ChatScreen {
     }
 
     pub(crate) fn render_transcript(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = if self.items.is_empty() {
-            vec![self.empty_state(cx)]
-        } else {
-            self.item_elements(cx)
+        self.selection.borrow_mut().begin_frame();
+        let build = || {
+            if self.items.is_empty() {
+                vec![self.empty_state(cx)]
+            } else {
+                self.item_elements(cx)
+            }
         };
+        let items = ui::selectable::scope(&self.selection, build);
         div()
             .id("transcript")
+            .track_focus(&self.transcript_focus)
+            // Runs after the text blocks' own handlers: a press that no block took clears.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.selection.borrow_mut().press_outside() {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
+                let k = &ev.keystroke;
+                if (k.modifiers.control || k.modifiers.platform) && k.key == "a" {
+                    this.selection.borrow_mut().select_all();
+                    cx.notify();
+                    cx.stop_propagation();
+                } else if (k.modifiers.control || k.modifiers.platform) && k.key == "c" {
+                    if let Some(text) = this.selection.borrow().selected_text() {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -352,7 +380,13 @@ impl ChatScreen {
                     .flex()
                     .flex_col()
                     .gap(px(20.))
-                    .children(items),
+                    // flex_none: a flex column taller than the viewport would otherwise shrink
+                    // its items (squashing e.g. a two-line user bubble to one line).
+                    .children(
+                        items
+                            .into_iter()
+                            .map(|el| div().flex().flex_col().flex_shrink_0().min_w_0().child(el)),
+                    ),
             )
     }
 
@@ -482,7 +516,9 @@ impl ChatScreen {
         self.items
             .iter()
             .enumerate()
-            .map(|(i, item)| match item {
+            .map(|(i, item)| {
+                ui::selectable::set_prefix(i.to_string());
+                match item {
                 Item::User(u) => self.user_item(i, u),
                 Item::Shell(s) => self.shell_item(i, s, cx),
                 Item::Turn(t) => {
@@ -496,17 +532,22 @@ impl ChatScreen {
                     .text_color(TEXT_MUTED)
                     .child(text.clone())
                     .into_any_element(),
+                }
             })
             .collect()
     }
 
     fn user_item(&self, _ix: usize, u: &UserMsg) -> AnyElement {
+        // ~7px per char at 13px Inter; 85% of the 780px column ≈ 640px of text.
+        let wide = u.text.lines().any(|l| l.chars().count() * 7 > 600) || u.text.contains('\n');
         user_bubble(
             div()
+                .w_full()
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(with_mentions(&u.text, TEXT))
+                .child(user_text(&u.text, TEXT))
                 .children(u.attachments.iter().map(|a| {
                     let (meta, color) = match (&a.content, &a.error) {
                         (_, Some(e)) => (truncate(e, 60), DANGER),
@@ -523,6 +564,7 @@ impl ChatScreen {
                         .child(div().font_family(FONT_MONO).child(a.path.clone()))
                         .child(div().text_color(color).child(format!("· {meta}")))
                 })),
+            wide,
         )
         .into_any_element()
     }

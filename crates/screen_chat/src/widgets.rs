@@ -77,6 +77,37 @@ pub fn with_mentions(text: &str, color: Hsla) -> StyledText {
     rich(segs)
 }
 
+/// User text laid out word by word in wrapping rows (mentions in mono accent), each word
+/// selectable. A single `StyledText` inside the shrink-to-fit bubble is measured at its
+/// one-line width by gpui (wrong height or wrong wrap width); per-word flex rows let the
+/// layout engine wrap and size it.
+pub fn user_text(text: &str, color: Hsla) -> gpui::Div {
+    let mut col = div().flex().flex_col().min_w_0();
+    for (li, line) in text.split('\n').enumerate() {
+        let mut row = div().flex().flex_wrap().min_w_0().min_h(px(20.));
+        let words: Vec<&str> = line.split(' ').collect();
+        let n = words.len();
+        for (wi, word) in words.into_iter().enumerate() {
+            let piece = if wi + 1 < n { format!("{word} ") } else { word.to_string() };
+            if piece.is_empty() {
+                continue;
+            }
+            let joiner = match (li, wi) {
+                (0, 0) => "\n\n",
+                (_, 0) => "\n",
+                _ => "",
+            };
+            row = row.child(
+                div()
+                    .flex_none()
+                    .child(ui::selectable::text(with_mentions(&piece, color), joiner)),
+            );
+        }
+        col = col.child(row);
+    }
+    col
+}
+
 /// Bordered surface block (tool call groups, todowrite, edit).
 pub fn block() -> gpui::Div {
     div()
@@ -203,10 +234,16 @@ pub fn tile(
 }
 
 /// User message bubble, right-aligned, max 85% wide.
-pub fn user_bubble(content: impl IntoElement) -> gpui::Div {
-    div().flex().justify_end().child(
+/// Right-aligned user message. `wide` = the text will need more than one line: the bubble
+/// then gets a definite width, because gpui sizes a shrink-to-fit box's text at its
+/// single-line width and the wrapped lines would overflow the bubble.
+pub fn user_bubble(content: impl IntoElement, wide: bool) -> gpui::Div {
+    div().flex().justify_end().pb(px(12.)).child(
         div()
-            .max_w(gpui::relative(0.85))
+            .flex()
+            .flex_col()
+            .when(wide, |d| d.w(gpui::relative(0.85)))
+            .when(!wide, |d| d.max_w(gpui::relative(0.85)))
             .px(px(14.))
             .py(px(10.))
             .rounded(px(RADIUS_XL))

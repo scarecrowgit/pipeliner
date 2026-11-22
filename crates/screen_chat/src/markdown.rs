@@ -381,7 +381,9 @@ pub fn styled_text(spans: &[Span], color: Hsla) -> StyledText {
 /// with its own fonts; plain paragraphs keep the cheaper single `StyledText`.
 fn paragraph(spans: &[Span], color: Hsla) -> AnyElement {
     if !spans.iter().any(|s| s.style.code) {
-        return div().child(styled_text(spans, color)).into_any_element();
+        return div()
+            .child(ui::selectable::text(styled_text(spans, color), "\n\n"))
+            .into_any_element();
     }
     let mut row = div().flex().flex_wrap().items_baseline().min_w_0();
     for (i, line) in split_lines(spans).into_iter().enumerate() {
@@ -389,8 +391,18 @@ fn paragraph(spans: &[Span], color: Hsla) -> AnyElement {
             // Hard line break: a full-width, zero-height item.
             row = row.child(div().w_full().h(px(0.)));
         }
-        for word in split_words(&line) {
-            row = row.child(div().flex_none().child(styled_text(&word, color)));
+        for (j, word) in split_words(&line).into_iter().enumerate() {
+            // Joiners rebuild the paragraph when a selection is copied.
+            let joiner = match (i, j) {
+                (0, 0) => "\n\n",
+                (_, 0) => "\n",
+                _ => "",
+            };
+            row = row.child(
+                div()
+                    .flex_none()
+                    .child(ui::selectable::text(styled_text(&word, color), joiner)),
+            );
         }
     }
     row.into_any_element()
@@ -457,7 +469,7 @@ fn render_block(block: &Block) -> AnyElement {
             .line_height(px(if *level == 1 { 24. } else { 20. }))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(TEXT)
-            .child(styled_text(spans, TEXT))
+            .child(ui::selectable::text(styled_text(spans, TEXT), "\n\n"))
             .into_any_element(),
         Block::Code { lang, text } => code_block(lang, text).into_any_element(),
         Block::List { start, items } => div()
@@ -504,6 +516,8 @@ fn render_block(block: &Block) -> AnyElement {
 pub fn code_block(lang: &str, text: &str) -> gpui::Div {
     div()
         .relative()
+        // Clips the selection highlight of full code lines to the block.
+        .overflow_hidden()
         .px(px(12.))
         .py(px(8.))
         .rounded(px(RADIUS_LG))
@@ -525,7 +539,7 @@ pub fn code_block(lang: &str, text: &str) -> gpui::Div {
                     .child(lang.to_string()),
             )
         })
-        .child(text.to_string())
+        .child(ui::selectable::plain(text.to_string(), "\n\n"))
 }
 
 fn table(head: &[Vec<Span>], rows: &[Vec<Vec<Span>>]) -> gpui::Div {
@@ -543,7 +557,10 @@ fn table(head: &[Vec<Span>], rows: &[Vec<Vec<Span>>]) -> gpui::Div {
                     .min_w_0()
                     .px(px(10.))
                     .py(px(6.))
-                    .child(styled_text(c, if header { TEXT } else { TEXT_SECONDARY }))
+                    .child(ui::selectable::text(
+                        styled_text(c, if header { TEXT } else { TEXT_SECONDARY }),
+                        "\t",
+                    ))
             }))
     };
     div()
