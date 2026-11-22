@@ -66,10 +66,11 @@ pub enum Range {
     Today,
     Week,
     Month,
+    Quarter,
 }
 
 impl Range {
-    pub const ALL: [Range; 3] = [Range::Today, Range::Week, Range::Month];
+    pub const ALL: [Range; 4] = [Range::Today, Range::Week, Range::Month, Range::Quarter];
 
     /// Segmented-control label.
     pub fn label(self) -> &'static str {
@@ -77,6 +78,7 @@ impl Range {
             Range::Today => "Today",
             Range::Week => "7 days",
             Range::Month => "30 days",
+            Range::Quarter => "90 days",
         }
     }
 
@@ -86,6 +88,7 @@ impl Range {
             Range::Today => "today",
             Range::Week => "last 7 days",
             Range::Month => "last 30 days",
+            Range::Quarter => "last 90 days",
         }
     }
 
@@ -94,6 +97,7 @@ impl Range {
             Range::Today => &KPI_TODAY,
             Range::Week => &KPI_WEEK,
             Range::Month => &KPI_MONTH,
+            Range::Quarter => &KPI_QUARTER,
         }
     }
 
@@ -102,6 +106,7 @@ impl Range {
             Range::Today => &BY_TODAY,
             Range::Week => &BY_WEEK,
             Range::Month => &BY_MONTH,
+            Range::Quarter => &BY_QUARTER,
         }
     }
 }
@@ -321,6 +326,15 @@ const BY_MONTH: [(&str, Kind, f32); 7] = [
     ("Codex", Kind::Agent, 8.4),
     ("Others · 11", Kind::Agent, 17.3),
 ];
+const BY_QUARTER: [(&str, Kind, f32); 7] = [
+    ("Payments lead", Kind::Orchestrator, 184.2),
+    ("PAY triage", Kind::Pipeline, 151.6),
+    ("Build", Kind::Agent, 102.3),
+    ("Fixer", Kind::Agent, 71.9),
+    ("Codex", Kind::Agent, 29.4),
+    ("Auditor", Kind::Agent, 24.1),
+    ("Others · 6", Kind::Agent, 48.9),
+];
 
 /// Which KPI a value belongs to; the first two are computed from the rows shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,6 +381,13 @@ const KPI_MONTH: [Kpi; 5] = [
     kpi(KpiKind::Other, "Spend", "$160.70", "of $300.00"),
     kpi(KpiKind::Other, "Shipped", "171", "PRs and specs"),
 ];
+const KPI_QUARTER: [Kpi; 5] = [
+    kpi(KpiKind::WorkingNow, "Working now", "6", "of 12 slots"),
+    kpi(KpiKind::WaitingForYou, "Waiting for you", "4", "oldest 3h"),
+    kpi(KpiKind::Other, "Runs", "4,212", "89% finished"),
+    kpi(KpiKind::Other, "Spend", "$612.40", "of $900.00"),
+    kpi(KpiKind::Other, "Shipped", "418", "PRs and specs"),
+];
 
 pub struct Runtime {
     pub name: &'static str,
@@ -403,3 +424,41 @@ pub const RUNTIMES: [Runtime; 3] = [
         note: "Codex queue waits for it · 1 run",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spend_cents(range: Range) -> i64 {
+        let spend = range
+            .kpis()
+            .iter()
+            .find(|k| k.label == "Spend")
+            .expect("Spend KPI");
+        let dollars: f64 = spend
+            .value
+            .trim_start_matches('$')
+            .replace(',', "")
+            .parse()
+            .unwrap();
+        (dollars * 100.0).round() as i64
+    }
+
+    #[test]
+    fn by_agent_sums_to_spend_kpi() {
+        for range in Range::ALL {
+            let sum: f32 = range.by_agent().iter().map(|row| row.2).sum();
+            assert_eq!(
+                (f64::from(sum) * 100.0).round() as i64,
+                spend_cents(range),
+                "{range:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn quarter_first_row_is_max() {
+        let rows = Range::Quarter.by_agent();
+        assert!(rows.iter().all(|row| row.2 <= rows[0].2));
+    }
+}
