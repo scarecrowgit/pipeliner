@@ -28,8 +28,14 @@ mod widgets;
 mod workdir;
 mod history;
 mod history_index;
+pub mod inbox;
 
 pub use history::ChatHistory;
+
+/// Markdown rendered like an assistant reply (for agent reports shown elsewhere).
+pub fn render_markdown(text: &str) -> gpui::AnyElement {
+    markdown::render(&markdown::parse(text))
+}
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

@@ -2,6 +2,7 @@
 //! agent-produced variants, inspect its diff and ship / skip / send it back.
 
 mod data;
+mod report;
 mod view;
 
 use gpui::{
@@ -70,6 +71,15 @@ pub struct ReviewScreen {
     /// Send-back notes per issue (kept while switching issues).
     notes: Vec<String>,
     notes_input: Entity<TextInput>,
+    /// Agent reports (`screen_chat::inbox`), newest first.
+    reports: Vec<screen_chat::inbox::InboxItem>,
+    /// The open report; `None` shows the pipeline review `cur`.
+    report: Option<String>,
+    /// Pull request status by URL.
+    prs: report::PrCache,
+    inbox_version: u64,
+    /// The newest report was opened on the first visit.
+    auto_opened: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -88,10 +98,28 @@ impl ReviewScreen {
             Screen::Inbox,
             window,
             cx,
-            |this, window, _| {
+            |this, window, cx| {
                 window.focus(&this.focus);
+                this.auto_open(cx);
             },
         ));
+        // Reports posted by agents (nav.inbox_version) and "open this report" requests.
+        if let Some(nav) = ui::nav::nav_entity(cx) {
+            subscriptions.push(cx.observe(&nav, |this: &mut Self, nav, cx| {
+                let v = nav.read(cx).inbox_version;
+                if v != this.inbox_version {
+                    this.inbox_version = v;
+                    this.reload_reports(cx);
+                }
+                if let Some(id) = ui::nav::take_inbox_focus(cx) {
+                    this.reload_reports(cx);
+                    this.open_report(id.to_string(), cx);
+                }
+            }));
+        }
+        let reports = screen_chat::inbox::load();
+        let unread = screen_chat::inbox::unread(&reports) + ISSUES.len();
+        cx.defer(move |cx| ui::nav::set_inbox_count(unread, cx));
 
         Self {
             focus,
@@ -101,6 +129,11 @@ impl ReviewScreen {
             sending_back: false,
             notes: ISSUES.iter().map(|i| i.default_notes.to_string()).collect(),
             notes_input,
+            reports,
+            report: None,
+            prs: Default::default(),
+            inbox_version: 0,
+            auto_opened: false,
             _subscriptions: subscriptions,
         }
     }
@@ -148,12 +181,14 @@ impl ReviewScreen {
             return;
         }
         self.cur = index;
+        self.report = None;
         self.close_send_back(window);
         cx.notify();
     }
 
     fn pick(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.is_done() && index < self.issue().variants.len() {
+        if self.report.is_none()
+            && !self.is_done() && index < self.issue().variants.len() {
             self.picked[self.cur] = index;
             cx.notify();
         }
@@ -176,11 +211,12 @@ impl ReviewScreen {
         }
         self.done[self.cur] = Some(Done::Shipped);
         self.close_send_back(window);
+        self.publish_count(cx);
         cx.notify();
     }
 
     fn start_send_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_done() {
+        if self.is_done() || self.report.is_some() {
             return;
         }
         self.sending_back = true;
@@ -197,6 +233,7 @@ impl ReviewScreen {
         }
         self.done[self.cur] = Some(Done::Back);
         self.close_send_back(window);
+        self.publish_count(cx);
         cx.notify();
     }
 
@@ -228,12 +265,52 @@ impl ReviewScreen {
 
     // ── Keyboard actions ────────────────────────────────────────────────
 
+    /// First visit: open the newest report, if any (only while nothing was picked yet).
+    fn auto_open(&mut self, cx: &mut Context<Self>) {
+        if self.auto_opened {
+            return;
+        }
+        self.auto_opened = true;
+        if self.report.is_none()
+            && self.cur == 0
+            && let Some(id) = self.first_report_id()
+        {
+            self.open_report(id, cx);
+        }
+    }
+
+    fn first_report_id(&self) -> Option<String> {
+        self.visible_reports().next().map(|r| r.id.clone())
+    }
+
+    /// Queue order: agent reports, then pipeline reviews. `Ok(id)` = report, `Err(ix)` = issue.
+    fn queue(&self) -> Vec<Result<String, usize>> {
+        self.visible_reports()
+            .map(|r| Ok(r.id.clone()))
+            .chain((0..ISSUES.len()).map(Err))
+            .collect()
+    }
+
+    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let q = self.queue();
+        let here = match &self.report {
+            Some(id) => q.iter().position(|e| e.as_ref() == Ok(id)),
+            None => q.iter().position(|e| *e == Err(self.cur)),
+        }
+        .unwrap_or(0);
+        let next = (here as isize + delta).clamp(0, q.len() as isize - 1) as usize;
+        match q[next].clone() {
+            Ok(id) => self.open_report(id, cx),
+            Err(i) => self.open(i, window, cx),
+        }
+    }
+
     fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
-        self.open((self.cur + 1).min(ISSUES.len() - 1), window, cx);
+        self.step(1, window, cx);
     }
 
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        self.open(self.cur.saturating_sub(1), window, cx);
+        self.step(-1, window, cx);
     }
 
     fn pick1(&mut self, _: &Pick1, _: &mut Window, cx: &mut Context<Self>) {
@@ -267,6 +344,10 @@ impl Focusable for ReviewScreen {
 
 impl Render for ReviewScreen {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Started on the Inbox (no activation event): same first-visit behaviour.
+        if !self.auto_opened && ui::nav::current(cx) == Screen::Inbox {
+            self.auto_open(cx);
+        }
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)

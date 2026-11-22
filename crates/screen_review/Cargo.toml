@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 gpui.workspace = true
 ui.workspace = true
+screen_chat = { path = "../screen_chat" }

@@ -4789,6 +4789,7 @@ name = "screen_review"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "screen_chat",
  "ui",
 ]
 

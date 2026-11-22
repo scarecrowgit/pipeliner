@@ -27,6 +27,19 @@ fn spacer() -> gpui::Div {
     div().flex_1()
 }
 
+/// Small caption above a group of queue rows.
+fn section_label(text: &'static str) -> gpui::Div {
+    div()
+        .flex_none()
+        .px(px(SPACE_2))
+        .pt(px(SPACE_2))
+        .pb(px(2.))
+        .text_size(px(11.))
+        .line_height(px(16.))
+        .text_color(TEXT_MUTED)
+        .child(text)
+}
+
 impl ReviewScreen {
     // ── Header ──────────────────────────────────────────────────────────
 
@@ -63,8 +76,11 @@ impl ReviewScreen {
                     .line_height(px(20.))
                     .font_weight(FontWeight::MEDIUM)
                     .child(div().text_color(TEXT_MUTED).child("Inbox"))
-                    .child(chevron())
-                    .child(
+                    .when(self.report.is_some(), |d| {
+                        d.child(chevron())
+                            .child(div().text_color(TEXT).child("From agents"))
+                    })
+                    .when(self.report.is_none(), |d| d.child(chevron()).child(
                         div()
                             .id("review-crumb-pipeline")
                             .text_color(TEXT_MUTED)
@@ -74,27 +90,37 @@ impl ReviewScreen {
                             .child("PAY triage"),
                     )
                     .child(chevron())
-                    .child(div().text_color(TEXT).child("Review")),
+                    .child(div().text_color(TEXT).child("Review"))),
             )
-            .child(
-                Badge::new(format!("{} waiting", self.waiting_variants()))
-                    .tone(Tone::Warning)
-                    .dot(Status::Waiting),
-            )
-            .child(spacer())
-            .child(
-                Button::new("review-back-to-editor", "Back to editor")
-                    .ghost()
-                    .icon("pipelines")
-                    .on_click(|_, _, cx| nav::navigate(Screen::PipelineEditor, cx)),
-            )
+            .map(|d| {
+                if self.report.is_some() {
+                    let unread = screen_chat::inbox::unread(&self.reports);
+                    d.when(unread > 0, |d| {
+                        d.child(Badge::new(format!("{unread} unread")).tone(Tone::Accent))
+                    })
+                } else {
+                    d.child(
+                        Badge::new(format!("{} waiting", self.waiting_variants()))
+                            .tone(Tone::Warning)
+                            .dot(Status::Waiting),
+                    )
+                    .child(spacer())
+                    .child(
+                        Button::new("review-back-to-editor", "Back to editor")
+                            .ghost()
+                            .icon("pipelines")
+                            .on_click(|_, _, cx| nav::navigate(Screen::PipelineEditor, cx)),
+                    )
+                }
+            })
     }
 
     // ── Queue (left list) ───────────────────────────────────────────────
 
     pub(crate) fn render_queue(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = ISSUES.iter().enumerate().map(|(i, issue)| {
-            let current = i == self.cur;
+        let report_rows = self.render_report_rows(cx);
+        let items: Vec<_> = ISSUES.iter().enumerate().map(|(i, issue)| {
+            let current = i == self.cur && self.report.is_none();
             let (status, state, state_color) = match self.done[i] {
                 Some(Done::Shipped) => (Status::Live, "shipped", SUCCESS),
                 Some(Done::Back) => (Status::Running, "re-running", INFO),
@@ -147,7 +173,7 @@ impl ReviewScreen {
                         .child(div().font_weight(FontWeight::MEDIUM).child(issue.title))
                         .child(div().text_size(px(12.)).text_color(TEXT_MUTED).child(meta)),
                 )
-        });
+        }).collect();
 
         let hint = |keys: AnyElement, text: &'static str| {
             div()
@@ -186,8 +212,35 @@ impl ReviewScreen {
                             .font_weight(FontWeight::MEDIUM)
                             .child("Waiting for you"),
                     )
-                    .child(Badge::new(self.waiting_issues().to_string()).tone(Tone::Count)),
+                    .child(
+                        Badge::new(
+                            (screen_chat::inbox::unread(&self.reports) + self.waiting_issues())
+                                .to_string(),
+                        )
+                        .tone(Tone::Count),
+                    ),
             )
+            .child(section_label("From agents"))
+            .map(|d| {
+                let rows = report_rows;
+                if rows.is_empty() {
+                    d.child(
+                        div()
+                            .px(px(SPACE_2))
+                            .pb(px(SPACE_2))
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(TEXT_MUTED)
+                            .child(
+                                "Agents post finished work here: a summary and links to the \
+                                 pull requests they opened.",
+                            ),
+                    )
+                } else {
+                    d.children(rows)
+                }
+            })
+            .child(section_label("Pipeline reviews"))
             .children(items)
             .child(
                 div()
@@ -228,6 +281,23 @@ impl ReviewScreen {
     // ── Main column ─────────────────────────────────────────────────────
 
     pub(crate) fn render_main(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(r) = self.report() {
+            return div()
+                .id("review-main")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .p(px(SPACE_6))
+                        .w_full()
+                        .max_w(px(1080.))
+                        .child(self.render_report(r, cx)),
+                );
+        }
         div()
             .id("review-main")
             .flex_1()

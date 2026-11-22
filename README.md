@@ -13,11 +13,22 @@ Start on a specific screen: `HARNESS_SCREEN=chat|home|editor|inbox|issues|agents
 Each screen also runs standalone: `cargo run -p screen_editor --example screen_editor` (same for
 `screen_home`, `screen_review`, `screen_chat`, `screen_issues`, `screen_agents`, `sidebar`). `Ctrl+Q` quits.
 
-`Ctrl+K` (or "Search chats" / "All chats" in the sidebar) opens the chat history picker: search over
+`Ctrl+N` (or "New chat" in the sidebar) starts a new chat; `Ctrl+K` (or "Open a chat…", "Chats", "View all" in the sidebar) opens the chat history picker: search over
 titles, messages, files and folders with `in:` `agent:` `is:` `has:files` chips, status filters, time
 groups, preview, Open / Fork / Pin / Archive (with Undo), and Select mode for bulk archive, Markdown
 export (to `~/Downloads`) and delete. Pins and archive live in `~/.local/share/harness/chat_flags.json`.
 Home shows the dashboard (mock pipeline data; running and waiting chats are real).
+
+## Inbox
+
+Agents hand their finished work to the Inbox: the chat agent has a `report_to_inbox` tool
+(title, Markdown summary, outcome done / needs review / blocked / failed, links) and is told to
+call it at the end of a task. Pull requests opened in a run (`gh pr create`, `glab mr create`,
+MCP `create_pull_request`) are added to that report, or posted as a report of their own when the
+agent made none. Reports live in `~/.local/share/harness/inbox.json` and appear on the Inbox
+screen under "From agents" (above the mock pipeline reviews): live PR status from `gh pr view`
+(state, checks, review, diff size, branches), other links, the summary, Open chat / Open pull
+request / Mark unread / Archive. The sidebar badge counts unread reports plus waiting reviews.
 
 ## Motion
 

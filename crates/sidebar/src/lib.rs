@@ -42,11 +42,25 @@ impl Sidebar {
             .flex_col()
             .gap(px(2.))
             .p(px(SPACE_3))
-            .child(workspace_row());
+            .child(workspace_row())
+            .child(chat_actions(window, cx));
 
+        let (sessions, current, total) = nav::nav_entity(cx)
+            .map(|n| {
+                let n = n.read(cx);
+                (n.chat_sessions.clone(), n.chat_current.clone(), n.chat_total)
+            })
+            .unwrap_or_default();
+        let waiting = sessions
+            .iter()
+            .filter(|s| s.status == ChatStatus::Waiting)
+            .count();
+
+        let inbox = inbox_count(cx);
         for entry in NAV {
             let active = screen == entry.screen;
             let target = entry.screen;
+            let count = if entry.screen == Screen::Inbox { inbox } else { entry.count };
             column = column.child(
                 nav_item(("sidebar-nav", entry.screen as usize), active, window, cx)
                     .child(row_icon(
@@ -55,19 +69,34 @@ impl Sidebar {
                         if active { TEXT } else { TEXT_SECONDARY },
                     ))
                     .child(div().flex_1().child(entry.label))
-                    .when_some(entry.count, |item, count| {
+                    .when_some(count, |item, count| {
                         item.child(Badge::new(count.to_string()).tone(Tone::Count))
                     })
                     .on_click(move |_, _, cx| nav::navigate(target, cx)),
             );
+            // "Chats" sits under Inbox: it opens the chat picker; active on the Chat screen.
+            if entry.screen == Screen::Inbox {
+                column = column.child(
+                    nav_item("sidebar-nav-chats", in_chat, window, cx)
+                        .child(row_icon(
+                            "message",
+                            16.,
+                            if in_chat { TEXT } else { TEXT_SECONDARY },
+                        ))
+                        .child(div().flex_1().child("Chats"))
+                        .when(waiting > 0, |item| {
+                            item.child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(WARNING)
+                                    .child(format!("{waiting} waiting")),
+                            )
+                        })
+                        .on_click(|_, _, cx| nav::set_history_open(true, cx)),
+                );
+            }
         }
 
-        let (sessions, current, total) = nav::nav_entity(cx)
-            .map(|n| {
-                let n = n.read(cx);
-                (n.chat_sessions.clone(), n.chat_current.clone(), n.chat_total)
-            })
-            .unwrap_or_default();
         let current = current.filter(|_| in_chat);
         let now = ui::time::now_secs();
         let offset = ui::time::utc_offset(now);
@@ -89,30 +118,47 @@ impl Sidebar {
             }
         }
 
-        column = column
-            .child(chats_header(in_chat, window, cx))
-            .child(search_row(window, cx));
+        column = column.child(recent_header(total));
         if !pinned.is_empty() {
             column = column.child(group_label("Pinned", 6.)).children(pinned);
         }
         if !recent.is_empty() {
             column = column.child(group_label("Recent", 10.)).children(recent);
         }
+        if total == 0 {
+            return column.child(
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .text_size(px(TEXT_LABEL))
+                    .text_color(TEXT_MUTED)
+                    .child("No chats yet"),
+            );
+        }
+        let find = div()
+            .id("sidebar-find-older")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .h(px(32.))
+            .mt(px(4.))
+            .px(px(8.))
+            .rounded(px(RADIUS_MD))
+            .text_color(ACCENT_TEXT)
+            .cursor_pointer();
         column.child(
-            div()
-                .id("sidebar-all-chats")
-                .flex_none()
-                .px(px(8.))
-                .py(px(6.))
-                .text_size(px(TEXT_LABEL))
-                .text_color(TEXT_MUTED)
-                .cursor_pointer()
-                .hover(|style| style.text_color(TEXT_SECONDARY))
-                .child(SharedString::from(match total {
-                    0 => "No chats yet".to_string(),
-                    n => format!("All chats · {}", group_thousands(n)),
-                }))
-                .on_click(|_, _, cx| nav::set_history_open(true, cx)),
+            motion::hover_fade(
+                find,
+                "sidebar-find-older",
+                Look::bg(gpui::transparent_black()),
+                Look::bg(SURFACE_RAISED),
+                window,
+                cx,
+            )
+            .child(icon("search", 14., ACCENT_TEXT))
+            .child("Find an older chat")
+            .on_click(|_, _, cx| nav::set_history_open(true, cx)),
         )
     }
 
@@ -132,27 +178,52 @@ impl Sidebar {
             .child(icon("pipelines", 16., ACCENT_TEXT))
             .tooltip(tooltip(data::WORKSPACE));
 
-        let mut nav_buttons = Vec::new();
+        let inbox = inbox_count(cx);
+        let new_chat = {
+            let el = div()
+                .id("sidebar-rail-new")
+                .relative()
+                .size(px(40.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(px(RADIUS_LG))
+                .cursor_pointer();
+            motion::hover_fade(
+                el,
+                "sidebar-rail-new",
+                Look::bg(ACCENT_STRONG),
+                Look::bg(ACCENT_STRONG_HOVER),
+                window,
+                cx,
+            )
+            .child(icon("plus", 16., ON_ACCENT))
+            .tooltip(tooltip("New chat · ⌘N"))
+            .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx))
+        };
+        let open_chat = rail_button("sidebar-rail-open", false, window, cx)
+            .child(row_icon("message", 16., TEXT_MUTED))
+            .tooltip(tooltip("Open a chat · ⌘K"))
+            .on_click(|_, _, cx| nav::set_history_open(true, cx));
+        let mut nav_buttons = vec![new_chat, open_chat];
         for entry in NAV {
             let active = screen == entry.screen;
             let target = entry.screen;
+            let count = if entry.screen == Screen::Inbox { inbox } else { entry.count };
             nav_buttons.push(rail_button(("sidebar-rail-nav", entry.screen as usize), active, window, cx)
                 .child(row_icon(
                     entry.icon,
                     16.,
                     if active { TEXT } else { TEXT_MUTED },
                 ))
-                .when_some(entry.count, |button, count| button.child(rail_count(count)))
+                .when_some(count, |button, count| button.child(rail_count(count)))
                 .tooltip(tooltip(entry.aria))
                 .on_click(move |_, _, cx| nav::navigate(target, cx)));
         }
         let chats = rail_button("sidebar-rail-chats", screen == Screen::Chat, window, cx)
-            .child(row_icon("message", 16., TEXT_MUTED))
-            .tooltip(tooltip("Chats"))
-            .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx));
-        let search = rail_button("sidebar-rail-search", false, window, cx)
             .child(row_icon("search", 16., TEXT_MUTED))
-            .tooltip(tooltip("Search chats · ⌘K"))
+            .tooltip(tooltip("Chats"))
             .on_click(|_, _, cx| nav::set_history_open(true, cx));
 
         div()
@@ -165,7 +236,6 @@ impl Sidebar {
             .child(logo)
             .children(nav_buttons)
             .child(chats)
-            .child(search)
     }
 }
 
@@ -197,6 +267,12 @@ impl Render for Sidebar {
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────
+
+/// Inbox badge: reports and reviews waiting (published by the Inbox screen).
+fn inbox_count(cx: &gpui::App) -> Option<u32> {
+    let n = nav::nav_entity(cx).map_or(0, |n| n.read(cx).inbox_count);
+    (n > 0).then_some(n as u32)
+}
 
 /// `2418` → `2,418`.
 fn group_thousands(n: usize) -> String {
@@ -344,8 +420,63 @@ fn workspace_row() -> gpui::Div {
         )
 }
 
-/// `Chats ………… +`: the label opens the Chat screen, `+` starts a new chat.
-fn chats_header(in_chat: bool, window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
+/// "New chat ⌘N" (primary) and "Open a chat… ⌘K" at the top of the sidebar.
+fn chat_actions(window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
+    let base = |id: &'static str| {
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .h(px(36.))
+            .px(px(10.))
+            .rounded(px(RADIUS_LG))
+            .font_weight(FontWeight::MEDIUM)
+            .cursor_pointer()
+    };
+    let new_chat = motion::hover_fade(
+        base("sidebar-new-chat"),
+        "sidebar-new-chat",
+        Look::bg(ACCENT_STRONG).fg(ON_ACCENT),
+        Look::bg(ACCENT_STRONG_HOVER).fg(ON_ACCENT),
+        window,
+        cx,
+    )
+    .child(icon("plus", 14., ON_ACCENT))
+    .child(div().flex_1().child("New chat"))
+    .child(
+        div()
+            .font_family(FONT_MONO)
+            .text_size(px(11.))
+            .text_color(ON_ACCENT.opacity(0.78))
+            .child("⌘N"),
+    )
+    .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx));
+    let open_chat = motion::hover_fade(
+        base("sidebar-open-chat").border_1(),
+        "sidebar-open-chat",
+        Look::bg(SURFACE_RAISED).fg(TEXT).border(LINE_STRONG),
+        Look::bg(SURFACE_HOVER).fg(TEXT).border(LINE_STRONG),
+        window,
+        cx,
+    )
+    .child(icon("message", 14., TEXT_SECONDARY))
+    .child(div().flex_1().child("Open a chat…"))
+    .child(kbd("⌘K"))
+    .on_click(|_, _, cx| nav::set_history_open(true, cx));
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .gap(px(6.))
+        .pb(px(12.))
+        .child(new_chat)
+        .child(open_chat)
+}
+
+/// `Recent chats ………… View all N`.
+fn recent_header(total: usize) -> gpui::Div {
     div()
         .flex()
         .flex_none()
@@ -353,70 +484,23 @@ fn chats_header(in_chat: bool, window: &mut Window, cx: &mut gpui::App) -> gpui:
         .justify_between()
         .pt(px(16.))
         .px(px(8.))
-        .pb(px(6.))
-        .child(
-            div()
-                .id("sidebar-chats")
-                .text_size(px(TEXT_LABEL))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(if in_chat { TEXT } else { TEXT_MUTED })
-                .cursor_pointer()
-                .hover(|style| style.text_color(TEXT))
-                .child("Chats")
-                .on_click(|_, _, cx| nav::navigate(Screen::Chat, cx)),
-        )
-        .child(
-            motion::hover_fade(
+        .pb(px(4.))
+        .text_size(px(12.))
+        .child(div().text_color(TEXT_MUTED).child("Recent chats"))
+        .when(total > 0, |d| {
+            d.child(
                 div()
-                    .id("sidebar-new-chat")
-                    .group(ROW_GROUP)
-                    .size(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(RADIUS_MD))
-                    .cursor_pointer(),
-                "sidebar-new-chat",
-                Look::bg(gpui::transparent_black()),
-                Look::bg(SURFACE_RAISED),
-                window,
-                cx,
+                    .id("sidebar-view-all")
+                    .text_color(ACCENT_TEXT)
+                    .cursor_pointer()
+                    .hover(|s| s.underline())
+                    .child(SharedString::from(format!(
+                        "View all {}",
+                        group_thousands(total)
+                    )))
+                    .on_click(|_, _, cx| nav::set_history_open(true, cx)),
             )
-            .child(row_icon("plus", 14., TEXT_MUTED))
-                .tooltip(tooltip("New chat"))
-                .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx)),
-        )
-}
-
-/// The "Search chats ⌘K" field-like button.
-fn search_row(window: &mut Window, cx: &mut gpui::App) -> Stateful<gpui::Div> {
-    let el = div()
-        .id("sidebar-search-chats")
-        .group(ROW_GROUP)
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(8.))
-        .h(px(32.))
-        .px(px(8.))
-        .mb(px(6.))
-        .rounded(px(RADIUS_LG))
-        .border_1()
-        .border_color(LINE_STRONG)
-        .text_color(TEXT_MUTED)
-        .cursor_pointer();
-    motion::hover_fade(
-        el,
-        "sidebar-search-chats",
-        Look::bg(SURFACE_RAISED),
-        Look::bg(SURFACE_HOVER),
-        window,
-        cx,
-    )
-    .child(row_icon("search", 14., TEXT_MUTED))
-        .child(div().flex_1().child("Search chats"))
-        .child(kbd("⌘K"))
-        .on_click(|_, _, cx| nav::set_history_open(true, cx))
+        })
 }
 
 /// `Pinned` / `Recent` caption.
@@ -455,11 +539,11 @@ fn chat_row(
         .flex_none()
         .items_center()
         .gap(px(8.))
-        .min_h(px(30.))
+        .min_h(px(32.))
         .py(px(4.))
         .px(px(8.))
         .rounded(px(RADIUS_MD))
-        .text_size(px(TEXT_LABEL))
+        .text_size(px(TEXT_BODY))
         .cursor_pointer();
     let (rest, hover) = row_looks(current, TEXT_SECONDARY);
     motion::hover_fade(el, id, rest, hover, window, cx)

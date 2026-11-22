@@ -22,9 +22,10 @@ pub const NAV: &[NavEntry] = &[
     NavEntry {
         screen: Screen::Inbox,
         label: "Inbox",
-        aria: "Inbox · 4 need you",
+        aria: "Inbox",
         icon: "inbox",
-        count: Some(4),
+        // Live count from `nav.inbox_count`.
+        count: None,
     },
     NavEntry {
         screen: Screen::Issues,

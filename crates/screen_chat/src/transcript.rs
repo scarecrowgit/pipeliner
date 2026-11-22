@@ -51,6 +51,7 @@ fn short_name(tool: &str) -> String {
         "edit_file" => "edit".into(),
         "write_file" => "write".into(),
         TODO_TOOL => "todo".into(),
+        crate::inbox::REPORT_TOOL => "inbox".into(),
         crate::deferred::TOOL_SEARCH => "tools".into(),
         other => other.into(),
     }
@@ -101,6 +102,7 @@ fn arg_summary(call: &ToolCall) -> String {
             Err(_) => "invalid list".into(),
         },
         SKILL_TOOL => str_field(&input, "name").unwrap_or_default(),
+        crate::inbox::REPORT_TOOL => str_field(&input, "title").unwrap_or_default(),
         crate::deferred::TOOL_SEARCH => str_field(&input, "query").unwrap_or_default(),
         _ => truncate(&input.to_string(), 120),
     }
@@ -131,6 +133,7 @@ fn result_meta(call: &ToolCall, r: &ToolResult) -> String {
         Some(ToolDisplay::Bash { exit_code: Some(c), .. }) => format!("exit {c}"),
         Some(ToolDisplay::Bash { exit_code: None, .. }) => "done".into(),
         _ if call.name == TODO_TOOL => "updated".into(),
+        _ if call.name == crate::inbox::REPORT_TOOL => "posted to Inbox".into(),
         _ if call.name == crate::deferred::TOOL_SEARCH => {
             let n = r.content.lines().filter(|l| l.starts_with("## ")).count();
             format!("loaded {n} tool{}", if n == 1 { "" } else { "s" })

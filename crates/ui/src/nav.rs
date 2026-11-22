@@ -33,6 +33,12 @@ pub struct Nav {
     /// Bumped when saved chats change outside the Chat screen (pin, archive, delete in
     /// the history picker) so it reloads its list.
     pub chats_version: u64,
+    /// Bumped when an agent posts to (or the user changes) the Inbox.
+    pub inbox_version: u64,
+    /// Items waiting in the Inbox (sidebar badge), published by the Inbox screen.
+    pub inbox_count: usize,
+    /// Inbox item to select next time the Inbox screen renders (one-shot).
+    pub inbox_focus: Option<SharedString>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +90,9 @@ pub fn install(initial: Screen, cx: &mut App) -> Entity<Nav> {
         chat_total: 0,
         history_open: false,
         chats_version: 0,
+        inbox_version: 0,
+        inbox_count: 0,
+        inbox_focus: None,
     });
     cx.set_global(GlobalNav(nav.clone()));
     nav
@@ -211,4 +220,44 @@ pub fn request_chat(request: ChatRequest, cx: &mut App) {
 pub fn take_chat_request(cx: &mut App) -> Option<ChatRequest> {
     let nav = nav_entity(cx)?;
     nav.update(cx, |n, _| n.chat_request.take())
+}
+
+/// The Inbox changed on disk (a report was posted or edited).
+pub fn inbox_changed(cx: &mut App) {
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            n.inbox_version += 1;
+            cx.notify();
+        });
+    }
+}
+
+/// Inbox screen → sidebar: how many items wait. No-op when unchanged.
+pub fn set_inbox_count(count: usize, cx: &mut App) {
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            if n.inbox_count != count {
+                n.inbox_count = count;
+                cx.notify();
+            }
+        });
+    }
+}
+
+/// Show the Inbox with item `id` selected.
+pub fn open_inbox_item(id: impl Into<SharedString>, cx: &mut App) {
+    let id = id.into();
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            n.screen = Screen::Inbox;
+            n.inbox_focus = Some(id);
+            cx.notify();
+        });
+    }
+}
+
+/// Inbox screen: take the pending item to select, if any.
+pub fn take_inbox_focus(cx: &mut App) -> Option<SharedString> {
+    let nav = nav_entity(cx)?;
+    nav.update(cx, |n, _| n.inbox_focus.take())
 }

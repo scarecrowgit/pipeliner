@@ -24,6 +24,7 @@ use crate::picker::skill_name;
 use crate::session::{
     self, Attachment, Item, Saved, ShellRun, ToolResult, ToolStatus, Turn, TurnState, UserMsg,
 };
+use crate::inbox::{self, REPORT_TOOL};
 use crate::todo::{self, TODO_TOOL};
 use crate::workdir::WorkMode;
 use crate::{ChatScreen, ConfigState};
@@ -40,7 +41,11 @@ rewriting whole files, and match the surrounding style.
 reject them with a note — adapt instead of retrying the same call.
 - For multi-step work keep a todo list with todo_write (one item in_progress at a time).
 - Be concise. Use Markdown; refer to code as `path:line`. When done, summarise what changed and \
-how it was verified.";
+how it was verified.
+- When you finish a task that produced something (code changes, a pull request, a branch, a plan \
+or an investigation the user asked for), call report_to_inbox once at the end: a short title, \
+what was done and how it was verified, the outcome, and links to every pull request, issue, \
+branch or commit you created. Skip it for quick questions.";
 
 const SYSTEM_MCP: &str = "\n- Tools named `mcp__<server>__<tool>` come from external MCP servers the \
 user configured; the user approves them unless they are auto-approved.";
@@ -62,6 +67,10 @@ pub(crate) struct Run {
     pub mcp_tools: BTreeMap<String, McpTarget>,
     /// Model of the current request (the picker may change mid-run).
     pub model: Option<ModelRef>,
+    /// Index of the run's first transcript item (pull requests are looked for from here).
+    pub first_item: usize,
+    /// Inbox item posted with `report_to_inbox` during this run.
+    pub reported: Option<String>,
     task: Option<Task<()>>,
 }
 
@@ -73,6 +82,8 @@ impl Run {
             offered: Vec::new(),
             mcp_tools: BTreeMap::new(),
             model: None,
+            first_item: 0,
+            reported: None,
             task: None,
         }
     }
@@ -186,7 +197,8 @@ impl ChatScreen {
 
     /// Start a run for the last user item: read @-mentioned files, then the first turn.
     fn begin_run(&mut self, cx: &mut Context<Self>) {
-        let run = Run::new();
+        let mut run = Run::new();
+        run.first_item = self.items.len().saturating_sub(1);
         let cancel = run.cancel.clone();
         self.run = Some(run);
         let pending: Vec<String> = self
@@ -275,6 +287,7 @@ impl ChatScreen {
         }
         tools.retain(|t| {
             t.name == TODO_TOOL
+                || t.name == REPORT_TOOL
                 || t.name == SKILL_TOOL
                 || self.workspace.permission(&t.name) == Permission::Auto
                     && !t.name.starts_with("mcp__")
@@ -297,6 +310,8 @@ impl ChatScreen {
         if allows(TODO_TOOL) {
             tools.push(todo::spec());
         }
+        // Harness-level: every agent can hand its result to the Inbox.
+        tools.push(inbox::spec());
         let auto = self.auto_skills();
         if !auto.is_empty() && allows(SKILL_TOOL) {
             tools.push(skills::tool_spec(&auto));
@@ -534,8 +549,150 @@ impl ChatScreen {
                 Some(StopReason::Other(r)) => self.notice(format!("Stopped: {r}"), cx),
                 _ => {}
             }
+            self.capture_prs(cx);
         }
         self.finish_run(cx);
+    }
+
+    // ── Inbox ───────────────────────────────────────────────────────────
+
+    fn inbox_item(
+        &self,
+        title: String,
+        summary: String,
+        outcome: inbox::Outcome,
+        links: Vec<inbox::Link>,
+        auto: bool,
+    ) -> inbox::InboxItem {
+        let root = self.workspace.root.clone();
+        inbox::InboxItem {
+            id: inbox::new_id(),
+            created: crate::history_index::now_secs(),
+            chat_id: self.session_id.clone(),
+            chat_title: session::truncate(&self.title(), 80),
+            agent: self.agent_label(),
+            wd_label: crate::history_index::folder_label(&root),
+            workdir: Some(root),
+            title,
+            summary,
+            outcome,
+            links,
+            read: false,
+            archived: false,
+            auto,
+        }
+    }
+
+    /// `report_to_inbox`: save the agent's report and tell the Inbox.
+    fn post_report(&mut self, input: &Value, cx: &mut Context<Self>) -> ToolStatus {
+        let r = match inbox::parse(input) {
+            Ok(r) => r,
+            Err(e) => return tool_result(e, true),
+        };
+        let item = self.inbox_item(r.title, r.summary, r.outcome, r.links, false);
+        let (id, title, links) = (item.id.clone(), item.title.clone(), item.links.len());
+        match inbox::add(item) {
+            Ok(()) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.reported = Some(id);
+                }
+                self.persisted_soon(cx);
+                cx.defer(ui::nav::inbox_changed);
+                let links = match links {
+                    0 => String::new(),
+                    1 => " with 1 link".into(),
+                    n => format!(" with {n} links"),
+                };
+                tool_result(format!("Posted to the user's Inbox{links}: {title}"), false)
+            }
+            Err(e) => tool_result(format!("Could not save the report: {e}"), true),
+        }
+    }
+
+    /// Make sure the session is on disk so the Inbox can open it.
+    fn persisted_soon(&mut self, cx: &mut Context<Self>) {
+        if !self.persisted {
+            self.save_session(cx);
+        }
+    }
+
+    /// Pull requests opened in this run (output of `gh pr create` & co. or MCP create-PR
+    /// tools): add
+    /// them to the run's report, or post a report of their own when the agent made none.
+    fn capture_prs(&mut self, cx: &mut Context<Self>) {
+        let Some(run) = self.run.as_ref() else {
+            return;
+        };
+        let reported = run.reported.clone();
+        let mut text = String::new();
+        let mut last_reply = String::new();
+        for item in self.items.iter().skip(run.first_item) {
+            let Item::Turn(t) = item else { continue };
+            for b in &t.blocks {
+                match b {
+                    session::TurnBlock::Text(tb) => {
+                        // Replies only give the auto report its summary: a URL the model
+                        // merely mentions is not a PR it opened.
+                        if !tb.text.trim().is_empty() {
+                            last_reply = tb.text.clone();
+                        }
+                    }
+                    session::TurnBlock::Tool(tc) => {
+                        let input = tc.input.clone().unwrap_or(Value::Null);
+                        if !inbox::creates_pr(&tc.name, &input) {
+                            continue;
+                        }
+                        if let Some(r) = tc.result().filter(|r| !r.is_error) {
+                            text.push_str(&r.content);
+                            text.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+        let prs = inbox::find_pr_urls(&text);
+        if prs.is_empty() {
+            return;
+        }
+        let changed = match reported {
+            Some(id) => inbox::update(&id, |it| {
+                for url in &prs {
+                    if !it.links.iter().any(|l| &l.url == url) {
+                        it.links.push(inbox::Link::new(url, None));
+                    }
+                }
+            })
+            .unwrap_or(false),
+            None => {
+                // Not twice for the same pull request (e.g. mentioned again later).
+                let known: Vec<String> = inbox::load()
+                    .into_iter()
+                    .filter(|i| i.chat_id == self.session_id)
+                    .flat_map(|i| i.links.into_iter().map(|l| l.url))
+                    .collect();
+                let new: Vec<String> = prs.into_iter().filter(|u| !known.contains(u)).collect();
+                if new.is_empty() {
+                    return;
+                }
+                let title = match new.len() {
+                    1 => format!("Pull request opened · {}", session::truncate(&self.title(), 60)),
+                    n => format!("{n} pull requests opened · {}", session::truncate(&self.title(), 50)),
+                };
+                let links = new.iter().map(|u| inbox::Link::new(u, None)).collect();
+                let item = self.inbox_item(
+                    title,
+                    last_reply,
+                    inbox::Outcome::NeedsReview,
+                    links,
+                    true,
+                );
+                inbox::add(item).is_ok()
+            }
+        };
+        if changed {
+            self.persisted_soon(cx);
+            cx.defer(ui::nav::inbox_changed);
+        }
     }
 
     fn account(&mut self, usage: Usage, model: Option<&ModelRef>) {
@@ -618,6 +775,13 @@ impl ChatScreen {
                         self.todos = items;
                     }
                     Err(e) => call.status = tool_result(e, true),
+                }
+                continue;
+            }
+            if name == REPORT_TOOL {
+                let status = self.post_report(&input, cx);
+                if let Some(c) = self.last_turn_mut().and_then(|t| t.tool_mut(&id)) {
+                    c.status = status;
                 }
                 continue;
             }
