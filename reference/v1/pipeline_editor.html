@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>Pipeline editor</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+<div style="flex: 0 0 56px; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="pipelines" compact="{{yes}}" current="pay-triage" hint-size="56px,900px"></dc-import>
+</div>
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line); background: var(--bg-sidebar);">
+  <span style="width: 28px; height: 28px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="pipelines" size="{{s16}}"></x-import></span>
+  <nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 20px; font-weight: 500;">
+    <a href="#" style="color: var(--text-muted); text-decoration: none;">Pipelines</a>
+    <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
+    <span aria-current="page">PAY triage</span>
+  </nav>
+  <x-import component-from-global-scope="Graphite.Badge" tone="accent">Draft v15</x-import>
+  <x-import component-from-global-scope="Graphite.Badge" dot="live">v14 live</x-import>
+  <span style="flex: 1 1 auto;"></span>
+  <span style="font-size: 12px; color: var(--text-muted);">2 changes since v14</span>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+    <x-import component-from-global-scope="Graphite.Button" variant="ghost" icon="replay">Replay last 100</x-import>
+    <x-import component-from-global-scope="Graphite.Button" icon="play" disabled="{{running}}" on-click="{{run}}">{{runLabel}}</x-import>
+    <x-import component-from-global-scope="Graphite.Button" variant="primary">Deploy v15</x-import>
+  </div>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; flex: 1 1 auto; min-height: 0;">
+
+<main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line);">
+
+  <div role="toolbar" aria-label="Add nodes and zoom" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg);">
+    <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Add</span>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="source" on-click="{{addSource}}">Source</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="filter" on-click="{{addRouter}}">Router</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="agent" on-click="{{addAgent}}">Agent</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="router" on-click="{{addOrch}}">Orchestrator</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="pipelines" on-click="{{addPipe}}">Pipeline</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="spawn" on-click="{{addSpawn}}">Sub-agent</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{addFile}}"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>File</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="inbox" on-click="{{addGate}}">Review</x-import>
+    <x-import component-from-global-scope="Graphite.Button" size="sm" icon="check" on-click="{{addAction}}">Action</x-import>
+    <span style="flex: 1 1 auto;"></span>
+    <span style="font-size: 12px; color: var(--text-muted);">Drag a node by its title · drag from a port to connect</span>
+    <div role="group" aria-label="Zoom" style="display: flex; align-items: center; gap: 2px;">
+      <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" aria-label="Zoom out" on-click="{{zoomOut}}">−</x-import>
+      <span style="min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{zoomPct}}</span>
+      <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" aria-label="Zoom in" on-click="{{zoomIn}}">+</x-import>
+      <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" on-click="{{fit}}">Fit</x-import>
+    </div>
+  </div>
+
+  <div ref="{{scrollRef}}" data-bg="1" sc-camel-on-pointer-move="{{move}}" sc-camel-on-pointer-up="{{drop}}" sc-camel-on-pointer-leave="{{drop}}" sc-camel-on-pointer-down="{{bgDown}}" style="position: relative; height: 600px; overflow: auto; background: var(--bg);">
+    <div data-bg="1" style="position: relative; width: {{layerW}}px; height: {{layerH}}px;">
+      <div ref="{{layerRef}}" data-bg="1" style="position: absolute; left: 0; top: 0; width: 1368px; height: 750px; transform: scale({{zoom}}); transform-origin: 0 0; background-image: radial-gradient(circle, #1f2024 1px, transparent 1.4px); background-size: 20px 20px;">
+
+        <sc-for list="{{edges}}" as="e" hint-placeholder-count="12">
+          <svg aria-hidden="true" width="1368" height="750" sc-camel-view-box="0 0 1368 750" style="position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none;"><path d="{{e.d}}" fill="none" style="stroke: {{e.color}}; stroke-width: {{e.w}}px; stroke-dasharray: {{e.dash}}; transition: stroke 150ms ease;"></path></svg>
+        </sc-for>
+
+        <sc-if value="{{linking}}" hint-placeholder-val="{{no}}">
+          <svg aria-hidden="true" width="1368" height="750" sc-camel-view-box="0 0 1368 750" style="position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none;"><path d="{{linkD}}" fill="none" style="stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 4 4;"></path></svg>
+        </sc-if>
+
+        <sc-for list="{{edgeLabels}}" as="l" hint-placeholder-count="3">
+          <span style="position: absolute; left: {{l.x}}px; top: {{l.y}}px; transform: translate(-50%, -50%); height: 20px; padding: 0 7px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--bg); border: 1px solid var(--line-strong); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); white-space: nowrap; pointer-events: none;">{{l.text}}</span>
+        </sc-for>
+
+        <sc-for list="{{nodes}}" as="n" hint-placeholder-count="12">
+          <div style="position: absolute; left: {{n.x}}px; top: {{n.y}}px; width: 180px; box-sizing: border-box; padding-bottom: 4px; background: var(--surface); border: 1px {{n.borderStyle}} {{n.borderColor}}; border-radius: 10px; box-shadow: {{n.glow}}; opacity: {{n.opacity}}; transition: opacity 150ms ease, border-color 150ms ease;">
+            <button type="button" class="pl-nodehead pl-focus" aria-label="{{n.aria}}" aria-pressed="{{n.selected}}" sc-camel-on-pointer-down="{{n.grab}}" sc-camel-on-click="{{n.pick}}" style="display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 10px; box-sizing: border-box; background: transparent; border: 0; border-bottom: 1px solid var(--line-subtle); border-radius: 9px 9px 0 0; color: var(--text); font: inherit; text-align: left; cursor: grab; touch-action: none; transition: background-color 150ms ease;">
+              <span style="width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: {{n.tileBg}}; color: {{n.tileFg}};">
+                <sc-if value="{{n.isFile}}" hint-placeholder-val="{{no}}">
+                  <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+                </sc-if>
+                <sc-if value="{{n.hasIcon}}" hint-placeholder-val="{{yes}}">
+                  <x-import component-from-global-scope="Graphite.Icon" name="{{n.icon}}" size="{{s14}}"></x-import>
+                </sc-if>
+              </span>
+              <span style="flex: 1 1 auto; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{n.title}}</span>
+              <x-import component-from-global-scope="Graphite.StatusDot" status="{{n.dot}}" size="sm" label="{{n.statusLabel}}"></x-import>
+            </button>
+            <div style="height: 26px; padding: 0 10px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+              <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{n.meta}}</span>
+              <span style="flex: 0 0 auto; font-size: 12px; color: {{n.statusColor}};">{{n.statusWord}}</span>
+            </div>
+            <sc-for list="{{n.rows}}" as="r" hint-placeholder-count="2">
+              <div style="position: relative; height: 26px; padding: 0 10px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line-subtle); font-size: 12px; line-height: 18px;">
+                <span style="color: var(--text-muted); white-space: nowrap;">{{r.label}}</span>
+                <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: {{r.color}};">{{r.value}}</span>
+                <sc-if value="{{r.port}}" hint-placeholder-val="{{no}}">
+                  <button type="button" class="pl-port" aria-label="{{r.portLabel}}" sc-camel-on-pointer-down="{{r.startLink}}" style="position: absolute; right: -12px; top: 0; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; cursor: crosshair; touch-action: none;"><span class="pl-dot" style="width: 10px; height: 10px; box-sizing: border-box; border-radius: 999px; background: var(--bg); border: 2px solid {{r.portColor}}; transition: background-color 150ms ease;"></span></button>
+                </sc-if>
+              </div>
+            </sc-for>
+            <sc-if value="{{n.hasIn}}" hint-placeholder-val="{{yes}}">
+              <button type="button" class="pl-port" aria-label="{{n.inLabel}}" sc-camel-on-pointer-up="{{n.endLink}}" style="position: absolute; left: -12px; top: 8px; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; cursor: crosshair; touch-action: none;"><span class="pl-dot" style="width: 10px; height: 10px; box-sizing: border-box; border-radius: 999px; background: var(--bg); border: 2px solid {{n.inColor}}; transition: background-color 150ms ease;"></span></button>
+            </sc-if>
+            <sc-if value="{{n.hasOut}}" hint-placeholder-val="{{yes}}">
+              <button type="button" class="pl-port" aria-label="{{n.outLabel}}" sc-camel-on-pointer-down="{{n.startLink}}" style="position: absolute; right: -12px; top: 8px; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; cursor: crosshair; touch-action: none;"><span class="pl-dot" style="width: 10px; height: 10px; box-sizing: border-box; border-radius: 999px; background: var(--bg); border: 2px solid var(--text-muted); transition: background-color 150ms ease;"></span></button>
+            </sc-if>
+          </div>
+        </sc-for>
+
+      </div>
+    </div>
+  </div>
+
+  <section aria-label="Run panel" style="border-top: 1px solid var(--line); background: var(--bg-sidebar);">
+    <x-import component-from-global-scope="Graphite.Tabs" items="{{tabs}}" value="run" label="Run panel" on-change="{{setTab}}"></x-import>
+
+    <sc-if value="{{tabRun}}" hint-placeholder-val="{{yes}}">
+      <div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 0; padding: 14px 24px; border-bottom: 1px solid var(--line);">
+        <div style="padding-right: 24px;"><x-import component-from-global-scope="Graphite.Stat" label="Queued in Jira" value="{{queued}}" sub="issues"></x-import></div>
+        <div style="padding: 0 24px; border-left: 1px solid var(--line);"><x-import component-from-global-scope="Graphite.Stat" label="Agents running" value="{{runningCount}}" sub="of 4 max"></x-import></div>
+        <div style="padding: 0 24px; border-left: 1px solid var(--line);"><x-import component-from-global-scope="Graphite.Stat" label="Spawned" value="{{spawnedCount}}" sub="depth ≤2" tone="spawn"></x-import></div>
+        <div style="padding: 0 24px; border-left: 1px solid var(--line);"><x-import component-from-global-scope="Graphite.Stat" label="Waiting for you" value="{{waitingCount}}" sub="variants" tone="{{waitTone}}"></x-import></div>
+        <div style="padding: 0 24px; border-left: 1px solid var(--line);"><x-import component-from-global-scope="Graphite.Stat" label="Spend this run" value="{{spend}}" sub="of $3.00"></x-import></div>
+        <span style="flex: 1 1 auto;"></span>
+        <sc-if value="{{hasWaiting}}" hint-placeholder-val="{{no}}">
+          <a href="Review.dc.html" class="pl-linkbtn" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-weight: 500; text-decoration: none; transition: background-color 150ms ease;"><span style="width: 8px; height: 8px; border-radius: 999px; background: var(--warning);"></span>Open review · 6 variants</a>
+        </sc-if>
+      </div>
+      <div style="padding: 8px 0 12px; overflow-x: auto;">
+        <div style="min-width: 640px;">
+          <div style="display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0 16px; padding: 0 24px; height: 20px; align-items: center;">
+            <span style="font-size: 12px; color: var(--text-muted);">Test run #42 · 3 issues</span>
+            <div style="display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted);"><span>0:00</span><span>0:30</span><span>1:00</span><span>1:30</span><span>1:45</span></div>
+          </div>
+          <sc-for list="{{timeline}}" as="t" hint-placeholder-count="8">
+            <div class="pl-trow" style="display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0 16px; padding: 0 24px; height: 26px; align-items: center; transition: background-color 150ms ease;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: {{t.indent}}px;">
+                <span style="font-weight: 500; color: {{t.nameColor}}; white-space: nowrap;">{{t.name}}</span>
+                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{t.key}}</span>
+              </div>
+              <div style="position: relative; height: 8px; border-radius: 999px; background: var(--line-subtle);">
+                <div style="position: absolute; top: 0; bottom: 0; left: {{t.left}}%; width: {{t.width}}%; border-radius: 999px; background: {{t.color}}; transition: width 300ms ease;"></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{tabLog}}" hint-placeholder-val="{{no}}">
+      <div style="padding: 12px 24px 16px; min-height: 120px; font-family: var(--font-mono); font-size: 12px; line-height: 22px; overflow-x: auto;">
+        <sc-if value="{{logEmpty}}" hint-placeholder-val="{{no}}">
+          <p style="margin: 0; font-family: var(--font-sans); font-size: 13px; color: var(--text-muted);">No runs yet. Press Test run to send 3 issues from Jira through this draft.</p>
+        </sc-if>
+        <sc-for list="{{log}}" as="g" hint-placeholder-count="3">
+          <div style="display: flex; gap: 16px; white-space: nowrap;">
+            <span style="color: var(--text-muted);">{{g.t}}</span>
+            <span style="width: 72px; flex: 0 0 auto; color: {{g.color}};">{{g.who}}</span>
+            <span style="color: var(--text-secondary);">{{g.msg}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{tabProblems}}" hint-placeholder-val="{{no}}">
+      <div style="padding: 12px 24px 16px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+          <span style="color: var(--text-muted); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="router" size="{{s14}}"></x-import></span>
+          <div style="flex: 1 1 320px; min-width: 0;">
+            <div style="font-weight: 500;">Router · <span style="font-family: var(--font-mono); font-size: 12px;">else</span> has no target</div>
+            <div style="font-size: 12px; color: var(--text-muted);">4 of the last 100 issues matched no rule and were skipped. Connect the port to an agent or a Review node.</div>
+          </div>
+          <x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{selectRouter}}">Show node</x-import>
+        </div>
+      </div>
+    </sc-if>
+  </section>
+</main>
+
+<aside aria-label="Inspector" style="flex: 1 1 320px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); display: flex; flex-direction: column;">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+    <span style="width: 28px; height: 28px; flex: 0 0 auto; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: {{ins.tileBg}}; color: {{ins.tileFg}};">
+      <sc-if value="{{ins.isFile}}" hint-placeholder-val="{{no}}">
+        <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+      </sc-if>
+      <sc-if value="{{ins.hasIcon}}" hint-placeholder-val="{{yes}}">
+        <x-import component-from-global-scope="Graphite.Icon" name="{{ins.icon}}" size="{{s14}}"></x-import>
+      </sc-if>
+    </span>
+    <div style="flex: 1 1 auto; min-width: 0;">
+      <h2 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ins.title}}</h2>
+      <div style="font-size: 12px; line-height: 18px; color: var(--text-muted);">{{ins.kindLabel}}</div>
+    </div>
+    <sc-if value="{{ins.hasStatus}}" hint-placeholder-val="{{no}}">
+      <x-import component-from-global-scope="Graphite.Badge" dot="{{ins.dot}}">{{ins.statusWord}}</x-import>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{insNone}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div>
+        <label for="p-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Pipeline name</label>
+        <input id="p-name" class="pl-input" value="{{pipelineName}}" sc-camel-on-change="{{setPipelineName}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; transition: border-color 150ms ease;">
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 13px;"><span style="color: var(--text-muted);">Trigger</span><span style="font-family: var(--font-mono); font-size: 12px;">Jira puller · every 2m</span></div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;"><span style="color: var(--text-muted);">Agents at once</span><x-import component-from-global-scope="Graphite.Stepper" value="{{four}}" min="{{one}}" max="{{ten}}" label="agents at once"></x-import></div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="font-weight: 500;">Budget today</span><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">$3.81 of $10.00</span></div>
+      <x-import component-from-global-scope="Graphite.Progress" value="{{budgetToday}}" max="{{thousand}}" label="Budget used today"></x-import>
+      <div style="display: flex; justify-content: space-between; gap: 12px; margin-top: 8px;"><span style="font-weight: 500;">Spawn policy</span><span style="font-family: var(--font-mono); font-size: 12px; color: var(--spawn-text);">depth ≤2 · ≤3 per agent</span></div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">Agents may create sub-agents inside these limits. Anything deeper asks a person first.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <span style="font-weight: 500;">Use this pipeline as an agent</span>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <x-import component-from-global-scope="Graphite.Badge" tone="accent">Chat</x-import>
+        <x-import component-from-global-scope="Graphite.Badge" tone="accent">Issues</x-import>
+        <x-import component-from-global-scope="Graphite.Badge" tone="accent">Inside pipelines</x-import>
+        <x-import component-from-global-scope="Graphite.Badge" tone="accent">Autopilots</x-import>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">In chat it sits next to Build and Plan. Payments lead has it in its team. Takes a message or an issue, returns variants to review.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px;">
+      <span style="font-weight: 500;">Changes in v15</span>
+      <div style="font-family: var(--font-mono); font-size: 12px; line-height: 22px;">
+        <div style="padding: 0 8px; border-radius: 4px; background: var(--diff-add-bg); color: var(--diff-add-text);">+ Analyst variants 1 → 2</div>
+        <div style="padding: 0 8px; border-radius: 4px; background: var(--diff-add-bg); color: var(--diff-add-text); margin-top: 2px;">+ Fixer may spawn Test writer</div>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">Select a node on the canvas to edit it.</p>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insAgent}}" hint-placeholder-val="{{yes}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div>
+        <label for="a-lib" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Agent from your library</label>
+        <sc-raw-select id="a-lib" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{useAgent}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+          <option value="Fixer">Fixer · agent</option><option value="Reproducer">Reproducer · agent</option><option value="Analyst">Analyst · agent</option><option value="Codex">Codex · agent</option><option value="Build">Build · agent</option><option value="New agent">New agent (only in this pipeline)</option>
+        </sc-raw-select>
+        <p style="margin: 6px 0 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">The same agent you assign on the board or talk to in chat. Changes here apply only inside this pipeline.</p>
+      </div>
+      <div>
+        <label for="a-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Name</label>
+        <input id="a-name" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; transition: border-color 150ms ease;">
+      </div>
+      <div>
+        <label for="a-role" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Role</label>
+        <textarea id="a-role" class="pl-input" rows="4" value="{{sel.role}}" sc-camel-on-change="{{setRole}}" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; line-height: 20px; resize: vertical; transition: border-color 150ms ease;"></textarea>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end;">
+        <div>
+          <label for="a-model" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Model</label>
+          <sc-raw-select id="a-model" class="pl-input" value="{{sel.model}}" sc-camel-on-change="{{setModel}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px;">
+            <option value="opus-5.5">opus-5.5</option>
+            <option value="sonnet-5.5">sonnet-5.5</option>
+            <option value="haiku-5.5">haiku-5.5</option>
+          </sc-raw-select>
+        </div>
+        <div>
+          <span style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Variants</span>
+          <x-import component-from-global-scope="Graphite.Stepper" key="{{sel.keyVar}}" value="{{sel.variants}}" min="{{one}}" max="{{five}}" label="variants" on-change="{{setVariants}}"></x-import>
+        </div>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">Each variant runs in its own sandbox. A person picks one in Review.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <span style="font-weight: 500;">Files in</span>
+        <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="plus">Add file</x-import>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <sc-for list="{{sel.inputs}}" as="f" hint-placeholder-count="3">
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{f}}</span>
+        </sc-for>
+      </div>
+      <span style="font-weight: 500; margin-top: 4px;">Files out</span>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+        <sc-for list="{{sel.outputs}}" as="f" hint-placeholder-count="2">
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{f}}</span>
+        </sc-for>
+        <span style="font-size: 12px; color: var(--text-muted);">→ {{sel.outTo}}</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <span style="font-weight: 500;">Tools</span>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <sc-for list="{{sel.toolList}}" as="f" hint-placeholder-count="3">
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{f}}</span>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 28px; cursor: pointer;">
+        <input type="checkbox" class="pl-focus" checked="{{sel.canSpawn}}" sc-camel-on-change="{{toggleSpawn}}" style="width: 16px; height: 16px; margin: 0; accent-color: #5e6ad2;">
+        <span style="font-weight: 500;">Can spawn sub-agents</span>
+      </label>
+      <sc-if value="{{sel.canSpawn}}" hint-placeholder-val="{{yes}}">
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+          <div>
+            <span style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Max depth</span>
+            <x-import component-from-global-scope="Graphite.Stepper" key="{{sel.keyDepth}}" value="{{sel.depth}}" min="{{one}}" max="{{three}}" label="depth" on-change="{{setDepth}}"></x-import>
+          </div>
+          <div>
+            <span style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Per run</span>
+            <x-import component-from-global-scope="Graphite.Stepper" key="{{sel.keyKids}}" value="{{sel.kids}}" min="{{one}}" max="{{five}}" label="sub-agents per run" on-change="{{setKids}}"></x-import>
+          </div>
+        </div>
+        <sc-if value="{{sel.depthWarn}}" hint-placeholder-val="{{no}}">
+          <div style="padding: 8px 12px; border-radius: 8px; background: var(--warning-soft); color: var(--warning); font-size: 12px; line-height: 18px;">depth {{sel.depth}} exceeds policy 2 · will ask a person before spawning</div>
+        </sc-if>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <sc-for list="{{sel.children}}" as="c" hint-placeholder-count="1">
+            <x-import component-from-global-scope="Graphite.SpawnChip">{{c}}</x-import>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="font-weight: 500;">Budget per issue</span><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{sel.budget}}</span></div>
+      <x-import component-from-global-scope="Graphite.Progress" value="{{sel.budgetUsed}}" max="{{sixty}}" label="Budget per issue used"></x-import>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insSpawn}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <x-import component-from-global-scope="Graphite.SpawnChip">Created at runtime by {{sel.parentName}}</x-import>
+      <div>
+        <label for="s-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Name</label>
+        <input id="s-name" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+      </div>
+      <div>
+        <label for="s-role" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Role template</label>
+        <textarea id="s-role" class="pl-input" rows="3" value="{{sel.role}}" sc-camel-on-change="{{setRole}}" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; line-height: 20px; resize: vertical;"></textarea>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <span style="color: var(--text-muted);">Up to, per run</span>
+        <x-import component-from-global-scope="Graphite.Stepper" key="{{sel.keyVar}}" value="{{sel.max}}" min="{{one}}" max="{{five}}" label="copies per run" on-change="{{setMax}}"></x-import>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="color: var(--text-muted);">Depth</span><span style="font-family: var(--font-mono); font-size: 12px; color: var(--spawn-text);">1 of 2</span></div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <span style="font-weight: 500;">Tools · subset of {{sel.parentName}}</span>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">repo.read</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">test.run</span>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">Returns its result to {{sel.parentName}}, not to Review.</p>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insOrch}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <p style="margin: 0; color: var(--text-secondary);">Decides at run time who does what. Unlike a router, it can split an issue, call several teammates in parallel and create helpers.</p>
+      <div>
+        <label for="o-role" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Instructions</label>
+        <textarea id="o-role" class="pl-input" rows="3" value="{{sel.role}}" sc-camel-on-change="{{setRole}}" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; line-height: 20px; resize: vertical;"></textarea>
+      </div>
+      <span style="font-weight: 500;">Team</span>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <sc-for list="{{teamChips}}" as="m" hint-placeholder-count="3">
+          <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-size: 12px; color: var(--text-secondary);">{{m}}</span>
+        </sc-for>
+        <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="plus">Add</x-import>
+      </div>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 28px; cursor: pointer;">
+        <input type="checkbox" class="pl-focus" checked="{{sel.canCreate}}" sc-camel-on-change="{{toggleCreateO}}" style="width: 16px; height: 16px; margin: 0; accent-color: #5e6ad2;">
+        <span style="font-weight: 500;">Can create its own agents</span>
+      </label>
+      <sc-if value="{{sel.canCreate}}" hint-placeholder-val="{{yes}}">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;"><span style="color: var(--text-muted);">Alive at once</span><x-import component-from-global-scope="Graphite.Stepper" key="{{sel.keyKids}}" value="{{sel.maxAlive}}" min="{{one}}" max="{{five}}" label="agents alive at once" on-change="{{setAlive}}"></x-import></div>
+        <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--spawn-text);">Agents it creates show in violet here, on the board and in the agent list.</p>
+      </sc-if>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insPipe}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div>
+        <label for="pp-ref" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Pipeline to call</label>
+        <sc-raw-select id="pp-ref" class="pl-input" value="{{sel.ref}}" sc-camel-on-change="{{setRef}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+          <option value="Nightly audit">Nightly audit · v3 live</option><option value="Release notes">Release notes · draft</option>
+        </sc-raw-select>
+      </div>
+      <p style="margin: 0; color: var(--text-secondary);">Runs as one step here, the same way you call it from chat or assign it on the board. Its own reviews still go to the inbox.</p>
+      <a href="Agents.dc.html" class="pl-linkbtn" style="display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Open {{sel.ref}}</a>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insSource}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <x-import component-from-global-scope="Graphite.Badge" dot="live">Connected</x-import>
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">jira.acme.dev</span>
+      </div>
+      <div>
+        <label for="j-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Name</label>
+        <input id="j-name" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+      </div>
+      <div>
+        <label for="j-jql" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">JQL</label>
+        <textarea id="j-jql" class="pl-input" rows="3" value="{{sel.jql}}" sc-camel-on-change="{{setJql}}" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 20px; resize: vertical;"></textarea>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end;">
+        <div>
+          <label for="j-every" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Poll every</label>
+          <sc-raw-select id="j-every" class="pl-input" value="{{sel.every}}" sc-camel-on-change="{{setEvery}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px;">
+            <option value="1m">1m</option><option value="2m">2m</option><option value="5m">5m</option><option value="15m">15m</option>
+          </sc-raw-select>
+        </div>
+        <div>
+          <span style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Issues per pull</span>
+          <x-import component-from-global-scope="Graphite.Stepper" value="{{three}}" min="{{one}}" max="{{ten}}" label="issues per pull"></x-import>
+        </div>
+      </div>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 28px; cursor: pointer;">
+        <input type="checkbox" class="pl-focus" checked="{{sel.claim}}" sc-camel-on-change="{{toggleClaim}}" style="width: 16px; height: 16px; margin: 0; accent-color: #5e6ad2;">
+        <span>Move to <span style="font-family: var(--font-mono); font-size: 12px;">In progress</span> when claimed</span>
+      </label>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 16px 0; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div style="padding-right: 20px;"><x-import component-from-global-scope="Graphite.Stat" label="Queued" value="{{queued}}"></x-import></div>
+      <div style="padding-left: 20px; border-left: 1px solid var(--line);"><x-import component-from-global-scope="Graphite.Stat" label="Pulled today" value="112"></x-import></div>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insRouter}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <p style="margin: 0; color: var(--text-secondary);">Rules run top to bottom. The first match decides the agent.</p>
+      <sc-for list="{{routes}}" as="rt" hint-placeholder-count="3">
+        <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">rule {{rt.n}}</span>
+            <span style="font-size: 12px; color: var(--text-muted);">→ <span style="color: var(--text); font-weight: 500;">{{rt.target}}</span></span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <sc-for list="{{rt.chips}}" as="ch" hint-placeholder-count="1">
+              <x-import component-from-global-scope="Graphite.RuleChip" field="{{ch.f}}" op="{{ch.o}}" value="{{ch.v}}" edited="{{ch.edited}}"></x-import>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 10px;">
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">else</span>
+        <span style="font-size: 12px; color: var(--text-muted);">skip · 4 of last 100</span>
+      </div>
+      <div><x-import component-from-global-scope="Graphite.Button" size="sm" icon="plus">Add rule</x-import></div>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insFile}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div>
+        <label for="f-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Name</label>
+        <input id="f-name" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+      </div>
+      <div>
+        <label for="f-glob" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Path or glob</label>
+        <input id="f-glob" class="pl-input" value="{{sel.glob}}" sc-camel-on-change="{{setGlob}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px;">
+      </div>
+      <fieldset style="margin: 0; padding: 0; border: 0;">
+        <legend style="font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px; padding: 0;">Mode</legend>
+        <div style="display: flex; gap: 16px;">
+          <label style="display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer;"><input type="radio" name="f-mode" class="pl-focus" checked="{{sel.isRead}}" sc-camel-on-change="{{setRead}}" style="margin: 0; accent-color: #5e6ad2;">Read into agents</label>
+          <label style="display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer;"><input type="radio" name="f-mode" class="pl-focus" checked="{{sel.isWrite}}" sc-camel-on-change="{{setWrite}}" style="margin: 0; accent-color: #5e6ad2;">Write output</label>
+        </div>
+      </fieldset>
+    </div>
+    <sc-if value="{{sel.isRead}}" hint-placeholder-val="{{yes}}">
+      <div style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+        <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="font-weight: 500;">Matched</span><span style="font-size: 12px; color: var(--text-muted);">14 files · 212 KB</span></div>
+        <div style="font-family: var(--font-mono); font-size: 12px; line-height: 22px; color: var(--text-secondary);">
+          <div>docs/runbooks/payments.md</div>
+          <div>docs/architecture.md</div>
+          <div>docs/adr/0012-retries.md</div>
+          <div>CODEOWNERS</div>
+          <div style="color: var(--text-muted);">+10 more</div>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{sel.isWrite}}" hint-placeholder-val="{{no}}">
+      <div style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+        <span style="font-weight: 500;">One copy per variant</span>
+        <div style="font-family: var(--font-mono); font-size: 12px; line-height: 22px; color: var(--text-secondary);"><div>out/PAY-1431/spec.v1.md</div><div>out/PAY-1431/spec.v2.md</div></div>
+      </div>
+    </sc-if>
+    <div style="display: flex; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);"><span style="color: var(--text-muted);">{{sel.linkLabel}}</span><span style="text-align: right;">{{sel.linkNames}}</span></div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insGate}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <p style="margin: 0; color: var(--text-secondary);">Variants from agents wait here. A person ships one, or sends the issue back with notes.</p>
+      <fieldset style="margin: 0; padding: 0; border: 0;">
+        <legend style="font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px; padding: 0;">Decision</legend>
+        <label style="display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer;"><input type="radio" name="g-pick" class="pl-focus" checked="{{sel.pickOne}}" sc-camel-on-change="{{setPickOne}}" style="margin: 0; accent-color: #5e6ad2;">Ship one variant per issue</label>
+        <label style="display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer;"><input type="radio" name="g-pick" class="pl-focus" checked="{{sel.pickEach}}" sc-camel-on-change="{{setPickEach}}" style="margin: 0; accent-color: #5e6ad2;">Approve each variant</label>
+      </fieldset>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end;">
+        <div>
+          <label for="g-who" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Reviewers</label>
+          <sc-raw-select id="g-who" class="pl-input" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;"><option>payments-oncall</option><option>Only me</option></sc-raw-select>
+        </div>
+        <div>
+          <label for="g-sla" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Nudge after</label>
+          <sc-raw-select id="g-sla" class="pl-input" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px;"><option>1h</option><option selected="selected">4h</option><option>1d</option></sc-raw-select>
+        </div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <span style="font-weight: 500;">Keyboard in review</span>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: var(--text-muted);">
+        <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">J</x-import><x-import component-from-global-scope="Graphite.Kbd">K</x-import> move</span>
+        <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">1</x-import>–<x-import component-from-global-scope="Graphite.Kbd">3</x-import> pick</span>
+        <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">R</x-import> send back</span>
+      </div>
+      <a href="Review.dc.html" class="pl-linkbtn" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-weight: 500; text-decoration: none; transition: background-color 150ms ease;">Open review queue</a>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{insAction}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+      <div>
+        <label for="x-name" style="display: block; font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 6px;">Name</label>
+        <input id="x-name" class="pl-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit;">
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="color: var(--text-muted);">Does</span><span style="font-family: var(--font-mono); font-size: 12px;">{{sel.meta}}</span></div>
+      <sc-for list="{{sel.rows}}" as="ar" hint-placeholder-count="1">
+        <div style="display: flex; justify-content: space-between; gap: 12px;"><span style="color: var(--text-muted);">{{ar.label}}</span><span style="font-family: var(--font-mono); font-size: 12px;">{{ar.value}}</span></div>
+      </sc-for>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted);">Runs only after a person approves a variant in Review.</p>
+    </div>
+    <div style="padding: 16px 20px;">
+      <x-import component-from-global-scope="Graphite.Button" variant="danger" icon="x" on-click="{{removeNode}}">Remove node</x-import>
+    </div>
+  </sc-if>
+</aside>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1060}}">
+var W = 180;
+var LW = 1368, LH = 750;
+var KIND = {
+  source: { icon: 'source', tileBg: 'var(--info-soft)', tileFg: 'var(--info-text)', label: 'Source' },
+  router: { icon: 'filter', tileBg: 'var(--surface-hover)', tileFg: 'var(--text-secondary)', label: 'Router' },
+  orch: { icon: 'router', tileBg: 'var(--accent-soft)', tileFg: 'var(--accent-text)', label: 'Orchestrator · runs a team, can create agents' },
+  pipe: { icon: 'pipelines', tileBg: 'var(--info-soft)', tileFg: 'var(--info-text)', label: 'Pipeline · called like an agent' },
+  agent: { icon: 'agent', tileBg: 'var(--accent-soft)', tileFg: 'var(--accent-text)', label: 'Agent' },
+  spawn: { icon: 'spawn', tileBg: 'var(--spawn-soft)', tileFg: 'var(--spawn-text)', label: 'Sub-agent · created at runtime' },
+  file: { icon: '', tileBg: 'var(--surface-hover)', tileFg: 'var(--text-secondary)', label: 'File' },
+  gate: { icon: 'inbox', tileBg: 'var(--warning-soft)', tileFg: 'var(--warning)', label: 'Review · waits for a person' },
+  action: { icon: 'check', tileBg: 'var(--surface-hover)', tileFg: 'var(--text-secondary)', label: 'Action' }
+};
+var STATUS = {
+  idle: { dot: 'draft', word: '', label: 'idle', color: 'var(--text-muted)' },
+  running: { dot: 'running', word: 'running', label: 'running', color: 'var(--info)' },
+  done: { dot: 'live', word: 'done', label: 'done', color: 'var(--success)' },
+  waiting: { dot: 'waiting', word: '6 waiting', label: 'waiting for a person', color: 'var(--warning)' },
+  spawn: { dot: 'spawn', word: 'spawned', label: 'spawned by an agent', color: 'var(--spawn-text)' }
+};
+var ST = {
+  jira: ['idle', 'running', 'done', 'done', 'done', 'done', 'done'],
+  repo: ['idle', 'done', 'done', 'done', 'done', 'done', 'done'],
+  router: ['idle', 'idle', 'done', 'done', 'done', 'done', 'done'],
+  fixer: ['idle', 'idle', 'running', 'running', 'running', 'done', 'done'],
+  repro: ['idle', 'idle', 'running', 'running', 'running', 'done', 'done'],
+  analyst: ['idle', 'idle', 'running', 'running', 'done', 'done', 'done'],
+  testw: ['idle', 'idle', 'idle', 'spawn', 'done', 'done', 'done'],
+  logd: ['idle', 'idle', 'idle', 'spawn', 'done', 'done', 'done'],
+  spec: ['idle', 'idle', 'idle', 'idle', 'done', 'done', 'done'],
+  review: ['idle', 'idle', 'idle', 'idle', 'idle', 'waiting', 'waiting']
+};
+var PROGRESS = [0, 6, 22, 46, 70, 100, 100];
+var SPEND = ['$0.00', '$0.02', '$0.21', '$0.48', '$0.77', '$0.94', '$0.94'];
+var LOG = [
+  { t: '00:00', who: 'jira', msg: 'pulled 3 · PAY-1423 PAY-1427 PAY-1431' },
+  { t: '00:02', who: 'router', msg: 'PAY-1423 → Fixer (rule 1) · PAY-1427 → Reproducer (rule 2) · PAY-1431 → Analyst (rule 3)' },
+  { t: '00:19', who: 'spawn', msg: 'Fixer spawned Test writer ×2 · Reproducer spawned Log digger · depth 1 of 2', spawn: true },
+  { t: '00:51', who: 'analyst', msg: 'wrote out/PAY-1431/spec.v1.md, spec.v2.md' },
+  { t: '01:42', who: 'review', msg: '6 variants waiting for you · 3 issues', wait: true },
+  { t: '01:45', who: 'run', msg: 'done · $0.94 of $3.00 · 3 agents, 3 spawned' }
+];
+var TL = [
+  { name: 'Jira puller', key: '3 issues', s: 0, e: 6, tone: 'run' },
+  { name: 'Router', key: '3 routed', s: 6, e: 9, tone: 'run' },
+  { name: 'Fixer ×3', key: 'PAY-1423', s: 9, e: 84, tone: 'run' },
+  { name: 'Test writer ×2', key: 'by Fixer', s: 24, e: 58, tone: 'spawn' },
+  { name: 'Reproducer', key: 'PAY-1427', s: 9, e: 80, tone: 'run' },
+  { name: 'Log digger', key: 'by Reproducer', s: 30, e: 54, tone: 'spawn' },
+  { name: 'Analyst ×2', key: 'PAY-1431', s: 9, e: 50, tone: 'run' },
+  { name: 'Review', key: '6 variants', s: 86, e: 100, tone: 'wait' }
+];
+var TOOLS = ['repo.read', 'repo.write', 'test.run', 'git.bisect', 'logs.search'];
+var ROUTES = [
+  [{ f: 'type', o: 'is', v: 'Bug' }, { f: 'prio', o: '≥', v: 'High' }],
+  [{ f: 'type', o: 'is', v: 'Bug' }],
+  [{ f: 'type', o: 'is', v: 'Story' }]
+];
+
+function bez(x1, y1, x2, y2) {
+  var c = Math.max(40, Math.abs(x2 - x1) / 2);
+  return 'M' + x1 + ' ' + y1 + ' C' + (x1 + c) + ' ' + y1 + ' ' + (x2 - c) + ' ' + y2 + ' ' + x2 + ' ' + y2;
+}
+function inPt(n) { return { x: n.x, y: n.y + 21 }; }
+function outPt(n, p) { return p >= 0 ? { x: n.x + W, y: n.y + 1 + 66 + 26 * p + 13 } : { x: n.x + W, y: n.y + 21 }; }
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.drag = null; this.link = null; this.timer = null; this.uid = 1;
+    this.layerEl = null; this.scrollEl = null;
+    this.state = {
+      zoom: 0.76, step: 0, running: false, tab: 'run', sel: 'fixer', linking: false, linkPt: null, linkSrc: null,
+      pipelineName: 'PAY triage', pickEach: false,
+      nodes: [
+        { id: 'jira', kind: 'source', x: 24, y: 200, title: 'Jira puller', jql: 'project = PAY AND status = "Ready for agent" ORDER BY priority', every: '2m', claim: true },
+        { id: 'router', kind: 'router', x: 252, y: 170, title: 'Router' },
+        { id: 'repo', kind: 'file', x: 252, y: 430, title: 'Repo context', glob: 'docs/**, CODEOWNERS', mode: 'read' },
+        { id: 'fixer', kind: 'agent', x: 480, y: 140, title: 'Fixer', model: 'opus-5.5', variants: 3, tools: 4, canSpawn: true, depth: 2, kids: 3, role: 'Reproduce the bug from the issue, write a failing test, then fix it. Keep the diff under 200 lines.', budget: 31 },
+        { id: 'repro', kind: 'agent', x: 480, y: 362, title: 'Reproducer', model: 'sonnet-5.5', variants: 1, tools: 3, canSpawn: true, depth: 1, kids: 2, role: 'Find a minimal reproduction and attach logs. Do not change code.', budget: 12 },
+        { id: 'analyst', kind: 'agent', x: 480, y: 584, title: 'Analyst', model: 'sonnet-5.5', variants: 2, tools: 2, canSpawn: false, depth: 1, kids: 1, role: 'Turn the story into a short spec with acceptance criteria and open questions.', budget: 9 },
+        { id: 'testw', kind: 'spawn', x: 708, y: 16, title: 'Test writer', parent: 'fixer', max: 3, role: 'Write one failing test that pins the bug. Return the test file only.' },
+        { id: 'logd', kind: 'spawn', x: 708, y: 450, title: 'Log digger', parent: 'repro', max: 2, role: 'Search the last 24h of logs for the request ids in the issue. Return matching lines.' },
+        { id: 'spec', kind: 'file', x: 708, y: 604, title: 'spec.md', glob: 'out/{key}/spec.md', mode: 'write' },
+        { id: 'review', kind: 'gate', x: 936, y: 300, title: 'Review' },
+        { id: 'pr', kind: 'action', x: 1164, y: 250, title: 'Open PR', meta: 'fix/{key} → main', rows: [{ label: 'repo', value: 'payments-api' }] },
+        { id: 'jupd', kind: 'action', x: 1164, y: 430, title: 'Update Jira', meta: 'status → In review', rows: [{ label: 'comment', value: 'PR link' }] }
+      ],
+      edges: [
+        { f: 'jira', p: -1, t: 'router' },
+        { f: 'router', p: 0, t: 'fixer' }, { f: 'router', p: 1, t: 'repro' }, { f: 'router', p: 2, t: 'analyst' },
+        { f: 'repo', p: -1, t: 'fixer' }, { f: 'repo', p: -1, t: 'repro' }, { f: 'repo', p: -1, t: 'analyst' },
+        { f: 'fixer', p: 1, t: 'testw' }, { f: 'repro', p: 1, t: 'logd' },
+        { f: 'fixer', p: -1, t: 'review' }, { f: 'repro', p: -1, t: 'review' },
+        { f: 'analyst', p: -1, t: 'spec' }, { f: 'spec', p: -1, t: 'review' },
+        { f: 'review', p: 1, t: 'pr' }, { f: 'review', p: 1, t: 'jupd' }
+      ]
+    };
+  }
+
+  componentWillUnmount() { if (this.timer) clearInterval(this.timer); }
+
+  byId(id) { var ns = this.state.nodes; for (var i = 0; i < ns.length; i++) if (ns[i].id === id) return ns[i]; return null; }
+  statusOf(id) { var s = this.state.step; var row = ST[id]; return row ? row[s] : 'idle'; }
+  updateSel(patch) {
+    var id = this.state.sel;
+    this.setState({ nodes: this.state.nodes.map(function (n) { return n.id === id ? Object.assign({}, n, patch) : n; }) });
+  }
+  pt(e) {
+    if (!this.layerEl) return { x: 0, y: 0 };
+    var r = this.layerEl.getBoundingClientRect(), z = this.state.zoom;
+    return { x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z };
+  }
+  rowsFor(n) {
+    var self = this;
+    switch (n.kind) {
+      case 'source': return [{ label: 'queued', value: String(this.queued()) }, { label: 'poll', value: 'every ' + (n.every || '2m') }];
+      case 'router': {
+        var rs = ROUTES.map(function (r, i) { return { label: 'rule ' + (i + 1), value: r.map(function (c) { return c.v; }).join(' ≥ '), port: true }; });
+        rs[0].value = 'Bug ≥High';
+        rs.push({ label: 'else', value: 'skip', port: true });
+        return rs;
+      }
+      case 'agent': return [
+        { label: 'tools', value: String(n.tools) },
+        n.canSpawn ? { label: 'spawns', value: 'depth ≤' + n.depth, port: true, spawn: true } : { label: 'spawns', value: 'off' }
+      ];
+      case 'spawn': { var p = n.parent ? self.byId(n.parent) : null; return [{ label: 'per run', value: '≤' + n.max }, { label: 'returns to', value: p ? p.title : '—' }]; }
+      case 'orch': return [
+        { label: 'runs', value: n.team.length + ' agents' },
+        n.canCreate ? { label: 'creates', value: '≤' + n.maxAlive + ' alive', port: true, spawn: true } : { label: 'creates', value: 'off' }
+      ];
+      case 'pipe': return [{ label: 'calls', value: n.ref }, { label: 'returns', value: n.returns }];
+      case 'file': return n.mode === 'read'
+        ? [{ label: 'mode', value: 'read' }, { label: 'matched', value: '14 files' }]
+        : [{ label: 'mode', value: 'write' }, { label: 'copies', value: 'per variant' }];
+      case 'gate': return [{ label: 'reviewers', value: 'oncall' }, { label: 'on approve', value: 'ship', port: true }, { label: 'on send back', value: 're-run' }];
+      default: return n.rows || [];
+    }
+  }
+  metaFor(n) {
+    switch (n.kind) {
+      case 'source': return 'PAY · JQL';
+      case 'router': return 'first match wins';
+      case 'agent': return n.model + ' · ×' + n.variants;
+      case 'orch': return n.model + ' · decides at runtime';
+      case 'pipe': return 'pipeline as agent';
+      case 'spawn': { var p = n.parent ? this.byId(n.parent) : null; return 'by ' + (p ? p.title : 'any agent'); }
+      case 'file': return n.glob;
+      case 'gate': return this.state.pickEach ? 'approve each' : 'ship 1 of N';
+      default: return n.meta || '';
+    }
+  }
+  queued() { return this.state.step >= 1 ? 34 : 37; }
+  hasIn(n) { return n.kind !== 'source' && !(n.kind === 'file' && n.mode === 'read'); }
+  hasOut(n) { return n.kind === 'source' || n.kind === 'agent' || n.kind === 'file' || n.kind === 'orch' || n.kind === 'pipe'; }
+
+  renderVals() {
+    var self = this, st = this.state, z = st.zoom, sel = st.sel;
+    var byId = {}; st.nodes.forEach(function (n) { byId[n.id] = n; });
+
+    var addKind = function (kind) {
+      return function () {
+        var id = kind + (self.uid++);
+        var sx = self.scrollEl ? self.scrollEl.scrollLeft / z : 0, sy = self.scrollEl ? self.scrollEl.scrollTop / z : 0;
+        var off = (self.uid % 6) * 18;
+        var base = { id: id, kind: kind, x: Math.round(sx + 60 + off), y: Math.round(sy + 60 + off) };
+        var d = {
+          source: { title: 'New source', jql: 'project = KEY', every: '5m', claim: false },
+          router: { title: 'Router' },
+          agent: { title: 'New agent', model: 'sonnet-5.5', variants: 1, tools: 2, canSpawn: false, depth: 1, kids: 1, role: '', budget: 0 },
+          spawn: { title: 'New sub-agent', parent: null, max: 1, role: '' },
+          orch: { title: 'Payments lead', model: 'opus-5.5', team: ['Fixer', 'Codex', 'Reproducer'], canCreate: true, maxAlive: 3, role: 'Split the issue, give each part to the cheapest teammate with the skill, create a helper only when nobody fits.' },
+          pipe: { title: 'Nightly audit', ref: 'Nightly audit', returns: 'report' },
+          file: { title: 'Files', glob: 'path/**', mode: 'read' },
+          gate: { title: 'Review' },
+          action: { title: 'New action', meta: 'webhook', rows: [{ label: 'target', value: '—' }] }
+        }[kind];
+        self.setState({ nodes: st.nodes.concat([Object.assign(base, d)]), sel: id });
+      };
+    };
+
+    var nodes = st.nodes.map(function (n) {
+      var k = KIND[n.kind], stt = STATUS[self.statusOf(n.id)];
+      var isSel = n.id === sel;
+      var dimmed = n.kind === 'spawn' && n.parent && byId[n.parent] && !byId[n.parent].canSpawn;
+      var rows = self.rowsFor(n).map(function (r, i) {
+        return {
+          label: r.label, value: r.value, port: !!r.port,
+          color: r.spawn ? 'var(--spawn-text)' : 'var(--text-secondary)',
+          portColor: r.spawn ? 'var(--spawn)' : 'var(--text-muted)',
+          portLabel: 'Connect from ' + n.title + ' · ' + r.label,
+          startLink: function (e) { e.stopPropagation(); e.preventDefault(); self.link = { f: n.id, p: i }; self.setState({ linking: true, linkSrc: { f: n.id, p: i }, linkPt: self.pt(e) }); }
+        };
+      });
+      return {
+        id: n.id, x: n.x, y: n.y, title: n.title, meta: self.metaFor(n), rows: rows,
+        icon: k.icon || 'agent', hasIcon: n.kind !== 'file', isFile: n.kind === 'file',
+        tileBg: k.tileBg, tileFg: k.tileFg,
+        dot: stt.dot, statusLabel: stt.label, statusWord: n.kind === 'agent' && stt.word === 'running' ? 'running ×' + n.variants : stt.word, statusColor: stt.color,
+        borderStyle: n.kind === 'spawn' ? 'dashed' : 'solid',
+        borderColor: isSel ? 'var(--accent-ring)' : (n.kind === 'spawn' ? 'var(--spawn-line)' : 'var(--line-strong)'),
+        glow: isSel ? 'var(--selected-glow)' : 'none',
+        opacity: dimmed ? 0.45 : 1,
+        selected: isSel ? 'true' : 'false',
+        aria: n.title + ', ' + k.label + (stt.word ? ', ' + stt.label : ''),
+        hasIn: self.hasIn(n), hasOut: self.hasOut(n),
+        inColor: n.kind === 'spawn' ? 'var(--spawn)' : 'var(--text-muted)',
+        inLabel: 'Connect to ' + n.title, outLabel: 'Connect from ' + n.title,
+        grab: function (e) { e.stopPropagation(); self.drag = { id: n.id, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y }; if (st.sel !== n.id) self.setState({ sel: n.id }); },
+        pick: function () { if (st.sel !== n.id) self.setState({ sel: n.id }); },
+        startLink: function (e) { e.stopPropagation(); e.preventDefault(); self.link = { f: n.id, p: -1 }; self.setState({ linking: true, linkSrc: { f: n.id, p: -1 }, linkPt: self.pt(e) }); },
+        endLink: function () {
+          var L = self.link; if (!L || L.f === n.id) return;
+          var dup = st.edges.some(function (x) { return x.f === L.f && x.p === L.p && x.t === n.id; });
+          self.link = null;
+          var patch = { linking: false, linkSrc: null, sel: n.id };
+          if (!dup) patch.edges = st.edges.concat([{ f: L.f, p: L.p, t: n.id }]);
+          var src = byId[L.f];
+          if (n.kind === 'spawn' && src && (src.kind === 'agent' || src.kind === 'orch')) patch.nodes = st.nodes.map(function (m) { return m.id === n.id ? Object.assign({}, m, { parent: src.id }) : m; });
+          self.setState(patch);
+        }
+      };
+    });
+
+    var edges = [], labels = [];
+    st.edges.forEach(function (e) {
+      var f = byId[e.f], t = byId[e.t]; if (!f || !t) return;
+      var isSpawn = (f.kind === 'agent' || f.kind === 'orch') && e.p === 1;
+      if (isSpawn && !(f.canSpawn || f.canCreate)) return;
+      var isData = f.kind === 'file' && f.mode === 'read';
+      var a = outPt(f, e.p), b = inPt(t);
+      var ts = self.statusOf(t.id), fs = self.statusOf(f.id);
+      var hot = e.f === sel || e.t === sel;
+      var color = 'var(--text-disabled)', w = 1.5, dash = 'none';
+      if (isData) dash = '2 5';
+      if (isSpawn) { color = 'var(--spawn)'; dash = '6 4'; }
+      if (st.step > 0 && (ts === 'running' || ts === 'spawn' || (fs === 'running' && !isSpawn)) && !isData) { color = isSpawn ? 'var(--spawn)' : 'var(--info)'; w = 2; }
+      if (hot) { color = 'var(--accent)'; w = 2; }
+      edges.push({ d: bez(a.x, a.y, b.x, b.y), color: color, w: w, dash: dash });
+      if (f.kind === 'orch' && t.kind === 'gate') labels.push({ x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), text: 'plan + results' });
+      if (f.kind === 'agent' && t.kind === 'gate') labels.push({ x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), text: '×' + f.variants });
+      if (f.kind === 'file' && f.mode === 'write' && t.kind === 'gate') {
+        var up = st.edges.filter(function (x) { return x.t === f.id; }).map(function (x) { return byId[x.f]; }).filter(function (x) { return x && x.kind === 'agent'; })[0];
+        if (up) labels.push({ x: Math.round((a.x + b.x) / 2) + 18, y: Math.round((a.y + b.y) / 2), text: '×' + up.variants });
+      }
+    });
+
+    var linkD = '';
+    if (st.linking && st.linkSrc && st.linkPt && byId[st.linkSrc.f]) {
+      var s0 = outPt(byId[st.linkSrc.f], st.linkSrc.p);
+      linkD = bez(s0.x, s0.y, Math.round(st.linkPt.x), Math.round(st.linkPt.y));
+    }
+
+    var P = PROGRESS[st.step];
+    var timeline = TL.map(function (r) {
+      var end = Math.min(r.e, P), width = Math.max(0, end - r.s);
+      var color = r.tone === 'wait' ? 'var(--warning)' : r.tone === 'spawn' ? 'var(--spawn-bar)' : (P >= r.e ? 'var(--success)' : 'var(--info)');
+      return { name: r.name, key: r.key, left: r.s, width: width, color: color, indent: r.tone === 'spawn' ? 16 : 0, nameColor: r.tone === 'spawn' ? 'var(--spawn-text)' : 'var(--text)' };
+    });
+    var log = LOG.slice(0, st.step).map(function (g) { return { t: g.t, who: g.who, msg: g.msg, color: g.spawn ? 'var(--spawn-text)' : g.wait ? 'var(--warning)' : 'var(--accent-text)' }; });
+    var runningCount = st.nodes.filter(function (n) { return n.kind === 'agent' && self.statusOf(n.id) === 'running'; }).length;
+    var spawnedCount = st.step >= 3 ? 3 : 0;
+    var waitingCount = st.step >= 5 ? 6 : 0;
+
+    // inspector
+    var cur = sel ? byId[sel] : null;
+    var ins, selV = {};
+    if (!cur) {
+      ins = { title: st.pipelineName, kindLabel: 'Pipeline · draft v15', icon: 'pipelines', hasIcon: true, isFile: false, tileBg: 'var(--accent-soft)', tileFg: 'var(--accent-text)', hasStatus: false };
+    } else {
+      var k = KIND[cur.kind], stt = STATUS[self.statusOf(cur.id)];
+      ins = { title: cur.title, kindLabel: k.label, icon: k.icon || 'agent', hasIcon: cur.kind !== 'file', isFile: cur.kind === 'file', tileBg: k.tileBg, tileFg: k.tileFg, hasStatus: !!stt.word, dot: stt.dot, statusWord: stt.word };
+      var outs = st.edges.filter(function (x) { return x.f === cur.id && x.p === -1; }).map(function (x) { return byId[x.t]; }).filter(Boolean);
+      var ins_ = st.edges.filter(function (x) { return x.t === cur.id; }).map(function (x) { return byId[x.f]; }).filter(Boolean);
+      var kids = st.nodes.filter(function (m) { return m.kind === 'spawn' && m.parent === cur.id; }).map(function (m) { return m.title + ' · ≤' + m.max + ' per run'; });
+      var inFiles = ins_.filter(function (m) { return m.kind === 'file'; }).map(function (m) { return m.glob; });
+      var outFiles = outs.filter(function (m) { return m.kind === 'file'; });
+      var parent = cur.parent ? byId[cur.parent] : null;
+      selV = Object.assign({}, cur, {
+        keyVar: cur.id + '-v', keyDepth: cur.id + '-d', keyKids: cur.id + '-k',
+        inputs: inFiles.length ? inFiles.concat(['issue.json']) : ['issue.json'],
+        outputs: outFiles.length ? outFiles.map(function (m) { return m.glob; }) : (cur.id === 'repro' ? ['repro.md', 'logs.txt'] : ['patch.diff', 'summary.md']),
+        outTo: outs.length ? outs.map(function (m) { return m.title; }).join(', ') : 'not connected',
+        toolList: TOOLS.slice(0, cur.tools || 0),
+        children: kids,
+        depthWarn: (cur.depth || 0) > 2,
+        budget: '$' + ((cur.budget || 0) / 100).toFixed(2) + ' of $0.60',
+        budgetUsed: cur.budget || 0,
+        parentName: parent ? parent.title : 'any agent',
+        isRead: cur.mode === 'read', isWrite: cur.mode === 'write',
+        linkLabel: cur.mode === 'read' ? 'Feeds' : 'Written by',
+        linkNames: (cur.mode === 'read' ? outs : ins_).map(function (m) { return m.title; }).join(', ') || 'not connected',
+        pickOne: !st.pickEach, pickEach: st.pickEach,
+        rows: cur.rows || []
+      });
+    }
+    var routes = ROUTES.map(function (chips, i) {
+      var tgt = st.edges.filter(function (x) { return x.f === 'router' && x.p === i; }).map(function (x) { return byId[x.t]; }).filter(Boolean);
+      return { n: i + 1, target: tgt.length ? tgt.map(function (m) { return m.title; }).join(', ') : 'no target', chips: chips.map(function (c) { return { f: c.f, o: c.o, v: c.v, edited: false }; }) };
+    });
+    var kind = cur ? cur.kind : 'none';
+    var stepZoom = function (dz) { return function () { self.setState({ zoom: Math.max(0.4, Math.min(1.4, Math.round((st.zoom + dz) * 100) / 100)) }); }; };
+
+    return {
+      s12: 12, s14: 14, s16: 16, one: 1, three: 3, four: 4, five: 5, ten: 10, sixty: 60, thousand: 1000, budgetToday: 381, yes: true, no: false,
+      running: st.running,
+      runLabel: st.running ? 'Running…' : (st.step >= 6 ? 'Run again' : 'Test run'),
+      zoom: z, zoomPct: Math.round(z * 100) + '%', layerW: Math.round(LW * z), layerH: Math.round(LH * z),
+      nodes: nodes, edges: edges, edgeLabels: labels, linking: st.linking && !!linkD, linkD: linkD,
+      scrollRef: function (el) { self.scrollEl = el; },
+      layerRef: function (el) { self.layerEl = el; },
+      tabs: [{ id: 'run', label: 'Test run' }, { id: 'log', label: 'Log', count: log.length }, { id: 'problems', label: 'Problems', count: 1 }],
+      tabRun: st.tab === 'run', tabLog: st.tab === 'log', tabProblems: st.tab === 'problems',
+      setTab: function (id) { self.setState({ tab: id }); },
+      timeline: timeline, log: log, logEmpty: log.length === 0,
+      queued: self.queued(), runningCount: runningCount, spawnedCount: spawnedCount, waitingCount: waitingCount,
+      waitTone: waitingCount ? 'warning' : undefined, hasWaiting: waitingCount > 0, spend: SPEND[st.step],
+      ins: ins, sel: selV, routes: routes, pipelineName: st.pipelineName,
+      insNone: kind === 'none', insAgent: kind === 'agent', insSpawn: kind === 'spawn', insSource: kind === 'source',
+      insRouter: kind === 'router', insOrch: kind === 'orch', insPipe: kind === 'pipe', insFile: kind === 'file', insGate: kind === 'gate', insAction: kind === 'action',
+
+      run: function () {
+        if (self.timer) return;
+        self.setState({ step: 1, running: true });
+        self.timer = setInterval(function () {
+          var s = self.state.step + 1;
+          if (s > 6) { clearInterval(self.timer); self.timer = null; self.setState({ running: false }); return; }
+          self.setState({ step: s, running: s < 6 });
+          if (s === 6) { clearInterval(self.timer); self.timer = null; }
+        }, 1100);
+      },
+      move: function (e) {
+        if (self.drag) {
+          var d = self.drag, dx = (e.clientX - d.sx) / z, dy = (e.clientY - d.sy) / z;
+          var nx = Math.max(0, Math.min(LW - W, Math.round(d.ox + dx))), ny = Math.max(0, Math.min(LH - 60, Math.round(d.oy + dy)));
+          self.setState({ nodes: self.state.nodes.map(function (n) { return n.id === d.id ? Object.assign({}, n, { x: nx, y: ny }) : n; }) });
+        } else if (self.link) {
+          self.setState({ linkPt: self.pt(e) });
+        }
+      },
+      drop: function () {
+        self.drag = null;
+        if (self.link) { self.link = null; self.setState({ linking: false, linkSrc: null }); }
+      },
+      bgDown: function (e) { if (e.target && e.target.getAttribute && e.target.getAttribute('data-bg')) self.setState({ sel: null }); },
+      zoomIn: stepZoom(0.1), zoomOut: stepZoom(-0.1),
+      fit: function () {
+        var el = self.scrollEl; if (!el) return;
+        var f = Math.min(1.2, (el.clientWidth - 8) / LW, (el.clientHeight - 8) / LH);
+        self.setState({ zoom: Math.max(0.4, Math.floor(f * 100) / 100) });
+        el.scrollLeft = 0; el.scrollTop = 0;
+      },
+      addSource: addKind('source'), addRouter: addKind('router'), addAgent: addKind('agent'), addSpawn: addKind('spawn'),
+      addOrch: addKind('orch'), addPipe: addKind('pipe'),
+      teamChips: cur && cur.team ? cur.team : [],
+      setRef: function (e) { self.updateSel({ ref: e.target.value, title: e.target.value }); },
+      useAgent: function (e) { if (e.target.value) self.updateSel({ title: e.target.value }); },
+      toggleCreateO: function (e) { self.updateSel({ canCreate: e.target.checked }); },
+      setAlive: function (v) { self.updateSel({ maxAlive: v }); },
+      addFile: addKind('file'), addGate: addKind('gate'), addAction: addKind('action'),
+      selectRouter: function () { self.setState({ sel: 'router' }); },
+      removeNode: function () {
+        var id = st.sel; if (!id) return;
+        self.setState({
+          nodes: st.nodes.filter(function (n) { return n.id !== id; }),
+          edges: st.edges.filter(function (x) { return x.f !== id && x.t !== id; }),
+          sel: null
+        });
+      },
+      setPipelineName: function (e) { self.setState({ pipelineName: e.target.value }); },
+      setTitle: function (e) { self.updateSel({ title: e.target.value }); },
+      setRole: function (e) { self.updateSel({ role: e.target.value }); },
+      setModel: function (e) { self.updateSel({ model: e.target.value }); },
+      setJql: function (e) { self.updateSel({ jql: e.target.value }); },
+      setEvery: function (e) { self.updateSel({ every: e.target.value }); },
+      setGlob: function (e) { self.updateSel({ glob: e.target.value }); },
+      setVariants: function (v) { self.updateSel({ variants: v }); },
+      setDepth: function (v) { self.updateSel({ depth: v }); },
+      setKids: function (v) { self.updateSel({ kids: v }); },
+      setMax: function (v) { self.updateSel({ max: v }); },
+      toggleSpawn: function (e) { self.updateSel({ canSpawn: e.target.checked }); },
+      toggleClaim: function (e) { self.updateSel({ claim: e.target.checked }); },
+      setRead: function () { self.updateSel({ mode: 'read' }); },
+      setWrite: function () { self.updateSel({ mode: 'write' }); },
+      setPickOne: function () { self.setState({ pickEach: false }); },
+      setPickEach: function () { self.setState({ pickEach: true }); }
+    };
+  }
+}
+</script>
+
+
+</body></html>

@@ -1,0 +1,8 @@
+[package]
+name = "screen_agents"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui.workspace = true
+ui.workspace = true

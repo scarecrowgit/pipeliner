@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>Issue board</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+
+<div style="flex: 1 1 232px; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="issues" hint-size="232px,900px"></dc-import>
+</div>
+
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line);">
+    <div style="display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500;"><span style="color: var(--text-muted);">Payments</span><span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span><span>Issues</span></div>
+    <x-import component-from-global-scope="Graphite.Badge">{{total}} open</x-import>
+    <span style="flex: 1 1 auto;"></span>
+    <x-import component-from-global-scope="Graphite.Button" variant="ghost" icon="replay">Autopilots · 2</x-import>
+    <x-import component-from-global-scope="Graphite.Button" variant="primary" icon="plus" on-click="{{newIssue}}">New issue</x-import>
+  </header>
+
+  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 0 24px 0 0; border-bottom: 1px solid var(--line);">
+    <x-import component-from-global-scope="Graphite.Tabs" items="{{viewTabs}}" value="board" label="View" on-change="{{setView}}" style="border-bottom: 0;"></x-import>
+    <span style="flex: 1 1 auto;"></span>
+    <div role="group" aria-label="Show issues run by" style="display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0;">
+      <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+        <button type="button" class="bd-focus" aria-pressed="{{f.pressed}}" sc-camel-on-click="{{f.pick}}" style="height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{f.border}}; background: {{f.bg}}; color: {{f.color}}; font: inherit; font-size: 12px; cursor: pointer; transition: background-color 150ms ease;">{{f.label}} <span style="color: var(--text-muted);">{{f.count}}</span></button>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; flex: 1 1 auto; min-height: 0;">
+
+    <main style="flex: 999 1 480px; min-width: 0;">
+      <sc-if value="{{isBoard}}" hint-placeholder-val="{{yes}}">
+        <div style="overflow-x: auto; padding: 16px 24px 24px;">
+          <div style="display: flex; gap: 12px; align-items: flex-start; min-width: min-content;">
+            <sc-for list="{{columns}}" as="col" hint-placeholder-count="5">
+              <section aria-label="{{col.name}}" sc-camel-on-drag-over="{{col.over}}" sc-camel-on-drag-leave="{{col.leave}}" sc-camel-on-drop="{{col.drop}}" style="width: 252px; flex: 0 0 252px; min-height: 640px; box-sizing: border-box; padding: 8px; border-radius: 10px; border: 1px {{col.borderStyle}} {{col.border}}; background: {{col.bg}}; display: flex; flex-direction: column; gap: 8px; transition: background-color 150ms ease, border-color 150ms ease;">
+                <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 4px;">
+                  <x-import component-from-global-scope="Graphite.StatusDot" status="{{col.dot}}" size="sm"></x-import>
+                  <span style="font-weight: 500;">{{col.name}}</span>
+                  <span style="color: var(--text-muted);">{{col.count}}</span>
+                  <span style="flex: 1 1 auto;"></span>
+                  <span style="font-size: 12px; color: {{col.hintColor}};">{{col.hint}}</span>
+                </div>
+                <sc-for list="{{col.cards}}" as="c" hint-placeholder-count="2">
+                  <button type="button" class="bd-card" draggable="true" sc-camel-on-drag-start="{{c.drag}}" sc-camel-on-drag-end="{{dragEnd}}" sc-camel-on-click="{{c.pick}}" aria-pressed="{{c.selectedAttr}}" style="display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 10px 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{c.border}}; box-shadow: {{c.glow}}; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: grab; opacity: {{c.opacity}}; transition: border-color 150ms ease, opacity 150ms ease;">
+                    <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                      <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{c.key}}</span>
+                      <span style="font-size: 12px; color: {{c.prioColor}};">{{c.prio}}</span>
+                      <span style="flex: 1 1 auto;"></span>
+                      <sc-if value="{{c.hasPerson}}" hint-placeholder-val="{{no}}">
+                        <span title="{{c.personName}}" style="width: 22px; height: 22px; border-radius: 999px; background: var(--surface-hover); border: 1px solid var(--line-strong); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--text-secondary);">{{c.person}}</span>
+                      </sc-if>
+                      <sc-if value="{{c.hasRunner}}" hint-placeholder-val="{{yes}}">
+                        <span title="{{c.runnerName}}" style="width: 22px; height: 22px; border-radius: 6px; background: {{c.rTileBg}}; color: {{c.rTileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{c.rIcon}}" size="{{s12}}"></x-import></span>
+                      </sc-if>
+                    </div>
+                    <span style="font-weight: 500; line-height: 18px;">{{c.title}}</span>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                      <x-import component-from-global-scope="Graphite.Badge">{{c.label}}</x-import>
+                      <sc-if value="{{c.byAgent}}" hint-placeholder-val="{{no}}">
+                        <span style="display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--spawn-soft); color: var(--spawn-text); font-size: 12px;"><x-import component-from-global-scope="Graphite.Icon" name="spawn" size="{{s12}}"></x-import>by {{c.createdBy}}</span>
+                      </sc-if>
+                    </div>
+                    <sc-if value="{{c.hasRunner}}" hint-placeholder-val="{{yes}}">
+                      <div style="display: flex; flex-direction: column; gap: 6px; width: 100%; padding-top: 8px; border-top: 1px solid var(--line-subtle);">
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0;">
+                          <span style="color: var(--text-muted);">{{c.rType}}</span>
+                          <span style="color: var(--text-secondary); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.runnerName}}</span>
+                        </div>
+                        <sc-if value="{{c.hasRun}}" hint-placeholder-val="{{yes}}">
+                          <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px;">
+                            <x-import component-from-global-scope="Graphite.StatusDot" status="{{c.runDot}}" size="sm"></x-import>
+                            <span style="color: {{c.runColor}};">{{c.runText}}</span>
+                          </div>
+                          <sc-if value="{{c.isRunning}}" hint-placeholder-val="{{no}}">
+                            <x-import component-from-global-scope="Graphite.Progress" value="{{c.pct}}" label="Run progress"></x-import>
+                          </sc-if>
+                        </sc-if>
+                      </div>
+                    </sc-if>
+                  </button>
+                </sc-for>
+                <button type="button" class="bd-hover bd-focus" sc-camel-on-click="{{col.add}}" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s12}}"></x-import>Add issue</button>
+              </section>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isList}}" hint-placeholder-val="{{no}}">
+        <div style="padding: 16px 24px 24px;">
+          <x-import component-from-global-scope="Graphite.Table" columns="{{listCols}}" rows="{{listRows}}" min-width="{{sevenTwenty}}"></x-import>
+        </div>
+      </sc-if>
+    </main>
+
+    <sc-if value="{{hasSel}}" hint-placeholder-val="{{yes}}">
+    <aside aria-label="Issue details" style="flex: 1 1 360px; max-width: 100%; min-width: 0; box-sizing: border-box; border-left: 1px solid var(--line); background: var(--bg-sidebar); display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--line);">
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{sel.key}}</span>
+        <sc-if value="{{sel.byAgent}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.SpawnChip">created by {{sel.createdBy}}</x-import></sc-if>
+        <span style="flex: 1 1 auto;"></span>
+        <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="x" aria-label="Close details" on-click="{{closeSel}}"></x-import>
+      </div>
+      <div style="padding: 16px 20px 4px;">
+        <label for="bd-title" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Title</label>
+        <input id="bd-title" class="bd-input" value="{{sel.title}}" sc-camel-on-change="{{setTitle}}" style="width: 100%; box-sizing: border-box; padding: 4px 6px; margin-left: -6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em;">
+        <p style="margin: 6px 0 0; color: var(--text-secondary);">{{sel.desc}}</p>
+      </div>
+
+      <dl style="margin: 0; padding: 12px 20px 16px; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; align-items: center; border-bottom: 1px solid var(--line);">
+        <dt style="font-size: 12px; color: var(--text-muted);"><label for="bd-status">Status</label></dt>
+        <dd style="margin: 0;"><sc-raw-select id="bd-status" class="bd-input" value="{{sel.status}}" sc-camel-on-change="{{setStatus}}" style="height: 28px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 12px;"><option value="backlog">Backlog</option><option value="todo">Todo</option><option value="progress">In progress</option><option value="review">In review</option><option value="done">Done</option></sc-raw-select></dd>
+        <dt style="font-size: 12px; color: var(--text-muted);">Priority</dt>
+        <dd style="margin: 0; font-size: 12px; color: {{sel.prioColor}};">{{sel.prio}}</dd>
+        <dt style="font-size: 12px; color: var(--text-muted);">Owner</dt>
+        <dd style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12px;"><span style="width: 20px; height: 20px; border-radius: 999px; background: var(--surface-hover); border: 1px solid var(--line-strong); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; color: var(--text-secondary);">{{sel.person}}</span>{{sel.personName}}</dd>
+        <dt style="font-size: 12px; color: var(--text-muted);">Runs with</dt>
+        <dd style="margin: 0;">
+          <sc-if value="{{sel.hasRunner}}" hint-placeholder-val="{{no}}">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="width: 22px; height: 22px; border-radius: 6px; background: {{sel.rTileBg}}; color: {{sel.rTileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{sel.rIcon}}" size="{{s12}}"></x-import></span>
+              <span style="flex: 1 1 auto; min-width: 0;"><span style="font-weight: 500;">{{sel.runnerName}}</span> <span style="font-size: 12px; color: var(--text-muted);">{{sel.rType}}</span></span>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" on-click="{{togglePicker}}">Change</x-import>
+            </div>
+          </sc-if>
+          <sc-if value="{{sel.noRunner}}" hint-placeholder-val="{{yes}}">
+            <button type="button" class="bd-focus" aria-expanded="{{pickerAttr}}" sc-camel-on-click="{{togglePicker}}" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px dashed var(--accent-ring); background: transparent; color: var(--accent-text); font: inherit; font-size: 12px; cursor: pointer;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s12}}"></x-import>Attach agent, orchestrator or pipeline</button>
+          </sc-if>
+        </dd>
+      </dl>
+
+      <sc-if value="{{pickerOpen}}" hint-placeholder-val="{{yes}}">
+        <div style="margin: 12px 20px 0; border: 1px solid var(--accent-ring); box-shadow: var(--selected-glow); border-radius: 10px; background: var(--surface); overflow: hidden;">
+          <div style="position: relative; border-bottom: 1px solid var(--line);">
+            <label for="bd-pick" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Find an orchestrator, agent or pipeline</label>
+            <span style="position: absolute; left: 12px; top: 12px; color: var(--text-muted); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="search" size="{{s14}}"></x-import></span>
+            <input id="bd-pick" class="bd-input" value="{{pickQ}}" sc-camel-on-change="{{setPickQ}}" placeholder="Orchestrator, agent or pipeline" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px 0 34px; border: 0; background: transparent; color: var(--text); font: inherit;">
+          </div>
+          <div role="listbox" aria-label="Runners" style="max-height: 300px; overflow-y: auto; padding: 4px;">
+            <sc-for list="{{pickGroups}}" as="g" hint-placeholder-count="3">
+              <div style="padding: 8px 8px 4px; font-size: 12px; color: var(--text-muted);">{{g.name}}</div>
+              <sc-for list="{{g.items}}" as="o" hint-placeholder-count="2">
+                <button type="button" role="option" aria-selected="{{o.selectedAttr}}" class="bd-opt bd-focus" sc-camel-on-click="{{o.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{o.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+                  <span style="width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; background: {{o.tileBg}}; color: {{o.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{o.icon}}" size="{{s14}}"></x-import></span>
+                  <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;">
+                    <span style="font-weight: 500;">{{o.name}}</span>
+                    <span style="font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{o.desc}}</span>
+                  </span>
+                  <span style="font-size: 12px; color: {{o.loadColor}}; white-space: nowrap;">{{o.load}}</span>
+                </button>
+              </sc-for>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{sel.hasRunner}}" hint-placeholder-val="{{no}}">
+        <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">
+            <sc-for list="{{sel.steps}}" as="p" hint-placeholder-count="4">
+              <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="color: {{p.color}};">{{p.text}}</span><sc-if value="{{p.more}}" hint-placeholder-val="{{yes}}"><span style="color: var(--text-disabled);">›</span></sc-if></span>
+            </sc-for>
+          </div>
+          <sc-if value="{{sel.hasRun}}" hint-placeholder-val="{{yes}}">
+            <div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: {{sel.runBg}};">
+              <x-import component-from-global-scope="Graphite.StatusDot" status="{{sel.runDot}}" size="sm"></x-import>
+              <span style="flex: 1 1 auto; color: {{sel.runColor}};">{{sel.runText}}</span>
+              <sc-if value="{{sel.isRunning}}" hint-placeholder-val="{{no}}"><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{sel.pct}}%</span></sc-if>
+            </div>
+          </sc-if>
+          <fieldset style="margin: 0; padding: 0; border: 0;">
+            <legend style="font-size: 12px; line-height: 18px; color: var(--text-muted); margin-bottom: 4px; padding: 0;">Start when</legend>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px 16px;">
+              <sc-for list="{{sel.triggers}}" as="t" hint-placeholder-count="3">
+                <label style="display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; font-size: 12px;"><input type="checkbox" class="bd-focus" checked="{{t.on}}" sc-camel-on-change="{{t.toggle}}" style="width: 14px; height: 14px; margin: 0; accent-color: #5e6ad2;">{{t.label}}</label>
+              </sc-for>
+            </div>
+          </fieldset>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <sc-if value="{{sel.canStart}}" hint-placeholder-val="{{no}}">
+              <x-import component-from-global-scope="Graphite.Button" size="sm" icon="play" on-click="{{startRun}}">Start now</x-import>
+            </sc-if>
+            <sc-if value="{{sel.isPipeline}}" hint-placeholder-val="{{no}}">
+              <a href="Main.dc.html" class="bd-link" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Open pipeline</a>
+            </sc-if>
+            <sc-if value="{{sel.isAgent}}" hint-placeholder-val="{{no}}">
+              <a href="Chat.dc.html" class="bd-link" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Open run</a>
+            </sc-if>
+            <sc-if value="{{sel.toReview}}" hint-placeholder-val="{{no}}">
+              <a href="Review.dc.html" class="bd-link" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid #4a3f17; background: var(--warning-soft); color: var(--warning); font-size: 12px; font-weight: 500; text-decoration: none;">Review variants</a>
+            </sc-if>
+            <x-import component-from-global-scope="Graphite.Button" size="sm" variant="danger" on-click="{{detach}}">Detach</x-import>
+          </div>
+        </div>
+      </sc-if>
+
+      <section aria-label="Activity" style="display: flex; flex-direction: column; gap: 12px; padding: 16px 20px;">
+        <span style="font-weight: 500;">Activity</span>
+        <sc-for list="{{sel.activity}}" as="a" hint-placeholder-count="3">
+          <div style="display: flex; gap: 10px;">
+            <span style="width: 22px; height: 22px; flex: 0 0 auto; border-radius: {{a.radius}}; background: {{a.tileBg}}; color: {{a.tileFg}}; border: 1px solid {{a.tileBorder}}; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600;">{{a.initials}}</span>
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <div style="font-size: 12px;"><span style="font-weight: 500; color: {{a.whoColor}};">{{a.who}}</span> <span style="color: var(--text-muted);">{{a.when}}</span></div>
+              <div style="color: {{a.textColor}}; padding: {{a.pad}}; border-radius: 8px; background: {{a.bg}}; border: 1px solid {{a.border}};">{{a.text}}</div>
+            </div>
+          </div>
+        </sc-for>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label for="bd-comment" style="font-size: 12px; color: var(--text-muted);">Comment · @mention an agent or pipeline to wake it up</label>
+          <textarea id="bd-comment" class="bd-input" rows="2" value="{{comment}}" sc-camel-on-change="{{setComment}}" placeholder="@Fixer try again with the retry budget from ADR-12" style="width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font: inherit; resize: vertical;"></textarea>
+          <div><x-import component-from-global-scope="Graphite.Button" size="sm" disabled="{{noComment}}" on-click="{{postComment}}">Comment</x-import></div>
+        </div>
+      </section>
+    </aside>
+    </sc-if>
+  </div>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940}}">
+var COLS = [
+  { id: 'backlog', name: 'Backlog', dot: 'draft' },
+  { id: 'todo', name: 'Todo', dot: 'draft' },
+  { id: 'progress', name: 'In progress', dot: 'running' },
+  { id: 'review', name: 'In review', dot: 'waiting' },
+  { id: 'done', name: 'Done', dot: 'live' }
+];
+var PEOPLE = { AR: 'Alex Rivera', NK: 'Nina Kim', ME: 'You' };
+var RUNNERS = {
+  'p-triage': { type: 'pipeline', name: 'PAY triage', desc: 'Router › Fixer · Reproducer · Analyst › Review', load: 'v14 live', steps: ['Router', 'Fixer ×3', 'Review', 'You'] },
+  'p-audit': { type: 'pipeline', name: 'Nightly audit', desc: 'Auditor ×2 › Report · autopilot 02:00', load: 'idle', steps: ['Auditor ×2', 'Report', 'You'] },
+  'a-fixer': { type: 'agent', name: 'Fixer', desc: 'Claude Code · opus-5.5 · may spawn ≤2', load: '1 running', steps: ['Fixer', 'PR', 'You'] },
+  'a-repro': { type: 'agent', name: 'Reproducer', desc: 'Claude Code · sonnet-5.5 · cloud', load: 'free', steps: ['Reproducer', 'You'] },
+  'a-codex': { type: 'agent', name: 'Codex', desc: 'Codex CLI · gpt-5.2 · runtime laptop', load: '1 queued', steps: ['Codex', 'PR', 'You'] },
+  'a-auditor': { type: 'agent', name: 'Auditor', desc: 'OpenCode · opus-5.5 · read-only', load: 'blocked', steps: ['Auditor', 'Report', 'You'] },
+  'o-lead': { type: 'orch', name: 'Payments lead', desc: 'Runs Fixer, Codex, Reproducer, PAY triage · creates helpers', load: '1 running', steps: ['Payments lead', 'splits', 'Fixer + Codex', 'You'] },
+  'o-release': { type: 'orch', name: 'Release captain', desc: 'Runs Nightly audit, Release notes, Analyst', load: 'idle', steps: ['Release captain', 'Nightly audit', 'You'] }
+};
+var RT = {
+  pipeline: { label: 'Pipeline', icon: 'pipelines', bg: 'var(--info-soft)', fg: 'var(--info-text)' },
+  agent: { label: 'Agent', icon: 'agent', bg: 'var(--surface-hover)', fg: 'var(--text-secondary)' },
+  orch: { label: 'Orchestrator', icon: 'router', bg: 'var(--accent-soft)', fg: 'var(--accent-text)' }
+};
+var RUN = {
+  running: { dot: 'running', color: 'var(--info)', bg: 'var(--info-soft)' },
+  waiting: { dot: 'waiting', color: 'var(--warning)', bg: 'var(--warning-soft)' },
+  blocked: { dot: 'waiting', color: 'var(--warning)', bg: 'var(--warning-soft)' },
+  done: { dot: 'live', color: 'var(--success)', bg: 'var(--surface)' },
+  queued: { dot: 'draft', color: 'var(--text-muted)', bg: 'var(--surface)' }
+};
+var PRIO = { High: 'var(--warning)', Medium: 'var(--text-secondary)', Low: 'var(--text-muted)' };
+
+function seed() {
+  return [
+    { key: 'PAY-1440', title: 'Flaky checkout e2e on Safari', status: 'backlog', label: 'Bug', prio: 'Low', person: 'AR', runner: null, run: null, desc: 'checkout.spec fails about 1 in 8 runs on Safari 19. Looks like a race on the 3-D Secure iframe.',
+      activity: [{ who: 'AR', when: '1d', text: 'Filed from the nightly e2e report.' }] },
+    { key: 'PAY-1442', title: 'Add receipts to refund emails', status: 'backlog', label: 'Story', prio: 'Medium', person: 'ME', runner: null, run: null, createdBy: 'Analyst', desc: 'Refund emails have no receipt. Raised while specifying PAY-1431.',
+      activity: [{ who: 'Analyst', agent: true, spawn: true, when: '3h', text: 'Created this issue while writing the spec for PAY-1431. Not in scope there.' }] },
+    { key: 'PAY-1436', title: 'Retry budget per merchant', status: 'progress', label: 'Story', prio: 'Medium', person: 'NK', runner: 'o-lead', run: { state: 'running', text: 'split in 2 · Analyst spec, Fixer code', pct: 30 }, desc: 'Cap automatic retries per merchant per hour so one bad integration can’t flood the gateway.',
+      activity: [{ who: 'NK', when: '5h', text: 'Let’s spec this before anyone writes code.' }, { who: 'Payments lead', agent: true, when: '30m', text: 'Split in two: Analyst writes the spec, then Fixer implements. Created Migration checker to watch the SDK v9 bump in parallel.' }, { who: 'Payments lead', agent: true, spawn: true, when: '29m', text: 'Created Migration checker · alive until PAY-1438 closes.', spawnNote: true }] },
+    { key: 'PAY-1438', title: 'Bump gateway SDK to v9', status: 'todo', label: 'Chore', prio: 'Low', person: 'AR', runner: 'a-codex', run: { state: 'queued', text: 'starts in 2 min · runtime laptop' }, desc: 'v8 is deprecated in January. Changelog lists two breaking changes.',
+      activity: [{ who: 'AR', when: '20m', text: 'Assigned to Codex.' }, { who: 'Codex', agent: true, when: '19m', text: 'Queued behind 1 run on runtime laptop.' }] },
+    { key: 'PAY-1427', title: 'Refund webhook times out', status: 'progress', label: 'Bug', prio: 'Medium', person: 'ME', runner: 'p-triage', run: { state: 'running', text: 'Reproducer running · Log digger spawned', pct: 64 }, desc: 'Refunds with many line items hit the 10s gateway timeout.',
+      activity: [{ who: 'PAY triage', pipeline: true, when: '12m', text: 'Picked up by rule 2 → Reproducer.' }, { who: 'Reproducer', agent: true, when: '9m', text: 'Spawned Log digger to search the last 24h of logs.', spawnNote: true }] },
+    { key: 'PAY-1435', title: 'Audit PCI log redaction', status: 'progress', label: 'Chore', prio: 'High', person: 'AR', runner: 'a-auditor', run: { state: 'blocked', text: 'asks: which log sinks are in scope?' }, desc: 'Check that card numbers never reach logs, traces or error reports.',
+      activity: [{ who: 'Auditor', agent: true, when: '40m', text: 'Found 3 sinks: Datadog, Sentry, S3 archive. Sentry token is expired, so I can’t read it. Which sinks are in scope?', blocker: true }] },
+    { key: 'PAY-1423', title: 'Double charge on retry', status: 'review', label: 'Bug', prio: 'High', person: 'ME', runner: 'p-triage', run: { state: 'waiting', text: '3 variants to review' }, desc: 'Customers are charged twice when the gateway times out and we retry.',
+      activity: [{ who: 'PAY triage', pipeline: true, when: '2h', text: 'Picked up by rule 1 → Fixer ×3.' }, { who: 'Fixer', agent: true, when: '1h', text: 'Spawned Test writer ×2 · depth 1 of 2.', spawnNote: true }, { who: 'Fixer', agent: true, when: '40m', text: '3 variants ready. A passes all tests and is the smallest safe change.' }] },
+    { key: 'PAY-1431', title: 'Saved cards for guest checkout', status: 'review', label: 'Story', prio: 'Low', person: 'NK', runner: 'p-triage', run: { state: 'waiting', text: '2 specs to review' }, desc: 'Let guests save a card for next time without a full account.',
+      activity: [{ who: 'Analyst', agent: true, when: '3h', text: 'Wrote two specs: tokenised card with email link, or a light account.' }] },
+    { key: 'PAY-1419', title: 'Webhook signature check', status: 'done', label: 'Bug', prio: 'High', person: 'AR', runner: 'a-fixer', run: { state: 'done', text: 'PR #2280 merged' }, desc: 'Reject webhooks with a missing or stale signature.',
+      activity: [{ who: 'Fixer', agent: true, when: '1d', text: 'Opened PR #2280.' }, { who: 'AR', when: '1d', text: 'Merged.' }] },
+    { key: 'PAY-1417', title: 'Update payout docs', status: 'done', label: 'Docs', prio: 'Low', person: 'AR', runner: null, run: null, desc: 'Docs still describe weekly payouts.',
+      activity: [{ who: 'AR', when: '2d', text: 'Done by hand.' }] }
+  ];
+}
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.dragKey = null; this.n = 1443;
+    this.state = { issues: seed(), sel: 'PAY-1440', picker: true, pickQ: '', view: 'board', filter: 'all', over: null, dragging: null, comment: '', trig: {} };
+  }
+  patch(key, p) { this.setState({ issues: this.state.issues.map(function (i) { return i.key === key ? Object.assign({}, i, p) : i; }) }); }
+  renderVals() {
+    var self = this, st = this.state;
+    var match = function (i) {
+      if (st.filter === 'all') return true;
+      if (st.filter === 'none') return !i.runner;
+      return i.runner && RUNNERS[i.runner].type === st.filter;
+    };
+    var cardOf = function (i) {
+      var r = i.runner ? RUNNERS[i.runner] : null, rt = r ? RT[r.type] : null, run = i.run ? RUN[i.run.state] : null, isSel = i.key === st.sel;
+      return {
+        key: i.key, title: i.title, label: i.label, prio: i.prio, prioColor: PRIO[i.prio],
+        hasPerson: !!i.person, person: i.person, personName: PEOPLE[i.person] || '',
+        hasRunner: !!r, runnerName: r ? r.name : '', rType: rt ? rt.label : '', rIcon: rt ? rt.icon : 'agent', rTileBg: rt ? rt.bg : 'transparent', rTileFg: rt ? rt.fg : 'inherit',
+        hasRun: !!run, runDot: run ? run.dot : 'draft', runColor: run ? run.color : 'inherit', runText: i.run ? i.run.text : '', isRunning: !!i.run && i.run.state === 'running', pct: i.run && i.run.pct || 0,
+        byAgent: !!i.createdBy, createdBy: i.createdBy || '',
+        border: isSel ? 'var(--accent-ring)' : 'var(--line)', glow: isSel ? 'var(--selected-glow)' : 'none', selectedAttr: isSel ? 'true' : 'false',
+        opacity: st.dragging === i.key ? 0.4 : 1,
+        drag: function (e) { self.dragKey = i.key; try { e.dataTransfer.setData('text/plain', i.key); e.dataTransfer.effectAllowed = 'move'; } catch (x) {} self.setState({ dragging: i.key }); },
+        pick: function () { self.setState({ sel: i.key, picker: !i.runner && st.sel === i.key ? st.picker : false, pickQ: '' }); }
+      };
+    };
+    var columns = COLS.map(function (c) {
+      var list = st.issues.filter(function (i) { return i.status === c.id && match(i); });
+      var waiting = list.filter(function (i) { return i.run && (i.run.state === 'waiting' || i.run.state === 'blocked'); }).length;
+      var isOver = st.over === c.id;
+      return {
+        name: c.name, dot: c.dot, count: list.length, cards: list.map(cardOf),
+        hint: waiting ? waiting + ' need you' : '', hintColor: 'var(--warning)',
+        bg: isOver ? 'var(--accent-glow)' : 'transparent', border: isOver ? 'var(--accent-ring)' : 'transparent', borderStyle: isOver ? 'dashed' : 'solid',
+        over: function (e) { e.preventDefault(); if (st.over !== c.id) self.setState({ over: c.id }); },
+        leave: function () {},
+        drop: function (e) {
+          e.preventDefault(); var k = self.dragKey; self.dragKey = null;
+          if (!k) { self.setState({ over: null, dragging: null }); return; }
+          var iss = st.issues.filter(function (i) { return i.key === k; })[0];
+          var p = { status: c.id };
+          if (iss && iss.runner && c.id === 'progress' && (!iss.run || iss.run.state === 'queued')) p.run = { state: 'running', text: RUNNERS[iss.runner].name + ' picked it up', pct: 4 };
+          self.setState({ issues: st.issues.map(function (i) { return i.key === k ? Object.assign({}, i, p) : i; }), over: null, dragging: null, sel: k });
+        },
+        add: function () { self.addIssue(c.id); }
+      };
+    });
+
+    var counts = { all: 0, pipeline: 0, agent: 0, orch: 0, none: 0 };
+    st.issues.forEach(function (i) { counts.all++; if (i.runner) counts[RUNNERS[i.runner].type]++; else counts.none++; });
+    var filters = [['all', 'All'], ['orch', 'Orchestrators'], ['agent', 'Agents'], ['pipeline', 'Pipelines'], ['none', 'Unattached']].map(function (f) {
+      var on = st.filter === f[0];
+      return { label: f[1], count: counts[f[0]], pressed: on ? 'true' : 'false', bg: on ? 'var(--surface-hover)' : 'transparent', border: on ? 'var(--line-strong)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-secondary)', pick: function () { self.setState({ filter: f[0] }); } };
+    });
+
+    var cur = st.issues.filter(function (i) { return i.key === st.sel; })[0];
+    var sel = {};
+    if (cur) {
+      var r = cur.runner ? RUNNERS[cur.runner] : null, rt = r ? RT[r.type] : null, run = cur.run ? RUN[cur.run.state] : null;
+      var tr = st.trig[cur.key] || { assign: true, comment: true, mention: true };
+      var steps = r ? ['Jira'].concat(r.steps) : [];
+      sel = Object.assign({}, cur, {
+        prioColor: PRIO[cur.prio], personName: PEOPLE[cur.person] || 'No owner', person: cur.person || '—',
+        hasRunner: !!r, noRunner: !r, runnerName: r ? r.name : '', rType: rt ? rt.label : '', rIcon: rt ? rt.icon : 'agent', rTileBg: rt ? rt.bg : 'transparent', rTileFg: rt ? rt.fg : 'inherit',
+        isPipeline: !!r && r.type === 'pipeline', isAgent: !!r && r.type !== 'pipeline', isOrch: !!r && r.type === 'orch', team: r && r.type === 'orch' ? r.desc : '',
+        hasRun: !!run, runDot: run ? run.dot : 'draft', runColor: run ? run.color : 'inherit', runBg: run ? run.bg : 'transparent', runText: cur.run ? cur.run.text : '', isRunning: !!cur.run && cur.run.state === 'running', pct: cur.run && cur.run.pct || 0,
+        toReview: !!cur.run && cur.run.state === 'waiting',
+        canStart: !!r && (!cur.run || cur.run.state === 'queued'),
+        byAgent: !!cur.createdBy,
+        steps: steps.map(function (s, i) { return { text: s, more: i < steps.length - 1, color: i === steps.length - 1 ? 'var(--warning)' : 'var(--text-muted)' }; }),
+        triggers: [['assign', 'On assign'], ['comment', 'On comment'], ['mention', 'On @mention']].map(function (t) {
+          return { label: t[1], on: !!tr[t[0]], toggle: function () { var all = Object.assign({}, st.trig); var o = Object.assign({}, tr); o[t[0]] = !o[t[0]]; all[cur.key] = o; self.setState({ trig: all }); } };
+        }),
+        activity: cur.activity.map(function (a) {
+          var isPeople = !a.agent && !a.pipeline;
+          return {
+            who: isPeople ? (PEOPLE[a.who] || a.who) : a.who, when: a.when, text: a.text,
+            initials: isPeople ? a.who : '',
+            radius: isPeople ? '999px' : '6px',
+            tileBg: a.pipeline ? 'var(--info-soft)' : a.agent ? (a.spawn ? 'var(--spawn-soft)' : 'var(--accent-soft)') : 'var(--surface-hover)',
+            tileFg: 'var(--text-secondary)', tileBorder: isPeople ? 'var(--line-strong)' : 'transparent',
+            whoColor: a.spawn ? 'var(--spawn-text)' : 'var(--text)',
+            textColor: a.spawnNote ? 'var(--spawn-text)' : 'var(--text-secondary)',
+            bg: a.blocker ? 'var(--warning-soft)' : 'transparent', border: a.blocker ? '#4a3f17' : 'transparent', pad: a.blocker ? '8px 10px' : '0'
+          };
+        })
+      });
+    }
+
+    var q = st.pickQ.toLowerCase();
+    var groups = [['orch', 'Orchestrators'], ['agent', 'Agents'], ['pipeline', 'Pipelines']].map(function (g) {
+      var items = Object.keys(RUNNERS).filter(function (id) { var r = RUNNERS[id]; return r.type === g[0] && (!q || (r.name + ' ' + r.desc).toLowerCase().indexOf(q) >= 0); }).map(function (id) {
+        var r = RUNNERS[id], rt = RT[r.type], on = cur && cur.runner === id;
+        return {
+          name: r.name, desc: r.desc, load: r.load, loadColor: r.load === 'blocked' ? 'var(--warning)' : 'var(--text-muted)',
+          icon: rt.icon, tileBg: rt.bg, tileFg: rt.fg, bg: on ? 'var(--surface-hover)' : 'transparent', selectedAttr: on ? 'true' : 'false',
+          pick: function () {
+            if (!cur) return;
+            var p = { runner: id };
+            if (!cur.run || cur.run.state === 'queued') p.run = { state: 'queued', text: cur.status === 'backlog' ? 'starts when moved to Todo' : 'starts on assign · runtime cloud' };
+            p.activity = cur.activity.concat([{ who: 'ME', when: 'now', text: 'Attached ' + RT[r.type].label.toLowerCase() + ' ' + r.name + '.' }]);
+            if (cur.status === 'backlog') p.status = 'todo';
+            self.patch(cur.key, p); self.setState({ picker: false, pickQ: '' });
+          }
+        };
+      });
+      return { name: g[1], items: items };
+    }).filter(function (g) { return g.items.length; });
+
+    var listRows = st.issues.filter(match).map(function (i) {
+      var r = i.runner ? RUNNERS[i.runner] : null;
+      return { id: i.key, key: i.key, title: i.title, status: COLS.filter(function (c) { return c.id === i.status; })[0].name, runner: r ? RT[r.type].label + ' · ' + r.name : '—', run: i.run ? i.run.text : '—', prio: i.prio };
+    });
+
+    return {
+      s12: 12, s14: 14, yes: true, no: false, thousand: 1000, spendToday: 381, sevenTwenty: 720,
+      inboxCount: st.issues.filter(function (i) { return i.run && (i.run.state === 'waiting' || i.run.state === 'blocked'); }).length,
+      busy: st.issues.filter(function (i) { return i.run && (i.run.state === 'running' || i.run.state === 'blocked'); }).length,
+      total: st.issues.filter(function (i) { return i.status !== 'done'; }).length,
+      viewTabs: [{ id: 'board', label: 'Board' }, { id: 'list', label: 'List' }],
+      setView: function (id) { self.setState({ view: id }); },
+      isBoard: st.view === 'board', isList: st.view === 'list',
+      filters: filters, columns: columns,
+      dragEnd: function () { self.dragKey = null; self.setState({ over: null, dragging: null }); },
+      listCols: [{ key: 'key', label: 'Key', mono: true, muted: true }, { key: 'title', label: 'Title' }, { key: 'status', label: 'Status' }, { key: 'runner', label: 'Runs with' }, { key: 'run', label: 'Run', muted: true }, { key: 'prio', label: 'Priority' }],
+      listRows: listRows,
+      hasSel: !!cur, sel: sel,
+      closeSel: function () { self.setState({ sel: null, picker: false }); },
+      pickerOpen: !!cur && st.picker, pickerAttr: st.picker ? 'true' : 'false',
+      togglePicker: function () { self.setState({ picker: !st.picker, pickQ: '' }); },
+      pickQ: st.pickQ, setPickQ: function (e) { self.setState({ pickQ: e.target.value }); },
+      pickGroups: groups,
+      setTitle: function (e) { self.patch(cur.key, { title: e.target.value }); },
+      setStatus: function (e) { self.patch(cur.key, { status: e.target.value }); },
+      startRun: function () { self.patch(cur.key, { status: 'progress', run: { state: 'running', text: RUNNERS[cur.runner].name + ' picked it up', pct: 4 } }); },
+      detach: function () { self.patch(cur.key, { runner: null, run: null, activity: cur.activity.concat([{ who: 'ME', when: 'now', text: 'Detached ' + RUNNERS[cur.runner].name + '.' }]) }); },
+      comment: st.comment, noComment: !st.comment.trim(),
+      setComment: function (e) { self.setState({ comment: e.target.value }); },
+      postComment: function () {
+        var t = st.comment.trim(); if (!t || !cur) return;
+        var act = cur.activity.concat([{ who: 'ME', when: 'now', text: t }]);
+        var m = /@(\w+)/.exec(t);
+        var p = {};
+        if (m) {
+          var id = Object.keys(RUNNERS).filter(function (k) { return RUNNERS[k].name.toLowerCase() === m[1].toLowerCase(); })[0];
+          if (id) { act.push({ who: RUNNERS[id].name, agent: RUNNERS[id].type === 'agent', pipeline: RUNNERS[id].type === 'pipeline', when: 'now', text: 'Woken by your mention. Picking this up.' }); p.runner = cur.runner || id; p.run = { state: 'running', text: RUNNERS[id].name + ' working on your comment', pct: 3 }; p.status = 'progress'; }
+        } else if (cur.run && cur.run.state === 'blocked') {
+          act.push({ who: RUNNERS[cur.runner].name, agent: true, when: 'now', text: 'Thanks, continuing with that scope.' });
+          p.run = { state: 'running', text: 'resumed after your answer', pct: 35 };
+        }
+        p.activity = act;
+        self.patch(cur.key, p); self.setState({ comment: '' });
+      },
+      newIssue: function () { self.addIssue('backlog'); }
+    };
+  }
+  addIssue(status) {
+    var key = 'PAY-' + (this.n++);
+    var i = { key: key, title: 'Untitled issue', status: status, label: 'Task', prio: 'Medium', person: 'ME', runner: null, run: null, desc: 'Describe the outcome. Attach an agent or a pipeline to have it picked up.', activity: [{ who: 'ME', when: 'now', text: 'Created.' }] };
+    this.setState({ issues: this.state.issues.concat([i]), sel: key, picker: true, pickQ: '' });
+  }
+}
+</script>
+
+
+</body></html>

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>Review queue</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+<div style="flex: 1 1 232px; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="inbox" hint-size="232px,860px"></dc-import>
+</div>
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line); background: var(--bg-sidebar);">
+  <span style="width: 28px; height: 28px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="pipelines" size="{{s16}}"></x-import></span>
+  <nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 20px; font-weight: 500;">
+    <a href="Review.dc.html" style="color: var(--text-muted); text-decoration: none;">Inbox</a>
+    <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
+    <a href="Main.dc.html" style="color: var(--text-muted); text-decoration: none;">PAY triage</a>
+    <span style="color: var(--text-disabled); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="chevron-right" size="{{s12}}"></x-import></span>
+    <span aria-current="page">Review</span>
+  </nav>
+  <x-import component-from-global-scope="Graphite.Badge" dot="waiting" tone="warning">{{waitingLabel}}</x-import>
+  <span style="flex: 1 1 auto;"></span>
+  <a href="Main.dc.html" class="rv-link" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; box-sizing: border-box; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: background-color 150ms ease;"><x-import component-from-global-scope="Graphite.Icon" name="pipelines" size="{{s14}}"></x-import>Back to editor</a>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; flex: 1 1 auto; min-height: 0;">
+
+<aside aria-label="Review queue" style="flex: 1 1 280px; max-width: 100%; box-sizing: border-box; padding: 16px 12px; background: var(--bg-sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px;">
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 8px 8px;">
+    <span style="font-size: 14px; font-weight: 500;">Waiting for you</span>
+    <x-import component-from-global-scope="Graphite.Badge" tone="count">{{waitingIssues}}</x-import>
+  </div>
+  <sc-for list="{{queue}}" as="q" hint-placeholder-count="3">
+    <button type="button" class="rv-item" aria-current="{{q.current}}" sc-camel-on-click="{{q.open}}" style="display: flex; gap: 10px; align-items: flex-start; width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid {{q.border}}; border-radius: 8px; background: {{q.bg}}; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background-color 150ms ease;">
+      <span style="margin-top: 6px; display: inline-flex;"><x-import component-from-global-scope="Graphite.StatusDot" status="{{q.dot}}" size="sm"></x-import></span>
+      <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+        <span style="display: flex; gap: 8px; align-items: center;"><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{q.key}}</span><span style="font-size: 12px; color: {{q.stateColor}};">{{q.state}}</span></span>
+        <span style="font-weight: 500;">{{q.title}}</span>
+        <span style="font-size: 12px; color: var(--text-muted);">{{q.meta}}</span>
+      </span>
+    </button>
+  </sc-for>
+  <div style="margin-top: auto; padding: 12px 8px 0; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--text-muted);">
+    <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">J</x-import><x-import component-from-global-scope="Graphite.Kbd">K</x-import> move</span>
+    <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">1</x-import>–<x-import component-from-global-scope="Graphite.Kbd">3</x-import> pick</span>
+    <span style="display: inline-flex; gap: 4px; align-items: center;"><x-import component-from-global-scope="Graphite.Kbd">R</x-import> send back</span>
+  </div>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column;">
+  <div style="display: flex; flex-direction: column; gap: 20px; padding: 24px; max-width: 1080px; width: 100%; box-sizing: border-box;">
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{issue.key}}</span>
+        <x-import component-from-global-scope="Graphite.Badge">{{issue.type}}</x-import>
+        <x-import component-from-global-scope="Graphite.Badge" tone="{{issue.prioTone}}">{{issue.prio}}</x-import>
+      </div>
+      <h1 style="margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em;">{{issue.title}}</h1>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">
+        <sc-for list="{{issue.path}}" as="p" hint-placeholder-count="4">
+          <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="color: {{p.color}};">{{p.text}}</span><sc-if value="{{p.more}}" hint-placeholder-val="{{yes}}"><span style="color: var(--text-disabled);">›</span></sc-if></span>
+        </sc-for>
+      </div>
+      <div><x-import component-from-global-scope="Graphite.SpawnChip">{{issue.spawn}}</x-import></div>
+    </div>
+
+    <sc-if value="{{shipped}}" hint-placeholder-val="{{no}}">
+      <div role="status" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+        <span style="color: var(--success); display: inline-flex;"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s16}}"></x-import></span>
+        <span style="flex: 1 1 320px;"><span style="color: var(--success); font-weight: 500;">Shipped {{pickedId}}.</span> <span style="color: var(--text-secondary);">{{shippedText}}</span></span>
+        <x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{nextIssue}}">Next issue</x-import>
+      </div>
+    </sc-if>
+
+    <section aria-label="Variants" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px;">
+      <sc-for list="{{variants}}" as="v" hint-placeholder-count="3">
+        <x-import component-from-global-scope="Graphite.Card" title="{{v.head}}" meta="{{v.cost}}" icon="agent" icon-tone="accent" selected="{{v.selected}}">
+          <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px;">
+            <div style="display: flex; justify-content: space-between; gap: 8px;"><span style="color: var(--text-muted);">Lines</span><span style="font-family: var(--font-mono);"><span style="color: var(--success);">{{v.add}}</span> <span style="color: var(--danger);">{{v.del}}</span></span></div>
+            <div style="display: flex; justify-content: space-between; gap: 8px;"><span style="color: var(--text-muted);">Tests</span><span style="font-family: var(--font-mono); color: {{v.testsColor}};">{{v.tests}}</span></div>
+            <div style="display: flex; justify-content: space-between; gap: 8px;"><span style="color: var(--text-muted);">New tests</span><span style="font-family: var(--font-mono); color: var(--spawn-text);">{{v.newTests}}</span></div>
+            <div style="display: flex; justify-content: space-between; gap: 8px;"><span style="color: var(--text-muted);">Time</span><span style="font-family: var(--font-mono);">{{v.time}}</span></div>
+          </div>
+          <p style="margin: 0; font-size: 12px; line-height: 18px; color: var(--text-secondary);">{{v.note}}</p>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <sc-if value="{{v.selected}}" hint-placeholder-val="{{no}}"><x-import component-from-global-scope="Graphite.Badge" tone="accent">Selected · {{v.n}}</x-import></sc-if>
+            <sc-if value="{{v.notSelected}}" hint-placeholder-val="{{yes}}"><x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{v.pick}}">Select {{v.id}}</x-import></sc-if>
+          </div>
+        </x-import>
+      </sc-for>
+    </section>
+
+    <section aria-label="Diff" style="border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden;">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line);">
+        <span style="font-weight: 500;">Variant {{pickedId}}</span>
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{diff.file}}</span>
+        <span style="flex: 1 1 auto;"></span>
+        <span style="font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--success);">{{diff.add}}</span> <span style="color: var(--danger);">{{diff.del}}</span></span>
+      </div>
+      <div style="overflow-x: auto; background: var(--bg-sidebar); padding: 8px 0; font-family: var(--font-mono); font-size: 12px; line-height: 20px;">
+        <sc-for list="{{diff.lines}}" as="d" hint-placeholder-count="8">
+          <div style="display: flex; gap: 12px; padding: 0 14px; white-space: pre; background: {{d.bg}}; color: {{d.color}};"><span style="width: 12px; flex: 0 0 auto; color: {{d.signColor}};">{{d.sign}}</span><span>{{d.s}}</span></div>
+        </sc-for>
+      </div>
+    </section>
+
+    <sc-if value="{{sendingBack}}" hint-placeholder-val="{{no}}">
+      <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);">
+        <label for="rv-notes" style="font-size: 12px; line-height: 18px; color: var(--text-muted);">Notes for {{issue.agent}} · it re-runs with these</label>
+        <textarea id="rv-notes" class="rv-input" rows="3" value="{{notes}}" sc-camel-on-change="{{setNotes}}" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font: inherit; line-height: 20px; resize: vertical;"></textarea>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <x-import component-from-global-scope="Graphite.Button" icon="replay" on-click="{{confirmSendBack}}">Send back with notes</x-import>
+          <x-import component-from-global-scope="Graphite.Button" variant="ghost" on-click="{{cancelSendBack}}">Cancel</x-import>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line);">
+      <x-import component-from-global-scope="Graphite.Button" icon="replay" on-click="{{startSendBack}}">Send back…</x-import>
+      <x-import component-from-global-scope="Graphite.Button" variant="ghost" on-click="{{nextIssue}}">Skip</x-import>
+      <span style="flex: 1 1 auto;"></span>
+      <span style="font-size: 12px; color: var(--text-muted);">{{shipHint}}</span>
+      <x-import component-from-global-scope="Graphite.Button" variant="primary" icon="check" disabled="{{shipped}}" on-click="{{ship}}">{{shipLabel}}</x-import>
+    </div>
+  </div>
+</main>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+var ISSUES = [
+  {
+    key: 'PAY-1423', title: 'Double charge on retry', type: 'Bug', prio: 'High', agent: 'Fixer',
+    path: ['Jira', 'Router · rule 1', 'Fixer ×3', 'You'], spawn: 'Test writer ×2 spawned by Fixer · depth 1 of 2',
+    pr: 'PR #2291 opened on payments-api · Jira moved to In review.',
+    variants: [
+      { id: 'A', name: 'Idempotency key on retry', add: '+18', del: '−4', tests: '212 of 212 passed', failed: false, newTests: '3 by Test writer', cost: '$0.21', time: '1:42',
+        note: 'Reuses one key across retries, so the gateway drops the second charge.',
+        file: 'src/charges/retry.ts', lines: [
+          [' ', 'export async function retryCharge(charge: Charge) {'],
+          ['-', '  const res = await gateway.charge(charge.amount, charge.card);'],
+          ['+', '  const key = charge.idempotencyKey ?? deriveKey(charge);'],
+          ['+', '  const res = await gateway.charge(charge.amount, charge.card, { idempotencyKey: key });'],
+          [' ', "  if (res.status === 'timeout') {"],
+          ['-', '    return retryCharge(charge);'],
+          ['+', '    return retryCharge({ ...charge, idempotencyKey: key });'],
+          [' ', '  }'],
+          [' ', '  return res;'],
+          [' ', '}']
+        ] },
+      { id: 'B', name: 'Lock the row before charging', add: '+31', del: '−9', tests: '211 of 212 · 1 failed', failed: true, newTests: '2 by Test writer', cost: '$0.24', time: '1:58',
+        note: 'Holds a row lock for the whole gateway call. checkout.spec times out under load.',
+        file: 'src/charges/retry.ts', lines: [
+          [' ', 'export async function retryCharge(charge: Charge) {'],
+          ['+', '  return db.tx(async (tx) => {'],
+          ['+', "    await tx.lock('charges', charge.id);"],
+          ['+', "    if (await tx.isPaid(charge.id)) return { status: 'paid' };"],
+          ['-', '  const res = await gateway.charge(charge.amount, charge.card);'],
+          ['+', '    const res = await gateway.charge(charge.amount, charge.card);'],
+          [' ', "    if (res.status === 'timeout') return retryCharge(charge);"],
+          ['+', '  });'],
+          [' ', '}']
+        ] },
+      { id: 'C', name: 'Dedupe in the webhook handler', add: '+12', del: '−2', tests: '212 of 212 passed', failed: false, newTests: '1 by Test writer', cost: '$0.18', time: '1:21',
+        note: 'Smallest change, but API retries still charge twice. Covers webhooks only.',
+        file: 'src/webhooks/charge.ts', lines: [
+          [' ', "router.post('/webhooks/charge', async (req) => {"],
+          ['+', '  if (await seen.has(req.body.event_id)) return ok();'],
+          ['+', "  await seen.add(req.body.event_id, '24h');"],
+          [' ', '  await applyCharge(req.body);'],
+          ['-', '  return ok({ applied: true });'],
+          ['+', '  return ok();'],
+          [' ', '});']
+        ] }
+    ]
+  },
+  {
+    key: 'PAY-1427', title: 'Refund webhook times out', type: 'Bug', prio: 'Medium', agent: 'Reproducer',
+    path: ['Jira', 'Router · rule 2', 'Reproducer', 'You'], spawn: 'Log digger spawned by Reproducer · depth 1 of 2',
+    pr: 'Reproduction attached to PAY-1427 · Jira moved to Ready for fix.',
+    variants: [
+      { id: 'A', name: 'Reproduction with logs', add: '+46', del: '−0', tests: '1 new failing test', failed: false, newTests: 'logs from Log digger', cost: '$0.12', time: '1:20',
+        note: 'Refunds over 30 items hit the 10s gateway timeout. 14 matching requests in 24h.',
+        file: 'repro/PAY-1427.md', lines: [
+          ['+', '## Steps'],
+          ['+', '1. Create an order with 31 line items'],
+          ['+', '2. POST /refunds with full amount'],
+          ['+', '3. Gateway responds after 10.4s → 504'],
+          ['+', ''],
+          ['+', '## Matching log lines (Log digger)'],
+          ['+', 'req_8f21 refund.create items=34 dur=10412ms status=504']
+        ] }
+    ]
+  },
+  {
+    key: 'PAY-1431', title: 'Saved cards for guest checkout', type: 'Story', prio: 'Low', agent: 'Analyst',
+    path: ['Jira', 'Router · rule 3', 'Analyst ×2', 'spec.md', 'You'], spawn: 'No sub-agents · spawning is off for Analyst',
+    pr: 'spec.v1.md attached to PAY-1431 · Jira moved to Ready for dev.',
+    variants: [
+      { id: 'A', name: 'Tokenised card, email link', add: '+64', del: '−0', tests: 'n/a · spec', failed: false, newTests: '—', cost: '$0.05', time: '0:48',
+        note: 'Stores a gateway token; the guest confirms by email before reuse.',
+        file: 'out/PAY-1431/spec.v1.md', lines: [
+          ['+', '# Saved cards for guest checkout'],
+          ['+', '## Acceptance criteria'],
+          ['+', '- Guest can opt in to save a card after payment'],
+          ['+', '- Only the gateway token is stored'],
+          ['+', '- Reuse needs a one-time email link'],
+          ['+', '## Open questions'],
+          ['+', '- Expiry for unused tokens: 90 or 180 days?']
+        ] },
+      { id: 'B', name: 'Create account on save', add: '+58', del: '−0', tests: 'n/a · spec', failed: false, newTests: '—', cost: '$0.04', time: '0:51',
+        note: 'Turns the guest into a light account. Simpler, but changes signup metrics.',
+        file: 'out/PAY-1431/spec.v2.md', lines: [
+          ['+', '# Saved cards for guest checkout'],
+          ['+', '## Acceptance criteria'],
+          ['+', '- Saving a card creates a passwordless account'],
+          ['+', '- Account is tied to the checkout email'],
+          ['+', '## Open questions'],
+          ['+', '- Does this count as a signup in the funnel?']
+        ] }
+    ]
+  }
+];
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { cur: 0, picked: { 0: 0, 1: 0, 2: 0 }, done: {}, sendingBack: false, notes: '' };
+  }
+  renderVals() {
+    var self = this, st = this.state, iss = ISSUES[st.cur];
+    var pi = st.picked[st.cur] || 0, pv = iss.variants[pi];
+    var shipped = st.done[st.cur] === 'shipped';
+    var waitingIssues = ISSUES.filter(function (x, i) { return !st.done[i]; }).length;
+    var waitingVariants = ISSUES.reduce(function (s, x, i) { return s + (st.done[i] ? 0 : x.variants.length); }, 0);
+    var queue = ISSUES.map(function (x, i) {
+      var d = st.done[i], cur = i === st.cur;
+      return {
+        key: x.key, title: x.title,
+        meta: x.agent + ' · ' + x.variants.length + (x.variants.length > 1 ? ' variants' : ' variant'),
+        dot: d === 'shipped' ? 'live' : d === 'back' ? 'running' : 'waiting',
+        state: d === 'shipped' ? 'shipped' : d === 'back' ? 're-running' : 'waiting',
+        stateColor: d === 'shipped' ? 'var(--success)' : d === 'back' ? 'var(--info)' : 'var(--warning)',
+        current: cur ? 'true' : 'false',
+        bg: cur ? 'var(--surface-hover)' : 'transparent',
+        border: cur ? 'var(--line-strong)' : 'transparent',
+        open: function () { self.setState({ cur: i, sendingBack: false }); }
+      };
+    });
+    var variants = iss.variants.map(function (v, i) {
+      var sel = i === pi;
+      return {
+        id: v.id, n: i + 1, head: v.id + ' · ' + v.name, cost: v.cost, add: v.add, del: v.del, tests: v.tests,
+        testsColor: v.failed ? 'var(--danger)' : 'var(--success)', newTests: v.newTests, time: v.time, note: v.note,
+        selected: sel, notSelected: !sel,
+        pick: function () { var p = Object.assign({}, st.picked); p[st.cur] = i; self.setState({ picked: p }); }
+      };
+    });
+    var lines = pv.lines.map(function (l) {
+      var add = l[0] === '+', del = l[0] === '-';
+      return {
+        sign: add ? '+' : del ? '−' : ' ', s: l[1],
+        bg: add ? 'var(--diff-add-bg)' : del ? 'var(--diff-del-bg)' : 'transparent',
+        color: add ? 'var(--diff-add-text)' : del ? 'var(--diff-del-text)' : 'var(--text-secondary)',
+        signColor: add ? 'var(--diff-add-text)' : del ? 'var(--diff-del-text)' : 'var(--text-muted)'
+      };
+    });
+    var nextIssue = function () {
+      for (var k = 1; k <= ISSUES.length; k++) { var j = (st.cur + k) % ISSUES.length; if (!st.done[j]) { self.setState({ cur: j, sendingBack: false }); return; } }
+    };
+    return {
+      s12: 12, s14: 14, s16: 16, yes: true, no: false,
+      waitingLabel: waitingVariants + ' waiting', waitingIssues: waitingIssues,
+      queue: queue,
+      issue: {
+        key: iss.key, title: iss.title, type: iss.type, prio: iss.prio, agent: iss.agent, spawn: iss.spawn,
+        prioTone: iss.prio === 'High' ? 'warning' : undefined,
+        path: iss.path.map(function (t, i) { return { text: t, more: i < iss.path.length - 1, color: i === iss.path.length - 1 ? 'var(--warning)' : 'var(--text-muted)' }; })
+      },
+      variants: variants, pickedId: pv.id,
+      diff: { file: pv.file, add: pv.add, del: pv.del, lines: lines },
+      shipped: shipped, shippedText: iss.pr,
+      shipLabel: shipped ? 'Shipped ' + pv.id : 'Ship ' + pv.id,
+      shipHint: pv.failed ? 'Variant ' + pv.id + ' has a failing test' : pv.cost + ' · ' + pv.time,
+      sendingBack: st.sendingBack, notes: st.notes,
+      setNotes: function (e) { self.setState({ notes: e.target.value }); },
+      startSendBack: function () { self.setState({ sendingBack: true, notes: st.notes || 'Keep the idempotency approach from A, but also cover API retries like C does.' }); },
+      cancelSendBack: function () { self.setState({ sendingBack: false }); },
+      confirmSendBack: function () { var d = Object.assign({}, st.done); d[st.cur] = 'back'; self.setState({ done: d, sendingBack: false }); },
+      ship: function () { var d = Object.assign({}, st.done); d[st.cur] = 'shipped'; self.setState({ done: d, sendingBack: false }); },
+      nextIssue: nextIssue
+    };
+  }
+}
+</script>
+
+
+</body></html>

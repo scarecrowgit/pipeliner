@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>Agents and pipelines</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;">
+
+<div style="flex: 1 1 232px; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);">
+  <dc-import name="Sidebar" active="agents" current="{{selId}}" hint-size="232px,900px"></dc-import>
+</div>
+
+<div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column;">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px; padding: 8px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line);">
+    <h1 style="margin: 0; font-size: 14px; line-height: 20px; font-weight: 500;">Agents &amp; pipelines</h1>
+    <span style="font-size: 12px; color: var(--text-muted);">One list. Anything here can take an issue, answer in chat or sit inside a pipeline.</span>
+    <span style="flex: 1 1 auto;"></span>
+    <div style="position: relative;">
+      <x-import component-from-global-scope="Graphite.Button" variant="primary" icon="plus" aria-expanded="{{newAttr}}" on-click="{{toggleNew}}">New</x-import>
+      <sc-if value="{{newOpen}}" hint-placeholder-val="{{no}}">
+        <div role="menu" aria-label="Create" style="position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; width: 300px; padding: 4px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised);">
+          <sc-for list="{{newKinds}}" as="k" hint-placeholder-count="3">
+            <a href="{{k.href}}" role="menuitem" class="ag-opt ag-focus" sc-camel-on-click="{{k.pick}}" style="display: flex; gap: 10px; padding: 8px; border-radius: 6px; color: var(--text); text-decoration: none;">
+              <span style="width: 28px; height: 28px; flex: 0 0 auto; border-radius: 6px; background: {{k.bg}}; color: {{k.fg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{k.icon}}" size="{{s14}}"></x-import></span>
+              <span style="display: flex; flex-direction: column;"><span style="font-weight: 500;">{{k.name}}</span><span style="font-size: 12px; line-height: 16px; color: var(--text-muted);">{{k.desc}}</span></span>
+            </a>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </header>
+
+  <x-import component-from-global-scope="Graphite.Tabs" items="{{tabs}}" value="all" label="Filter by kind" on-change="{{setFilter}}"></x-import>
+
+  <div style="display: flex; flex-wrap: wrap; flex: 1 1 auto; min-height: 0;">
+    <main style="flex: 999 1 420px; min-width: 0; padding: 16px 24px 24px; box-sizing: border-box;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px;">
+        <sc-for list="{{cards}}" as="c" hint-placeholder-count="9">
+          <button type="button" class="ag-card" aria-pressed="{{c.selAttr}}" sc-camel-on-click="{{c.pick}}" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; box-sizing: border-box; border-radius: 10px; border: 1px {{c.borderStyle}} {{c.border}}; box-shadow: {{c.glow}}; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color 150ms ease;">
+            <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+              <span style="width: 28px; height: 28px; flex: 0 0 auto; border-radius: 6px; background: {{c.tileBg}}; color: {{c.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{c.icon}}" size="{{s14}}"></x-import></span>
+              <span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;">
+                <span style="font-weight: 500; color: {{c.nameColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.name}}</span>
+                <span style="font-size: 12px; line-height: 16px; color: {{c.kindColor}};">{{c.kind}}</span>
+              </span>
+              <x-import component-from-global-scope="Graphite.StatusDot" status="{{c.dot}}" label="{{c.statusText}}"></x-import>
+            </div>
+            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary);">{{c.desc}}</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--text-muted);">
+              <span style="color: {{c.statusColor}};">{{c.statusText}}</span>
+              <span>{{c.meta}}</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+              <sc-for list="{{c.uses}}" as="u" hint-placeholder-count="3">
+                <span style="height: 20px; padding: 0 6px; display: inline-flex; align-items: center; border-radius: 4px; background: var(--surface-raised); border: 1px solid var(--line-strong); font-size: 11px; color: var(--text-secondary);">{{u}}</span>
+              </sc-for>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+    </main>
+
+    <aside aria-label="Details" style="flex: 1 1 380px; max-width: 100%; min-width: 0; box-sizing: border-box; border-left: 1px solid var(--line); background: var(--bg-sidebar);">
+      <div style="display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+        <span style="width: 36px; height: 36px; flex: 0 0 auto; border-radius: 8px; background: {{d.tileBg}}; color: {{d.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{d.icon}}" size="{{s16}}"></x-import></span>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; color: {{d.nameColor}};">{{d.name}}</h2>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px;"><span style="color: {{d.kindColor}};">{{d.kind}}</span><span style="color: var(--text-disabled);">·</span><span style="color: {{d.statusColor}};">{{d.statusText}}</span></div>
+        </div>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--line);">
+        <a href="Chat.dc.html" class="ag-link" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Chat with it</a>
+        <a href="Board.dc.html" class="ag-link" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Assign an issue</a>
+        <sc-if value="{{d.isPipe}}" hint-placeholder-val="{{no}}">
+          <a href="Main.dc.html" class="ag-link" style="display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; text-decoration: none;">Open in editor</a>
+        </sc-if>
+      </div>
+
+      <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+        <p style="margin: 0; color: var(--text-secondary);">{{d.desc}}</p>
+        <sc-if value="{{d.isCreated}}" hint-placeholder-val="{{no}}">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--spawn-soft); border: 1px solid var(--spawn-line);">
+            <span style="color: var(--spawn-text); font-size: 12px;">Created by {{d.createdByName}} for {{d.forIssue}} · ends when the issue closes</span>
+            <div><x-import component-from-global-scope="Graphite.Button" size="sm" on-click="{{promote}}">Keep as a permanent agent</x-import></div>
+          </div>
+        </sc-if>
+        <dl style="margin: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; font-size: 12px;">
+          <sc-for list="{{d.facts}}" as="f" hint-placeholder-count="3">
+            <dt style="color: var(--text-muted);">{{f.k}}</dt><dd style="margin: 0; font-family: var(--font-mono); color: var(--text-secondary);">{{f.v}}</dd>
+          </sc-for>
+        </dl>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+        <span style="font-weight: 500;">Use it from</span>
+        <div role="group" aria-label="Where it can be used" style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <sc-for list="{{d.useToggles}}" as="u" hint-placeholder-count="4">
+            <button type="button" class="ag-focus" aria-pressed="{{u.pressed}}" sc-camel-on-click="{{u.toggle}}" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid {{u.border}}; background: {{u.bg}}; color: {{u.color}}; font: inherit; font-size: 12px; cursor: pointer;"><span style="display: inline-flex; opacity: {{u.iconOpacity}};"><x-import component-from-global-scope="Graphite.Icon" name="check" size="{{s12}}"></x-import></span>{{u.label}}</button>
+          </sc-for>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted);">{{d.useHint}}</span>
+      </section>
+
+      <sc-if value="{{d.isOrch}}" hint-placeholder-val="{{yes}}">
+        <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+          <div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-weight: 500;">Team it runs</span><span style="font-size: 12px; color: var(--text-muted);">{{d.teamCount}}</span></div>
+          <sc-for list="{{d.team}}" as="m" hint-placeholder-count="4">
+            <div style="display: flex; align-items: center; gap: 10px; min-height: 32px;">
+              <span style="width: 22px; height: 22px; flex: 0 0 auto; border-radius: 6px; background: {{m.tileBg}}; color: {{m.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{m.icon}}" size="{{s12}}"></x-import></span>
+              <span style="flex: 1 1 auto; min-width: 0;">{{m.name}} <span style="font-size: 12px; color: var(--text-muted);">{{m.kind}}</span></span>
+              <span style="font-size: 12px; color: var(--text-muted);">{{m.load}}</span>
+              <x-import component-from-global-scope="Graphite.Button" size="sm" variant="ghost" icon="x" aria-label="{{m.removeLabel}}" on-click="{{m.remove}}"></x-import>
+            </div>
+          </sc-for>
+          <div style="position: relative;">
+            <x-import component-from-global-scope="Graphite.Button" size="sm" icon="plus" on-click="{{toggleAdd}}">Add agent or pipeline</x-import>
+            <sc-if value="{{addOpen}}" hint-placeholder-val="{{no}}">
+              <div role="listbox" aria-label="Add to team" style="margin-top: 6px; padding: 4px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised);">
+                <sc-for list="{{d.addable}}" as="a" hint-placeholder-count="3">
+                  <button type="button" role="option" class="ag-opt ag-focus" sc-camel-on-click="{{a.add}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+                    <span style="width: 22px; height: 22px; border-radius: 6px; background: {{a.tileBg}}; color: {{a.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{a.icon}}" size="{{s12}}"></x-import></span>
+                    <span>{{a.name}} <span style="font-size: 12px; color: var(--text-muted);">{{a.kind}}</span></span>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </section>
+
+        <section style="display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+          <label style="display: flex; align-items: center; gap: 10px; min-height: 28px; cursor: pointer;">
+            <input type="checkbox" class="ag-focus" checked="{{d.canCreate}}" sc-camel-on-change="{{toggleCreate}}" style="width: 16px; height: 16px; margin: 0; accent-color: #5e6ad2;">
+            <span style="font-weight: 500;">Can create its own agents</span>
+          </label>
+          <sc-if value="{{d.canCreate}}" hint-placeholder-val="{{yes}}">
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+              <div><span style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Alive at once</span><x-import component-from-global-scope="Graphite.Stepper" key="{{d.keyA}}" value="{{d.maxAlive}}" min="{{one}}" max="{{eight}}" label="agents alive at once"></x-import></div>
+              <div><span style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Depth</span><x-import component-from-global-scope="Graphite.Stepper" key="{{d.keyD}}" value="{{two}}" min="{{one}}" max="{{three}}" label="depth"></x-import></div>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted);">Each created agent gets a subset of its tools and ≤$0.50 per issue. Deeper than 2 asks you first.</div>
+            <span style="font-size: 12px; color: var(--spawn-text);">Created by {{d.name}}</span>
+            <sc-for list="{{d.createdList}}" as="x" hint-placeholder-count="2">
+              <button type="button" class="ag-opt ag-focus" sc-camel-on-click="{{x.pick}}" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 4px 8px; margin: 0 -8px; box-sizing: content-box; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;">
+                <span style="width: 22px; height: 22px; border-radius: 6px; background: var(--spawn-soft); color: var(--spawn-text); border: 1px dashed var(--spawn-line); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="spawn" size="{{s12}}"></x-import></span>
+                <span style="flex: 1 1 auto; color: var(--spawn-text);">{{x.name}}</span>
+                <span style="font-size: 12px; color: {{x.statusColor}};">{{x.statusText}}</span>
+              </button>
+            </sc-for>
+          </sc-if>
+        </section>
+
+        <section style="display: flex; flex-direction: column; gap: 6px; padding: 16px 20px;">
+          <span style="font-weight: 500;">How it routes</span>
+          <p style="margin: 0; color: var(--text-secondary);">Splits the issue, hands each part to the cheapest teammate with the right skill, and creates a helper only when nobody fits. Asks you when two plans disagree.</p>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{d.isPipe}}" hint-placeholder-val="{{no}}">
+        <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+          <span style="font-weight: 500;">Called as an agent</span>
+          <dl style="margin: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; font-size: 12px;">
+            <dt style="color: var(--text-muted);">Takes</dt><dd style="margin: 0; color: var(--text-secondary);">{{d.input}}</dd>
+            <dt style="color: var(--text-muted);">Returns</dt><dd style="margin: 0; color: var(--text-secondary);">{{d.output}}</dd>
+          </dl>
+          <span style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Inside</span>
+          <sc-for list="{{d.team}}" as="m" hint-placeholder-count="3">
+            <div style="display: flex; align-items: center; gap: 10px; min-height: 28px;">
+              <span style="width: 22px; height: 22px; border-radius: 6px; background: {{m.tileBg}}; color: {{m.tileFg}}; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="{{m.icon}}" size="{{s12}}"></x-import></span>
+              <span>{{m.name}}</span>
+            </div>
+          </sc-for>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{d.isAgent}}" hint-placeholder-val="{{no}}">
+        <section style="display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line);">
+          <span style="font-weight: 500;">Skills</span>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <sc-for list="{{d.skills}}" as="s" hint-placeholder-count="3">
+              <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);">{{s}}</span>
+            </sc-for>
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted);">{{d.inTeams}}</span>
+        </section>
+      </sc-if>
+    </aside>
+  </div>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:960}}">
+var T = {
+  orch: { icon: 'router', label: 'Orchestrator', bg: 'var(--accent-soft)', fg: 'var(--accent-text)' },
+  pipe: { icon: 'pipelines', label: 'Pipeline', bg: 'var(--info-soft)', fg: 'var(--info-text)' },
+  agent: { icon: 'agent', label: 'Agent', bg: 'var(--surface-hover)', fg: 'var(--text-secondary)' }
+};
+var S = {
+  running: { dot: 'running', color: 'var(--info)' },
+  idle: { dot: 'draft', color: 'var(--text-muted)' },
+  live: { dot: 'live', color: 'var(--success)' },
+  waiting: { dot: 'waiting', color: 'var(--warning)' },
+  ended: { dot: 'live', color: 'var(--text-muted)' }
+};
+var SEED = [
+  { id: 'payments-lead', type: 'orch', name: 'Payments lead', status: 'running', statusText: 'running · PAY-1436', meta: '14 runs today · $1.12', desc: 'Splits payments work across the team and creates helpers when nobody fits.', model: 'opus-5.5', runtime: 'cloud', team: ['fixer', 'codex', 'reproducer', 'pay-triage'], canCreate: true, maxAlive: 3, uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'release-captain', type: 'orch', name: 'Release captain', status: 'idle', statusText: 'idle', meta: '1 run today · $0.09', desc: 'Runs the release checklist: audit, notes, tag. Never writes code.', model: 'sonnet-5.5', runtime: 'cloud', team: ['nightly-audit', 'release-notes', 'analyst'], canCreate: false, maxAlive: 1, uses: { chat: true, issues: true, pipelines: false, autopilots: true } },
+  { id: 'pay-triage', type: 'pipe', name: 'PAY triage', status: 'live', statusText: 'v14 live', meta: '37 queued · 3 agents inside', desc: 'Router › Fixer · Reproducer · Analyst › Review. Returns variants for a person to pick.', team: ['fixer', 'reproducer', 'analyst'], input: 'a message or a Jira issue', output: 'variants to review, then a PR or a spec', uses: { chat: true, issues: true, pipelines: true, autopilots: true } },
+  { id: 'nightly-audit', type: 'pipe', name: 'Nightly audit', status: 'live', statusText: 'next run 02:00', meta: 'autopilot · 2 agents inside', desc: 'Auditor ×2 › Report. Checks log redaction and dependency licences.', team: ['auditor'], input: 'a scope or nothing', output: 'a report and issues for each finding', uses: { chat: true, issues: true, pipelines: true, autopilots: true } },
+  { id: 'release-notes', type: 'pipe', name: 'Release notes', status: 'idle', statusText: 'draft v1', meta: 'not deployed', desc: 'Collects merged PRs and drafts notes for review.', team: ['analyst'], input: 'a tag range', output: 'notes.md to review', uses: { chat: false, issues: true, pipelines: true, autopilots: false } },
+  { id: 'build', type: 'agent', name: 'Build', status: 'live', statusText: 'ready', meta: 'Claude Code · mac-mini', desc: 'General coding agent with full tools. The default in chat.', model: 'opus-5.5', runtime: 'mac-mini', skills: ['repo.write', 'bash', 'test.run'], uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'fixer', type: 'agent', name: 'Fixer', status: 'running', statusText: 'running · PAY-1423', meta: 'Claude Code · opus-5.5', desc: 'Fixes bugs and writes the failing test first. May spawn Test writer.', model: 'opus-5.5', runtime: 'cloud', skills: ['repo.write', 'test.run', 'git.bisect'], uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'reproducer', type: 'agent', name: 'Reproducer', status: 'idle', statusText: 'idle', meta: 'Claude Code · sonnet-5.5', desc: 'Finds a minimal reproduction and attaches logs. Never edits code.', model: 'sonnet-5.5', runtime: 'cloud', skills: ['repo.read', 'logs.search'], uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'analyst', type: 'agent', name: 'Analyst', status: 'idle', statusText: 'idle', meta: 'sonnet-5.5', desc: 'Turns stories into specs with acceptance criteria.', model: 'sonnet-5.5', runtime: 'cloud', skills: ['repo.read', 'docs.write'], uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'codex', type: 'agent', name: 'Codex', status: 'idle', statusText: '1 queued', meta: 'Codex CLI · gpt-5.2 · laptop', desc: 'Dependency bumps and mechanical refactors.', model: 'gpt-5.2', runtime: 'laptop', skills: ['repo.write', 'bash'], uses: { chat: true, issues: true, pipelines: true, autopilots: false } },
+  { id: 'auditor', type: 'agent', name: 'Auditor', status: 'waiting', statusText: 'asks you · PAY-1435', meta: 'OpenCode · opus-5.5', desc: 'Read-only security checks. Reports, never fixes.', model: 'opus-5.5', runtime: 'cloud', skills: ['repo.read', 'logs.search'], uses: { chat: true, issues: true, pipelines: true, autopilots: true } },
+  { id: 'migration-checker', type: 'agent', name: 'Migration checker', createdBy: 'payments-lead', forIssue: 'PAY-1438', status: 'running', statusText: 'alive · PAY-1438', meta: '$0.08 so far', desc: 'Reads the gateway SDK v9 diff and lists breaking changes for Codex.', model: 'haiku-5.5', runtime: 'cloud', skills: ['repo.read'], uses: { chat: true, issues: false, pipelines: false, autopilots: false } },
+  { id: 'sdk-diff-reader', type: 'agent', name: 'SDK diff reader', createdBy: 'payments-lead', forIssue: 'PAY-1419', status: 'ended', statusText: 'ended · $0.03', meta: 'lived 6 min', desc: 'Compared webhook payloads between SDK versions.', model: 'haiku-5.5', runtime: 'cloud', skills: ['repo.read'], uses: { chat: false, issues: false, pipelines: false, autopilots: false } },
+  { id: 'test-writer', type: 'agent', name: 'Test writer', createdBy: 'fixer', forIssue: 'PAY-1423', status: 'ended', statusText: 'ended · ×2', meta: '$0.04', desc: 'Writes one failing test that pins a bug.', model: 'haiku-5.5', runtime: 'cloud', skills: ['test.run'], uses: { chat: false, issues: false, pipelines: true, autopilots: false } }
+];
+var USE = [['chat', 'Chat'], ['issues', 'Issues'], ['pipelines', 'Inside pipelines'], ['autopilots', 'Autopilots']];
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { list: SEED, sel: 'payments-lead', filter: 'all', newOpen: false, addOpen: false };
+  }
+  edit(id, p) { this.setState({ list: this.state.list.map(function (r) { return r.id === id ? Object.assign({}, r, p) : r; }) }); }
+  renderVals() {
+    var self = this, st = this.state;
+    var by = {}; st.list.forEach(function (r) { by[r.id] = r; });
+    var kindOf = function (r) { return r.createdBy ? 'Agent · created by ' + by[r.createdBy].name : T[r.type].label; };
+    var looks = function (r) {
+      var t = T[r.type];
+      return { icon: r.createdBy ? 'spawn' : t.icon, tileBg: r.createdBy ? 'var(--spawn-soft)' : t.bg, tileFg: r.createdBy ? 'var(--spawn-text)' : t.fg, nameColor: r.createdBy ? 'var(--spawn-text)' : 'var(--text)', kindColor: r.createdBy ? 'var(--spawn-text)' : 'var(--text-muted)' };
+    };
+    var f = st.filter;
+    var shown = st.list.filter(function (r) {
+      if (f === 'all') return true;
+      if (f === 'created') return !!r.createdBy;
+      return r.type === f && !r.createdBy;
+    });
+    var cards = shown.map(function (r) {
+      var on = r.id === st.sel, s = S[r.status], lk = looks(r);
+      return Object.assign({}, lk, {
+        name: r.name, kind: kindOf(r), desc: r.desc, meta: r.meta, statusText: r.statusText, statusColor: s.color, dot: r.createdBy && r.status === 'running' ? 'spawn' : s.dot,
+        uses: USE.filter(function (u) { return r.uses[u[0]]; }).map(function (u) { return u[1]; }),
+        border: on ? 'var(--accent-ring)' : (r.createdBy ? 'var(--spawn-line)' : 'var(--line)'), borderStyle: r.createdBy ? 'dashed' : 'solid', glow: on ? 'var(--selected-glow)' : 'none', selAttr: on ? 'true' : 'false',
+        pick: function () { self.setState({ sel: r.id, addOpen: false }); }
+      });
+    });
+    var count = function (k) { return st.list.filter(function (r) { return k === 'created' ? !!r.createdBy : r.type === k && !r.createdBy; }).length; };
+    var tabs = [{ id: 'all', label: 'All', count: st.list.length }, { id: 'orch', label: 'Orchestrators', count: count('orch') }, { id: 'agent', label: 'Agents', count: count('agent') }, { id: 'pipe', label: 'Pipelines', count: count('pipe') }, { id: 'created', label: 'Created by agents', count: count('created') }];
+
+    var r = by[st.sel] || st.list[0], s = S[r.status], lk = looks(r);
+    var member = function (id) { var m = by[id]; var l = looks(m); return { name: m.name, kind: T[m.type].label, icon: l.icon, tileBg: l.tileBg, tileFg: l.tileFg, load: m.statusText, removeLabel: 'Remove ' + m.name + ' from team', remove: function () { self.edit(r.id, { team: r.team.filter(function (x) { return x !== id; }) }); } }; };
+    var team = (r.team || []).filter(function (id) { return by[id]; }).map(member);
+    var addable = st.list.filter(function (m) { return m.id !== r.id && !m.createdBy && (r.team || []).indexOf(m.id) < 0 && m.type !== 'orch'; }).map(function (m) {
+      var l = looks(m); return { name: m.name, kind: T[m.type].label, icon: l.icon, tileBg: l.tileBg, tileFg: l.tileFg, add: function () { self.edit(r.id, { team: (r.team || []).concat([m.id]) }); self.setState({ addOpen: false }); } };
+    });
+    var created = st.list.filter(function (m) { return m.createdBy === r.id; }).map(function (m) {
+      return { name: m.name, statusText: m.statusText, statusColor: S[m.status].color, pick: function () { self.setState({ sel: m.id }); } };
+    });
+    var inTeams = st.list.filter(function (o) { return (o.team || []).indexOf(r.id) >= 0; }).map(function (o) { return o.name; });
+    var facts = [];
+    if (r.model) facts.push({ k: 'Model', v: r.model });
+    if (r.runtime) facts.push({ k: 'Runtime', v: r.runtime });
+    facts.push({ k: 'Activity', v: r.meta });
+    var d = Object.assign({}, lk, {
+      name: r.name, kind: kindOf(r), desc: r.desc, statusText: r.statusText, statusColor: s.color, facts: facts,
+      isOrch: r.type === 'orch', isPipe: r.type === 'pipe', isAgent: r.type === 'agent', isCreated: !!r.createdBy,
+      createdByName: r.createdBy ? by[r.createdBy].name : '', forIssue: r.forIssue || '',
+      team: team, teamCount: team.length + (team.length === 1 ? ' member' : ' members'), addable: addable,
+      canCreate: !!r.canCreate, maxAlive: r.maxAlive || 1, keyA: r.id + '-a', keyD: r.id + '-d',
+      createdList: created.length ? created : [{ name: 'Nothing yet', statusText: '', statusColor: 'inherit', pick: function () {} }],
+      input: r.input || '', output: r.output || '', skills: r.skills || [],
+      inTeams: inTeams.length ? 'In the team of ' + inTeams.join(', ') : 'Not in any orchestrator’s team',
+      useHint: r.type === 'pipe' ? 'In chat it appears in the agent picker next to Build and Plan. On the board it can be assigned like a teammate.' : 'The same agent, with the same tools and limits, wherever it runs.',
+      useToggles: USE.map(function (u) {
+        var on = !!r.uses[u[0]];
+        return { label: u[1], pressed: on ? 'true' : 'false', bg: on ? 'var(--accent-soft)' : 'transparent', border: on ? 'var(--accent-ring)' : 'var(--line-strong)', color: on ? 'var(--accent-text)' : 'var(--text-muted)', iconOpacity: on ? 1 : 0,
+          toggle: function () { var o = Object.assign({}, r.uses); o[u[0]] = !on; self.edit(r.id, { uses: o }); } };
+      })
+    });
+    return {
+      s12: 12, s14: 14, s16: 16, one: 1, two: 2, three: 3, eight: 8, yes: true, no: false,
+      selId: r.id, tabs: tabs, cards: cards, d: d,
+      setFilter: function (id) { self.setState({ filter: id }); },
+      newOpen: st.newOpen, newAttr: st.newOpen ? 'true' : 'false',
+      toggleNew: function () { self.setState({ newOpen: !st.newOpen }); },
+      newKinds: [
+        { name: 'Agent', desc: 'One model, its tools and skills', icon: 'agent', bg: 'var(--surface-hover)', fg: 'var(--text-secondary)', href: '#', pick: function () { self.setState({ newOpen: false }); } },
+        { name: 'Orchestrator', desc: 'Runs a team and can create agents', icon: 'router', bg: 'var(--accent-soft)', fg: 'var(--accent-text)', href: '#', pick: function () { self.setState({ newOpen: false }); } },
+        { name: 'Pipeline', desc: 'Fixed graph of agents and files', icon: 'pipelines', bg: 'var(--info-soft)', fg: 'var(--info-text)', href: 'Main.dc.html', pick: function () {} }
+      ],
+      addOpen: st.addOpen, toggleAdd: function () { self.setState({ addOpen: !st.addOpen }); },
+      toggleCreate: function (e) { self.edit(r.id, { canCreate: e.target.checked }); },
+      promote: function () { self.edit(r.id, { createdBy: null, statusText: 'idle · kept', status: 'idle', uses: { chat: true, issues: true, pipelines: true, autopilots: false } }); }
+    };
+  }
+}
+</script>
+
+
+</body></html>

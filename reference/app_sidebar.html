@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+
+
+<meta charset="utf-8">
+<title>App sidebar</title>
+
+
+
+
+</head>
+<body>
+<x-dc>
+<helmet>
+
+
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; font-size: 13px; line-height: 20px; color: #f7f8f8; background: #0b0c0d;">
+
+<sc-if value="{{full}}" hint-placeholder-val="{{yes}}">
+<nav aria-label="App" style="box-sizing: border-box; padding: 12px; display: flex; flex-direction: column; gap: 2px;">
+  <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 12px;">
+    <span style="width: 24px; height: 24px; border-radius: 6px; background: #1e1e3f; color: #a5a4ff; display: inline-flex; align-items: center; justify-content: center;"><x-import component-from-global-scope="Graphite.Icon" name="pipelines" size="{{s14}}"></x-import></span>
+    <span style="font-weight: 500; flex: 1 1 auto;">Acme · Payments</span>
+    <x-import component-from-global-scope="Graphite.Kbd">⌘K</x-import>
+  </div>
+
+  <x-import component-from-global-scope="Graphite.NavItem" href="Review.dc.html" icon="inbox" count="{{inbox}}" active="{{isInbox}}">Inbox</x-import>
+  <x-import component-from-global-scope="Graphite.NavItem" href="Board.dc.html" icon="check" active="{{isIssues}}">Issues</x-import>
+  <x-import component-from-global-scope="Graphite.NavItem" href="Chat.dc.html" active="{{isChat}}"><span style="display: inline-flex; align-items: center; gap: 10px;"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>Chat</span></x-import>
+
+  <sc-if value="{{hasSessions}}" hint-placeholder-val="{{no}}">
+    <div style="display: flex; flex-direction: column; gap: 1px; padding: 2px 0 6px 18px; margin-left: 15px; border-left: 1px solid #1c1d21;">
+      <sc-for list="{{sessionRows}}" as="s" hint-placeholder-count="4">
+        <button type="button" class="sb-rail" aria-current="{{s.current}}" sc-camel-on-click="{{s.open}}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px 4px {{s.pad}}px; box-sizing: border-box; border: 0; border-radius: 6px; background: {{s.bg}}; color: {{s.color}}; font: inherit; font-size: 12px; text-align: left; cursor: pointer;">
+          <x-import component-from-global-scope="Graphite.StatusDot" status="{{s.dot}}" size="sm" label="{{s.dotLabel}}"></x-import>
+          <span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{s.title}}</span>
+        </button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <x-import component-from-global-scope="Graphite.NavItem" href="Agents.dc.html" icon="agent" active="{{isAgents}}">Agents</x-import>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 8px 4px;">
+    <span style="font-size: 12px; color: #8a8f98;">Agents &amp; pipelines</span>
+    <a href="Agents.dc.html" class="sb-rail" aria-label="New agent, orchestrator or pipeline" style="width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #8a8f98;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s14}}"></x-import></a>
+  </div>
+  <sc-for list="{{runners}}" as="r" hint-placeholder-count="8">
+    <x-import component-from-global-scope="Graphite.NavItem" href="{{r.href}}" dot="{{r.dot}}" active="{{r.active}}"><span style="display: flex; align-items: center; gap: 8px; width: 100%;"><span style="color: {{r.nameColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.name}}</span><span style="margin-left: auto; display: inline-flex; color: {{r.typeColor}};"><x-import component-from-global-scope="Graphite.Icon" name="{{r.icon}}" size="{{s12}}" label="{{r.typeLabel}}"></x-import></span></span></x-import>
+  </sc-for>
+  <a href="Agents.dc.html" style="padding: 4px 8px; font-size: 12px; color: #8a8f98; text-decoration: none;">All 14 · 2 orchestrators · 3 pipelines</a>
+
+  <div style="margin-top: 16px; padding: 12px 8px 4px; border-top: 1px solid #1c1d21; display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; justify-content: space-between; font-size: 12px;"><span style="color: #8a8f98;">Agents busy</span><span style="font-family: 'JetBrains Mono', monospace;">4 of 8</span></div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px;"><span style="color: #8a8f98;">Spend today</span><span style="font-family: 'JetBrains Mono', monospace;">$3.81 of $10</span></div>
+    <x-import component-from-global-scope="Graphite.Progress" value="{{spend}}" max="{{thousand}}" label="Spend today"></x-import>
+  </div>
+</nav>
+</sc-if>
+
+<sc-if value="{{compact}}" hint-placeholder-val="{{no}}">
+<nav aria-label="App" style="box-sizing: border-box; width: 56px; padding: 12px 8px; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+  <span style="width: 32px; height: 32px; margin-bottom: 8px; border-radius: 8px; background: #1e1e3f; color: #a5a4ff; display: inline-flex; align-items: center; justify-content: center;" title="Acme · Payments"><x-import component-from-global-scope="Graphite.Icon" name="pipelines" size="{{s16}}"></x-import></span>
+  <sc-for list="{{railNav}}" as="n" hint-placeholder-count="4">
+    <a href="{{n.href}}" class="sb-rail" aria-label="{{n.label}}" title="{{n.label}}" aria-current="{{n.current}}" style="position: relative; width: 40px; height: 40px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: {{n.color}}; background: {{n.bg}};">
+      <sc-if value="{{n.isChat}}" hint-placeholder-val="{{no}}"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></sc-if>
+      <sc-if value="{{n.hasIcon}}" hint-placeholder-val="{{yes}}"><x-import component-from-global-scope="Graphite.Icon" name="{{n.icon}}" size="{{s16}}"></x-import></sc-if>
+      <sc-if value="{{n.hasCount}}" hint-placeholder-val="{{no}}"><span style="position: absolute; top: 4px; right: 4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: #5e6ad2; color: #fff; font-size: 9px; line-height: 14px; font-weight: 600; text-align: center;">{{n.count}}</span></sc-if>
+    </a>
+  </sc-for>
+  <span style="width: 24px; height: 1px; margin: 8px 0; background: #1c1d21;"></span>
+  <sc-for list="{{railRunners}}" as="r" hint-placeholder-count="6">
+    <a href="{{r.href}}" class="sb-rail" aria-label="{{r.aria}}" title="{{r.aria}}" style="position: relative; width: 40px; height: 40px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: {{r.railBg}};">
+      <span style="width: 28px; height: 28px; border-radius: 6px; background: {{r.tileBg}}; color: {{r.tileFg}}; display: inline-flex; align-items: center; justify-content: center; border: 1px {{r.tileBorderStyle}} {{r.tileBorder}}; box-sizing: border-box;"><x-import component-from-global-scope="Graphite.Icon" name="{{r.icon}}" size="{{s14}}"></x-import></span>
+      <span style="position: absolute; right: 5px; bottom: 5px; width: 8px; height: 8px; border-radius: 999px; background: {{r.dotColor}}; box-shadow: 0 0 0 2px #0b0c0d;"></span>
+    </a>
+  </sc-for>
+  <a href="Agents.dc.html" class="sb-rail" aria-label="New agent, orchestrator or pipeline" title="New agent, orchestrator or pipeline" style="width: 40px; height: 40px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: #8a8f98;"><x-import component-from-global-scope="Graphite.Icon" name="plus" size="{{s16}}"></x-import></a>
+</nav>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;active&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;inbox&quot;,&quot;issues&quot;,&quot;chat&quot;,&quot;agents&quot;,&quot;pipelines&quot;],&quot;default&quot;:&quot;issues&quot;},&quot;compact&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false},&quot;current&quot;:{&quot;editor&quot;:null},&quot;sessions&quot;:{&quot;editor&quot;:null},&quot;$preview&quot;:{&quot;width&quot;:232,&quot;height&quot;:960}}">
+var RUNNERS = [
+  { id: 'payments-lead', name: 'Payments lead', type: 'orch', dot: 'running' },
+  { id: 'pay-triage', name: 'PAY triage', type: 'pipe', dot: 'live' },
+  { id: 'build', name: 'Build', type: 'agent', dot: 'live' },
+  { id: 'fixer', name: 'Fixer', type: 'agent', dot: 'running' },
+  { id: 'codex', name: 'Codex', type: 'agent', dot: 'draft' },
+  { id: 'auditor', name: 'Auditor', type: 'agent', dot: 'waiting' },
+  { id: 'nightly-audit', name: 'Nightly audit', type: 'pipe', dot: 'live' },
+  { id: 'migration-checker', name: 'Migration checker', type: 'agent', dot: 'spawn', created: true }
+];
+var TYPE = {
+  orch: { icon: 'router', label: 'Orchestrator', bg: '#1e1e3f', fg: '#a5a4ff' },
+  pipe: { icon: 'pipelines', label: 'Pipeline', bg: '#13203a', fg: '#6fa8ff' },
+  agent: { icon: 'agent', label: 'Agent', bg: '#1c1d21', fg: '#d0d6e0' }
+};
+var DOT = { live: '#4cb782', running: '#4ea7fc', waiting: '#f2c94c', draft: '#62666d', spawn: '#a78bfa' };
+
+class Component extends DCLogic {
+  renderVals() {
+    var p = this.props, active = p.active || 'issues', cur = p.current || '';
+    var runners = RUNNERS.map(function (r) {
+      var t = TYPE[r.type], on = r.id === cur;
+      return {
+        name: r.name, dot: r.dot, active: on, href: r.type === 'pipe' ? 'Main.dc.html' : 'Agents.dc.html',
+        icon: t.icon, typeLabel: r.created ? 'Agent created by Payments lead' : t.label,
+        nameColor: r.created ? '#c4b5fd' : 'inherit', typeColor: r.created ? '#a78bfa' : '#8a8f98',
+        tileBg: r.created ? '#171329' : t.bg, tileFg: r.created ? '#c4b5fd' : t.fg,
+        tileBorder: r.created ? '#3b3463' : 'transparent', tileBorderStyle: r.created ? 'dashed' : 'solid',
+        dotColor: DOT[r.dot], railBg: on ? '#1c1d21' : 'transparent',
+        aria: r.name + ' · ' + (r.created ? 'created by Payments lead' : t.label)
+      };
+    });
+    var nav = [
+      { id: 'inbox', label: 'Inbox · 4 need you', href: 'Review.dc.html', icon: 'inbox', count: 4 },
+      { id: 'issues', label: 'Issues', href: 'Board.dc.html', icon: 'check' },
+      { id: 'chat', label: 'Chat', href: 'Chat.dc.html', icon: '', isChat: true },
+      { id: 'agents', label: 'Agents', href: 'Agents.dc.html', icon: 'agent' }
+    ].map(function (n) {
+      var on = n.id === active;
+      return { label: n.label, href: n.href, icon: n.icon || 'agent', hasIcon: !n.isChat, isChat: !!n.isChat, hasCount: !!n.count, count: n.count, current: on ? 'page' : 'false', color: on ? '#f7f8f8' : '#8a8f98', bg: on ? '#1c1d21' : 'transparent' };
+    });
+    var sessions = Array.isArray(p.sessions) ? p.sessions : [];
+    return {
+      s12: 12, s14: 14, s16: 16, yes: true, no: false, thousand: 1000, spend: 381, inbox: 4,
+      full: !p.compact, compact: !!p.compact,
+      isInbox: active === 'inbox', isIssues: active === 'issues', isChat: active === 'chat', isAgents: active === 'agents',
+      runners: runners, railNav: nav, railRunners: runners.slice(0, 7),
+      hasSessions: sessions.length > 0,
+      sessionRows: sessions.map(function (s) {
+        return { title: s.title, dot: s.dot, dotLabel: s.dotLabel || '', open: s.open, current: s.current ? 'page' : 'false', pad: s.child ? 20 : 8, bg: s.current ? '#1c1d21' : 'transparent', color: s.child ? '#c4b5fd' : (s.current ? '#f7f8f8' : '#d0d6e0') };
+      })
+    };
+  }
+}
+</script>
+
+
+</body></html>
