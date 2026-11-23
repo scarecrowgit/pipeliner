@@ -140,7 +140,25 @@ pub(crate) fn request_body(request: &ChatRequest, max_field: MaxTokensField) -> 
                         }));
                     }
                 }
-                if !text.is_empty() {
+                let images: Vec<Value> = message
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Image { media_type, data } => Some(json!({
+                            "type": "image_url",
+                            "image_url": { "url": format!("data:{media_type};base64,{data}") },
+                        })),
+                        _ => None,
+                    })
+                    .collect();
+                if !images.is_empty() {
+                    let mut parts = Vec::with_capacity(images.len() + 1);
+                    if !text.is_empty() {
+                        parts.push(json!({ "type": "text", "text": text }));
+                    }
+                    parts.extend(images);
+                    messages.push(json!({ "role": "user", "content": parts }));
+                } else if !text.is_empty() {
                     messages.push(json!({ "role": "user", "content": text }));
                 }
             }
@@ -582,6 +600,47 @@ mod tests {
         let err =
             decode(&[r#"data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}"#]).unwrap_err();
         assert!(err.to_string().contains("stream ended"), "{err}");
+    }
+
+    fn image_request(text: &str) -> ChatRequest {
+        let mut content = vec![ContentBlock::Image {
+            media_type: "image/png".into(),
+            data: "QUJD".into(),
+        }];
+        if !text.is_empty() {
+            content.insert(0, ContentBlock::Text(text.into()));
+        }
+        ChatRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![Message { role: Role::User, content }, Message::user_text("plain")],
+            tools: vec![],
+            max_tokens: 10,
+            temperature: None,
+        }
+    }
+
+    #[test]
+    fn request_body_images() {
+        let body = request_body(&image_request("look"), MaxTokensField::MaxTokens);
+        assert_eq!(
+            body["messages"],
+            json!([
+                {"role": "user", "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                ]},
+                {"role": "user", "content": "plain"},
+            ])
+        );
+        // Image-only message is still sent, without a text part.
+        let body = request_body(&image_request(""), MaxTokensField::MaxTokens);
+        assert_eq!(
+            body["messages"][0],
+            json!({"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+            ]})
+        );
     }
 
     #[test]

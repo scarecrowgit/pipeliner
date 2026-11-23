@@ -12,7 +12,7 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point,
@@ -41,6 +41,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-right", SelectRight, c),
         KeyBinding::new("ctrl-a", SelectAll, c),
         KeyBinding::new("ctrl-v", Paste, c),
+        KeyBinding::new("cmd-v", Paste, c),
         KeyBinding::new("ctrl-c", Copy, c),
         KeyBinding::new("ctrl-x", Cut, c),
         KeyBinding::new("home", Home, c),
@@ -57,6 +58,8 @@ pub fn bind_keys(cx: &mut App) {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
+    /// Paste with image(s) on the clipboard (text, if any, is still inserted).
+    PastedImages(Vec<gpui::Image>),
     /// Text changed (typing, paste, delete, `set_text` does NOT emit).
     Changed,
     /// `enter`
@@ -284,7 +287,21 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let images: Vec<gpui::Image> = item
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                ClipboardEntry::Image(i) => Some(i.clone()),
+                _ => None,
+            })
+            .collect();
+        if !images.is_empty() {
+            cx.emit(TextInputEvent::PastedImages(images));
+        }
+        if let Some(text) = item.text() {
             self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
         }
     }

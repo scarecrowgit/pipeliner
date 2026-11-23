@@ -142,7 +142,7 @@ impl ChatScreen {
         -self.scroll.offset().y >= max - px(48.)
     }
 
-    fn notice(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+    pub(crate) fn notice(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.items.push(Item::Notice(text.into()));
         self.scroll.scroll_to_bottom();
         cx.notify();
@@ -152,7 +152,7 @@ impl ChatScreen {
 
     pub(crate) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.draft.trim().to_string();
-        if text.is_empty() || self.busy() {
+        if (text.is_empty() && self.pending.is_empty()) || self.busy() {
             return;
         }
         if let Some(cmd) = text.strip_prefix('!') {
@@ -166,6 +166,9 @@ impl ChatScreen {
         if let Some(cmd) = text.strip_prefix('/') {
             self.set_draft("", cx);
             self.run_command(cmd.trim(), window, cx);
+            return;
+        }
+        if self.images_loading() > 0 {
             return;
         }
         if self.model.is_none() {
@@ -189,7 +192,8 @@ impl ChatScreen {
                 error: None,
             })
             .collect();
-        self.items.push(Item::User(UserMsg { text, attachments }));
+        let images = self.take_images();
+        self.items.push(Item::User(UserMsg { text, attachments, images }));
         self.set_draft("", cx);
         self.scroll.scroll_to_bottom();
         self.begin_run(cx);
@@ -1476,6 +1480,7 @@ impl ChatScreen {
         self.items.push(Item::User(UserMsg {
             text,
             attachments: Vec::new(),
+            images: Vec::new(),
         }));
         self.scroll.scroll_to_bottom();
         self.begin_run(cx);

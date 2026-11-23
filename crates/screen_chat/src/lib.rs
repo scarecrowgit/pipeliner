@@ -11,6 +11,7 @@
 //! - `newchat` — the "New chat · pick a workdir" screen.
 
 mod agent;
+mod attach;
 mod composer;
 mod data;
 mod deferred;
@@ -173,6 +174,11 @@ pub struct ChatScreen {
     pub(crate) model_open: bool,
     pub(crate) trigger_hover: Option<Trigger>,
     pub(crate) draft: String,
+    /// Images attached to the next message (ready or still loading).
+    pub(crate) pending: Vec<attach::Pending>,
+    /// Ids for `pending` entries / numbering of pasted images.
+    pub(crate) image_seq: u64,
+    pub(crate) paste_seq: usize,
     /// Highlighted row in the slash / mention popover.
     pub(crate) menu_sel: usize,
     pub(crate) input: Entity<TextInput>,
@@ -336,6 +342,9 @@ impl ChatScreen {
             model_open: false,
             trigger_hover: None,
             draft: String::new(),
+            pending: Vec::new(),
+            image_seq: 0,
+            paste_seq: 0,
             menu_sel: 0,
             input,
             model_search,
@@ -402,9 +411,9 @@ impl ChatScreen {
 
     fn placeholder_for(mode: Mode) -> String {
         match mode {
-            Mode::Plan => "Ask Plan to look into something. It reads files and writes a plan."
+            Mode::Plan => "Ask Plan to look into something. It reads files and writes a plan. Paste or drop images"
                 .into(),
-            Mode::Build => "Ask Build to change something. @ to add a file, / for commands, ! to run a shell command"
+            Mode::Build => "Ask Build to change something. @ to add a file, / for commands, ! to run a shell command, paste or drop images"
                 .into(),
         }
     }
@@ -413,7 +422,7 @@ impl ChatScreen {
     pub(crate) fn placeholder(&self) -> String {
         match &self.custom_agent {
             Some(name) => format!(
-                "Ask {name} something. @ to add a file, / for commands, ! to run a shell command"
+                "Ask {name} something. @ to add a file, / for commands, ! to run a shell command, paste or drop images"
             ),
             None => Self::placeholder_for(self.mode),
         }
@@ -564,6 +573,7 @@ impl ChatScreen {
                     self.set_draft("", cx);
                 }
             }
+            TextInputEvent::PastedImages(images) => self.add_pasted(images.clone(), cx),
             TextInputEvent::Blur => {}
         }
     }
@@ -766,6 +776,9 @@ impl Render for ChatScreen {
                             .flex_col()
                             .flex_1()
                             .min_w_0()
+                            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                                this.add_paths(paths.paths().to_vec(), cx)
+                            }))
                             .child(self.render_transcript(cx))
                             .child(self.render_composer(cx)),
                     )

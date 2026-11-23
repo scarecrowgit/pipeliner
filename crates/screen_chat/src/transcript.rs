@@ -541,9 +541,11 @@ impl ChatScreen {
             .collect()
     }
 
-    fn user_item(&self, _ix: usize, u: &UserMsg) -> AnyElement {
+    fn user_item(&self, ix: usize, u: &UserMsg) -> AnyElement {
         // ~7px per char at 13px Inter; 85% of the 780px column ≈ 640px of text.
-        let wide = u.text.lines().any(|l| l.chars().count() * 7 > 600) || u.text.contains('\n');
+        let wide = u.text.lines().any(|l| l.chars().count() * 7 > 600)
+            || u.text.contains('\n')
+            || u.images.len() > 1;
         user_bubble(
             div()
                 .w_full()
@@ -551,7 +553,16 @@ impl ChatScreen {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(user_text(&u.text, TEXT))
+                .when(!u.images.is_empty(), |d| {
+                    d.child(
+                        div().flex().flex_wrap().gap(px(8.)).mb(px(2.)).children(
+                            u.images.iter().enumerate().map(|(i, a)| {
+                                ui::images::image_card(id(&format!("msg-img-{ix}"), i), a, 200., 120.)
+                            }),
+                        ),
+                    )
+                })
+                .when(!u.text.is_empty(), |d| d.child(user_text(&u.text, TEXT)))
                 .children(u.attachments.iter().map(|a| {
                     let (meta, color) = match (&a.content, &a.error) {
                         (_, Some(e)) => (truncate(e, 60), DANGER),

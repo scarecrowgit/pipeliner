@@ -51,11 +51,13 @@ fn above(
 impl ChatScreen {
     pub(crate) fn render_composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let shell = self.is_shell();
-        let empty = self.draft.trim().is_empty();
+        let empty = self.draft.trim().is_empty() && self.pending.is_empty()
+            || self.images_loading() > 0;
+        let has_images = !self.pending.is_empty();
 
         let input_area = div()
             .h(px(76.))
-            .pt(px(12.))
+            .pt(px(if has_images { 8. } else { 12. }))
             .px(px(14.))
             .pb(px(4.))
             .flex()
@@ -99,6 +101,13 @@ impl ChatScreen {
             .flex_wrap()
             .items_center()
             .gap(px(8.))
+            .child(
+                ui::images::attach_button(
+                    "attach-images",
+                    "Attach images · or paste Ctrl+V, drop onto the chat",
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
+            )
             .child(self.agent_selector(cx))
             .children(self.forced_chips(cx))
             .child(self.model_selector(cx));
@@ -134,6 +143,8 @@ impl ChatScreen {
             .border_color(if shell { WARNING } else { LINE_STRONG })
             .rounded(px(RADIUS_XL))
             .bg(SURFACE)
+            .drag_over::<gpui::ExternalPaths>(|s, _, _, _| s.bg(ACCENT_GLOW).border_color(ACCENT))
+            .children(self.pending_row(cx))
             .child(input_area)
             .child(toolbar);
 
