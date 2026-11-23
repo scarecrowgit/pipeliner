@@ -27,9 +27,14 @@ pub fn person_avatar(initials: &str, size: f32, font: f32) -> gpui::Div {
 
 /// 22px rounded tile with the runner-kind icon (12px).
 pub fn runner_tile(kind: RunnerKind) -> gpui::Div {
+    runner_tile_sized(kind, 22.)
+}
+
+/// Rounded runner-kind tile of any size (12px icon).
+pub fn runner_tile_sized(kind: RunnerKind, size: f32) -> gpui::Div {
     let (bg, fg) = kind.tile_colors();
     div()
-        .size(px(22.))
+        .size(px(size))
         .flex_none()
         .rounded(px(RADIUS_MD))
         .bg(bg)

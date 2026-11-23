@@ -30,6 +30,15 @@ screen under "From agents" (above the mock pipeline reviews): live PR status fro
 (state, checks, review, diff size, branches), other links, the summary, Open chat / Open pull
 request / Mark unread / Archive. The sidebar badge counts unread reports plus waiting reviews.
 
+## Issues
+
+The issue detail panel has an Activity feed with comments. Typing `@` in the comment box opens an
+autocomplete of agents, orchestrators and pipelines (↑ ↓ move, ↵ / Tab insert, Esc close). Posting a
+comment wakes every mentioned runner: it starts a run on the issue (comment passed as input) and a
+receipt under the comment says "woken · run N" with Open run. A runner that can't be woken (its
+runtime is offline, or "On @mention" is off for the issue) gets a "not woken" receipt with
+Retry now, which reconnects it and wakes it anyway. Runtimes and runs are mock data.
+
 ## Motion
 
 Animations follow the Graphite design system's motion spec (`crates/ui/src/motion.rs`):

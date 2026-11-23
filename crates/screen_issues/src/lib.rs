@@ -2,6 +2,7 @@
 //! issue detail panel (status menu, runner picker, activity + comments).
 
 mod board;
+mod comments;
 mod data;
 mod detail;
 mod header;
@@ -16,7 +17,7 @@ use gpui::{
 use ui::nav::Screen;
 use ui::{TextInput, TextInputEvent};
 
-use data::{Activity, Actor, Column, Filter, Issue, Run, RunState, RunnerId, Trigger};
+use data::{Activity, Column, Filter, Issue, Run, RunState, RunnerId, Trigger};
 
 actions!(screen_issues, [CloseDetail]);
 
@@ -46,6 +47,12 @@ pub struct IssuesScreen {
     title_input: Entity<TextInput>,
     pick_input: Entity<TextInput>,
     comment_input: Entity<TextInput>,
+    /// Highlighted row of the @mention list.
+    mention_ix: usize,
+    /// Esc closed the @mention list for the current query.
+    mention_dismissed: bool,
+    /// Runners whose (mock) runtime is offline.
+    offline: Vec<RunnerId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -95,10 +102,29 @@ impl IssuesScreen {
                 &comment_input,
                 window,
                 |this, _, ev: &TextInputEvent, window, cx| match ev {
-                    TextInputEvent::Changed => cx.notify(),
-                    TextInputEvent::Submit => this.post_comment(cx),
-                    TextInputEvent::Cancel => this.focus_self(window),
-                    _ => {}
+                    TextInputEvent::Changed => {
+                        this.mention_ix = 0;
+                        this.mention_dismissed = false;
+                        cx.notify();
+                    }
+                    TextInputEvent::Up => this.move_mention(-1, cx),
+                    TextInputEvent::Down => this.move_mention(1, cx),
+                    TextInputEvent::Submit | TextInputEvent::Tab => {
+                        if this.mention_open(cx) && !this.mention_rows(cx).is_empty() {
+                            this.insert_mention(this.mention_ix, window, cx);
+                        } else if *ev == TextInputEvent::Submit {
+                            this.post_comment(cx);
+                        }
+                    }
+                    TextInputEvent::Cancel => {
+                        if this.mention_open(cx) {
+                            this.mention_dismissed = true;
+                            cx.notify();
+                        } else {
+                            this.focus_self(window);
+                        }
+                    }
+                    TextInputEvent::Blur => {}
                 },
             ),
         ];
@@ -137,6 +163,9 @@ impl IssuesScreen {
             title_input,
             pick_input,
             comment_input,
+            mention_ix: 0,
+            mention_dismissed: false,
+            offline: comments::initially_offline(),
             _subscriptions: subscriptions,
         }
     }
@@ -396,60 +425,82 @@ impl IssuesScreen {
         cx.notify();
     }
 
+    // ── Comments ────────────────────────────────────────────────────────
+
+    /// The `@token` being typed in the comment input, if any.
+    fn mention_token(&self, cx: &App) -> Option<(usize, String)> {
+        comments::mention_query(self.comment_input.read(cx).text())
+            .map(|(at, token)| (at, token.to_string()))
+    }
+
+    /// Whether the @mention list is showing (also with no matches: empty state).
+    fn mention_open(&self, cx: &App) -> bool {
+        !self.mention_dismissed && self.mention_token(cx).is_some()
+    }
+
+    /// Rows of the @mention list.
+    fn mention_rows(&self, cx: &App) -> Vec<(RunnerId, std::ops::Range<usize>)> {
+        self.mention_token(cx)
+            .map(|(_, q)| comments::mention_matches(&q))
+            .unwrap_or_default()
+    }
+
+    fn move_mention(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if !self.mention_open(cx) {
+            return;
+        }
+        let n = self.mention_rows(cx).len();
+        if n > 0 {
+            self.mention_ix = (self.mention_ix as isize + delta).rem_euclid(n as isize) as usize;
+        }
+        cx.notify();
+    }
+
+    /// Replace the `@token` with `@{Name} ` and put the cursor after it.
+    fn insert_mention(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((at, _)) = self.mention_token(cx) else {
+            return;
+        };
+        let Some((id, _)) = self.mention_rows(cx).get(row).cloned() else {
+            return;
+        };
+        let head = self.comment_input.read(cx).text()[..at].to_string();
+        let text = format!("{head}@{} ", data::runner(id).name);
+        self.comment_input
+            .update(cx, |input, cx| input.set_text(text, cx));
+        self.mention_ix = 0;
+        self.mention_dismissed = false;
+        window.focus(&self.comment_input.focus_handle(cx));
+        cx.notify();
+    }
+
     fn post_comment(&mut self, cx: &mut Context<Self>) {
         let text = self.comment_input.read(cx).text().trim().to_string();
         if text.is_empty() {
             return;
         }
+        let offline = self.offline.clone();
         let Some(issue) = self.selected_issue_mut() else {
             return;
         };
-        issue
-            .activity
-            .push(Activity::person("ME", "now", text.clone()));
+        comments::post(issue, &offline, &text);
 
-        if let Some(id) = mention(&text).and_then(data::runner_by_name) {
-            let r = data::runner(id);
-            issue.activity.push(Activity::new(
-                r.name,
-                Actor::of(r.kind),
-                "now",
-                "Woken by your mention. Picking this up.",
-            ));
-            issue.runner = issue.runner.or(Some(id));
-            issue.run = Some(Run::running(
-                format!("{} working on your comment", r.name),
-                3,
-            ));
-            issue.status = Column::Progress;
-        } else if let Some(r) = issue.runner()
-            && issue
-                .run
-                .as_ref()
-                .is_some_and(|run| run.state == RunState::Blocked)
-        {
-            issue.activity.push(Activity::agent(
-                r.name,
-                "now",
-                "Thanks, continuing with that scope.",
-            ));
-            issue.run = Some(Run::running("resumed after your answer", 35));
-        }
-
+        self.mention_ix = 0;
+        self.mention_dismissed = false;
         self.comment_input
             .update(cx, |input, cx| input.set_text("", cx));
         cx.notify();
     }
-}
 
-/// First `@word` in `text` (the mockup's `/@(\w+)/`).
-fn mention(text: &str) -> Option<&str> {
-    let start = text.find('@')? + 1;
-    let rest = &text[start..];
-    let end = rest
-        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(rest.len());
-    (end > 0).then(|| &rest[..end])
+    /// "Retry now" on a receipt: the runtime reconnects and the trigger toggle is ignored.
+    fn retry_wake(&mut self, activity_ix: usize, wake_ix: usize, cx: &mut Context<Self>) {
+        let mut offline = std::mem::take(&mut self.offline);
+        if let Some(issue) = self.selected_issue_mut() {
+            comments::wake(issue, activity_ix, wake_ix, &mut offline, true);
+        }
+        self.offline = offline;
+        cx.notify();
+    }
 }
 
 impl Focusable for IssuesScreen {

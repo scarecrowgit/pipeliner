@@ -222,6 +222,7 @@ fn runner_by_key(key: &str) -> RunnerId {
 }
 
 /// Case-insensitive lookup by display name (for `@mentions`).
+#[cfg(test)]
 pub fn runner_by_name(name: &str) -> Option<RunnerId> {
     RUNNERS
         .iter()
@@ -316,6 +317,24 @@ impl Actor {
     }
 }
 
+/// What a comment's `@mention` did to the mentioned runner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WakeOutcome {
+    /// Started (or fed) run number `run` on the issue.
+    Woken {
+        run: u32,
+    },
+    NotWoken {
+        reason: SharedString,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wake {
+    pub runner: RunnerId,
+    pub outcome: WakeOutcome,
+}
+
 #[derive(Clone, Debug)]
 pub struct Activity {
     pub who: SharedString,
@@ -328,9 +347,23 @@ pub struct Activity {
     pub spawn_note: bool,
     /// Question blocking the run (warning box).
     pub blocker: bool,
+    /// A person's comment (rendered in a bubble).
+    pub comment: bool,
+    /// What the comment's mentions did, one receipt per mentioned runner.
+    pub wakes: Vec<Wake>,
+    /// On an agent reply: display name of whoever's `@mention` woke it.
+    pub woken_by: Option<SharedString>,
 }
 
 impl Activity {
+    /// A person's comment; `who` holds initials.
+    pub fn comment(who: &str, when: &str, text: impl Into<SharedString>) -> Self {
+        Self {
+            comment: true,
+            ..Self::new(who, Actor::Person, when, text)
+        }
+    }
+
     pub fn person(who: &str, when: &str, text: impl Into<SharedString>) -> Self {
         Self::new(who, Actor::Person, when, text)
     }
@@ -352,7 +385,23 @@ impl Activity {
             spawn: false,
             spawn_note: false,
             blocker: false,
+            comment: false,
+            wakes: Vec::new(),
+            woken_by: None,
         }
+    }
+
+    fn wake(mut self, runner: &str, outcome: WakeOutcome) -> Self {
+        self.wakes.push(Wake {
+            runner: runner_by_key(runner),
+            outcome,
+        });
+        self
+    }
+
+    fn woken_by(mut self, by: &str) -> Self {
+        self.woken_by = Some(by.to_string().into());
+        self
     }
 
     fn spawned(mut self) -> Self {
@@ -408,6 +457,8 @@ pub struct Issue {
     pub activity: Vec<Activity>,
     /// "Start when" toggles, indexed like [`Trigger::ALL`].
     pub triggers: [bool; 3],
+    /// Runs started on this issue so far.
+    pub runs: u32,
 }
 
 impl Issue {
@@ -432,6 +483,7 @@ impl Issue {
             prio,
             person: Some(person),
             runner: runner.map(runner_by_key),
+            runs: u32::from(run.is_some()),
             run,
             created_by: None,
             desc: SharedString::from(desc.to_string()),
@@ -557,7 +609,9 @@ pub fn seed() -> Vec<Issue> {
                 Activity::agent("Codex", "19m", "Queued behind 1 run on runtime laptop."),
             ],
         ),
-        Issue::new(
+        Issue {
+            runs: 2,
+            ..Issue::new(
             "PAY-1427",
             "Refund webhook times out",
             Progress,
@@ -571,8 +625,27 @@ pub fn seed() -> Vec<Issue> {
                 Activity::pipeline("PAY triage", "12m", "Picked up by rule 2 → Reproducer."),
                 Activity::agent("Reproducer", "9m", "Spawned Log digger to search the last 24h of logs.")
                     .spawn_note(),
+                Activity::comment(
+                    "NK",
+                    "6m",
+                    "@Fixer the slow ones all have 400+ line items. Try batching `RefundBatcher` by 50 per call.",
+                )
+                .wake("a-fixer", WakeOutcome::Woken { run: 2 }),
+                Activity::agent(
+                    "Fixer",
+                    "5m",
+                    "Picking this up. Will batch by 50 and rerun `refund.spec`.",
+                )
+                .woken_by("Nina Kim"),
+                Activity::comment("ME", "2m", "@Codex write a second variant in parallel.").wake(
+                    "a-codex",
+                    WakeOutcome::NotWoken {
+                        reason: crate::comments::OFFLINE_REASON.into(),
+                    },
+                ),
             ],
-        ),
+            )
+        },
         Issue::new(
             "PAY-1435",
             "Audit PCI log redaction",
