@@ -17,7 +17,24 @@ pub struct ChatRequest {
     pub tools: Vec<ToolSpec>,
     /// Output cap; 0 lets the client use the model's maximum.
     pub max_tokens: u32,
+    /// Sent only to models that accept it; clients drop it for the ones that reject it.
     pub temperature: Option<f32>,
+    /// How much the model should think before answering.
+    pub reasoning: Reasoning,
+}
+
+/// Reasoning effort, mapped by each client to its provider's own setting (thinking for
+/// Anthropic, reasoning effort for OpenAI-compatible APIs). Models without the feature
+/// ignore it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Reasoning {
+    /// Send nothing: the provider's default behaviour.
+    #[default]
+    Default,
+    Off,
+    Low,
+    Medium,
+    High,
 }
 
 /// What a client reports while a response streams, in order.
@@ -30,8 +47,9 @@ pub enum StreamEvent {
     /// A tool call began; its JSON input follows in `ToolUseInputDelta`s.
     ToolUseStart { id: String, name: String },
     ToolUseInputDelta { id: String, json: String },
-    /// The tool call is complete and its input parsed.
-    ToolUse { id: String, name: String, input: serde_json::Value },
+    /// The tool call is complete. When the model's JSON could not be parsed, `input` is `{}`
+    /// and `error` says why; the caller answers with an error result instead of running it.
+    ToolUse { id: String, name: String, input: serde_json::Value, error: Option<String> },
     /// Token counts so far; may be sent more than once, the last one is final.
     Usage(Usage),
     /// Always the last event of a successful stream.

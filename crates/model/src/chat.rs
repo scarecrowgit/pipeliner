@@ -399,6 +399,9 @@ pub struct DiffLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_no: Option<u32>,
     pub text: String,
+    /// The line is the last of its file and has no newline after it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_newline: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -416,6 +419,15 @@ pub struct FileDiff {
     /// The file did not exist before.
     #[serde(default)]
     pub created: bool,
+    /// The file no longer exists.
+    #[serde(default)]
+    pub deleted: bool,
+    /// Not text: there are no hunks to show.
+    #[serde(default)]
+    pub binary: bool,
+    /// The path before a rename.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
 }
 
 /// How a tool call is shown before it runs and after it finished.

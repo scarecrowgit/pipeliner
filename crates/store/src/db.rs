@@ -1,20 +1,29 @@
-//! The database handle: one writer connection behind a mutex, WAL so readers never block it.
+//! The database handle: one writer connection behind a mutex, WAL so readers never block it,
+//! and a few read connections so a long search does not hold up the engine's writes.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
-/// Schema steps in order. A database's `user_version` is the number of steps applied to it,
-/// so a step is never edited after it ships: add a new one instead.
-const MIGRATIONS: &[&str] = &[
-    // 1: bookkeeping for the app itself (schema notes, one-time import markers).
-    "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;",
-];
+use crate::schema::MIGRATIONS;
 
+/// Read connections of a file database. Reads are short; a handful covers the UI's background
+/// reads and the engine's workers.
+const READERS: usize = 4;
+
+/// How long a statement waits for a lock held by another connection before it fails.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The SQLite connections of one database.
 pub struct Db {
-    conn: Mutex<Connection>,
+    writer: Mutex<Connection>,
+    /// Empty for an in-memory database, whose only connection is the writer.
+    readers: Vec<Mutex<Connection>>,
+    next_reader: AtomicUsize,
 }
 
 impl Db {
@@ -23,7 +32,18 @@ impl Db {
         let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        Self::prepare(conn)
+        let mut db = Self::prepare(conn)?;
+        for _ in 0..READERS {
+            let reader = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+            )
+            .with_context(|| format!("open a reader of {}", path.display()))?;
+            reader.busy_timeout(BUSY_TIMEOUT)?;
+            reader.pragma_update(None, "query_only", "ON")?;
+            db.readers.push(Mutex::new(reader));
+        }
+        Ok(db)
     }
 
     /// A private in-memory database, for tests and previews.
@@ -32,20 +52,36 @@ impl Db {
     }
 
     fn prepare(mut conn: Connection) -> Result<Self> {
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate(&mut conn)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { writer: Mutex::new(conn), readers: Vec::new(), next_reader: AtomicUsize::new(0) })
     }
 
     /// The writer connection. A poisoned lock is still usable: SQLite rolled back whatever
     /// the panicking thread had open.
-    pub fn conn(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    pub fn write(&self) -> MutexGuard<'_, Connection> {
+        self.writer.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// A connection for reading: a free reader when one is, otherwise the next one in turn.
+    /// An in-memory database reads through its writer.
+    pub fn read(&self) -> MutexGuard<'_, Connection> {
+        if self.readers.is_empty() {
+            return self.write();
+        }
+        let start = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        for offset in 0..self.readers.len() {
+            if let Ok(guard) = self.readers[(start + offset) % self.readers.len()].try_lock() {
+                return guard;
+            }
+        }
+        self.readers[start].lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// How many schema steps the database has applied.
     pub fn schema_version(&self) -> Result<usize> {
-        Ok(self.conn().pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? as usize)
+        Ok(self.write().pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? as usize)
     }
 }
 
@@ -77,20 +113,24 @@ mod tests {
 
     #[test]
     fn reopening_a_file_applies_nothing_twice() {
-        let dir = std::env::temp_dir().join(format!("harness-store-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("reopen.db");
-        let _ = std::fs::remove_file(&path);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reopen.db");
         {
             let db = Db::open(&path).unwrap();
-            db.conn().execute("INSERT INTO meta (key, value) VALUES ('k', 'v')", []).unwrap();
+            db.write().execute("INSERT INTO meta (key, value) VALUES ('k', 'v')", []).unwrap();
         }
         let db = Db::open(&path).unwrap();
         let value: String =
-            db.conn().query_row("SELECT value FROM meta WHERE key = 'k'", [], |row| row.get(0)).unwrap();
+            db.read().query_row("SELECT value FROM meta WHERE key = 'k'", [], |row| row.get(0)).unwrap();
         assert_eq!(value, "v");
         assert_eq!(db.schema_version().unwrap(), MIGRATIONS.len());
-        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn readers_cannot_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("ro.db")).unwrap();
+        assert!(db.read().execute("INSERT INTO meta (key, value) VALUES ('k', 'v')", []).is_err());
     }
 
     /// The chat palette needs full-text search; this fails loudly if the bundled SQLite
@@ -98,7 +138,7 @@ mod tests {
     #[test]
     fn the_bundled_sqlite_has_fts5() {
         let db = Db::in_memory().unwrap();
-        let conn = db.conn();
+        let conn = db.write();
         conn.execute_batch(
             "CREATE VIRTUAL TABLE probe USING fts5(body);
              INSERT INTO probe (body) VALUES ('fix double charge on retry'), ('bump gateway sdk');",
