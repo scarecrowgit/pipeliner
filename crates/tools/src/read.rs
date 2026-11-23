@@ -1,6 +1,5 @@
 //! `read_file` and `list_dir`.
 
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 
 use base::fmt::{count, plural, truncate_chars};
@@ -10,7 +9,7 @@ use serde_json::{Value, json};
 use crate::api::{Tool, ToolContext, ToolOutput};
 use crate::args::{Args, peek_str};
 use crate::builtin::names::{LIST_DIR, READ_FILE};
-use crate::sandbox::{normalize_subject, resolve};
+use crate::sandbox::{OpenError, normalize_subject, open_regular, resolve};
 use crate::text::{is_binary, strip_eol, walker};
 
 /// Lines returned by one call when no limit is given, and at most.
@@ -26,6 +25,24 @@ pub const LIST_MAX_ENTRIES: usize = 500;
 
 const READ_USAGE: &str = r#"{"path": "src/main.rs", "offset": 1, "limit": 200}"#;
 const LIST_USAGE: &str = r#"{"path": "src"}"#;
+
+/// The subject of a file tool call: the resolved path relative to the root, empty when the
+/// path is missing or the sandbox refuses it. `default` is used when `path` is not given.
+pub(crate) fn path_subject(ctx: &ToolContext<'_>, input: &Value, default: Option<&str>) -> String {
+    let path = peek_str(input, "path").filter(|p| !p.trim().is_empty());
+    let Some(path) = path.as_deref().or(default) else { return String::new() };
+    resolve(ctx.root, path).map(|r| r.rel).unwrap_or_default()
+}
+
+/// The path a preview shows: the resolved one, or what the model wrote when it cannot be
+/// resolved (the call will then fail with the reason).
+pub(crate) fn shown_path(ctx: &ToolContext<'_>, input: &Value, default: Option<&str>) -> String {
+    let subject = path_subject(ctx, input, default);
+    if !subject.is_empty() {
+        return subject;
+    }
+    peek_str(input, "path").map(|p| normalize_subject(&p)).unwrap_or_default()
+}
 
 /// Reads a text file with line numbers, a window at a time.
 pub struct ReadFile;
@@ -57,12 +74,12 @@ impl Tool for ReadFile {
         ToolClass::Read
     }
 
-    fn subject(&self, input: &Value) -> String {
-        peek_str(input, "path").map(|p| normalize_subject(&p)).unwrap_or_default()
+    fn subject(&self, ctx: &ToolContext<'_>, input: &Value) -> String {
+        path_subject(ctx, input, None)
     }
 
-    fn preview(&self, _ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
-        ToolDisplay::Line { verb: "read".into(), target: self.subject(input), result: String::new() }
+    fn preview(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
+        ToolDisplay::Line { verb: "read".into(), target: shown_path(ctx, input, None), result: String::new() }
     }
 
     fn run(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolOutput {
@@ -82,15 +99,15 @@ fn read_file(ctx: &ToolContext<'_>, input: &Value) -> Result<ToolOutput, String>
     let limit = usize::try_from(limit).unwrap_or(usize::MAX).min(READ_MAX_LINES);
 
     let r = resolve(ctx.root, path).map_err(|e| e.to_string())?;
-    if r.abs.is_dir() {
-        return Err(format!("{} is a directory; use list_dir to see what it holds", r.rel));
-    }
-    let mut file = match File::open(&r.abs) {
+    let mut file = match open_regular(&r) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        Err(OpenError::IsDir) => {
+            return Err(format!("{} is a directory; use list_dir to see what it holds", r.rel));
+        }
+        Err(OpenError::NotFound) => {
             return Err(format!("File not found: {}. Use list_dir or grep to find the right path", r.rel));
         }
-        Err(e) => return Err(format!("Cannot read {}: {e}", r.rel)),
+        Err(e) => return Err(e.message(&r.rel)),
     };
     let mut head = Vec::new();
     (&mut file).take(8192).read_to_end(&mut head).map_err(|e| format!("Cannot read {}: {e}", r.rel))?;
@@ -193,12 +210,12 @@ impl Tool for ListDir {
         ToolClass::Read
     }
 
-    fn subject(&self, input: &Value) -> String {
-        normalize_subject(peek_str(input, "path").as_deref().unwrap_or("."))
+    fn subject(&self, ctx: &ToolContext<'_>, input: &Value) -> String {
+        path_subject(ctx, input, Some("."))
     }
 
-    fn preview(&self, _ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
-        ToolDisplay::Line { verb: "list".into(), target: self.subject(input), result: String::new() }
+    fn preview(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
+        ToolDisplay::Line { verb: "list".into(), target: shown_path(ctx, input, Some(".")), result: String::new() }
     }
 
     fn run(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolOutput {

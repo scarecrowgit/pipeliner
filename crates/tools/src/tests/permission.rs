@@ -75,7 +75,7 @@ fn deny_prefixes_catch_any_part_of_a_command() {
     assert_eq!(bash(&rules, "ls && rm x"), Deny);
     assert_eq!(bash(&rules, "ls | FOO=1 rm x"), Deny);
     assert_eq!(bash(&rules, "rmdir x"), Allow);
-    assert_eq!(bash(&rules, "echo 'rm'"), Allow);
+    assert_eq!(bash(&rules, "echo rmx"), Allow);
 }
 
 #[test]
@@ -105,17 +105,27 @@ fn most_specific_scope_wins_then_deny_ask_allow() {
     let session_scope = RuleScope::Session { session: s.clone() };
     let repo_scope = RuleScope::Repo { path: repo.clone() };
 
-    // Session beats Repo beats Global, whatever the decisions.
+    // A Deny anywhere wins over everything.
     let rules = vec![
         global("bash", "cargo", Deny),
         rule("bash", "cargo", Ask, repo_scope.clone()),
         rule("bash", "cargo build", Allow, session_scope.clone()),
     ];
-    assert_eq!(at_repo(&rules, Some(&repo)), Allow);
-    assert_eq!(at_repo(&rules[..2], Some(&repo)), Ask);
+    assert_eq!(at_repo(&rules, Some(&repo)), Deny);
     assert_eq!(at_repo(&rules[..2], None), Deny);
+    // Without a Deny, Session beats Repo beats Global.
+    let rules = vec![
+        global("bash", "cargo", Ask),
+        rule("bash", "cargo", Allow, repo_scope.clone()),
+        rule("bash", "cargo build", Ask, session_scope.clone()),
+    ];
+    assert_eq!(at_repo(&rules[..2], Some(&repo)), Allow);
+    assert_eq!(at_repo(&rules[..2], None), Ask);
+    assert_eq!(at_repo(&rules, Some(&repo)), Ask);
+    let rules = vec![rule("bash", "cargo", Ask, repo_scope.clone()), rule("bash", "", Allow, session_scope.clone())];
+    assert_eq!(at_repo(&rules, Some(&repo)), Allow);
     // Repo rules apply only in their repo; session rules only in their session.
-    assert_eq!(at_repo(&rules[1..2], Some(Path::new("/work/other"))), Ask);
+    assert_eq!(at_repo(&[rule("bash", "", Allow, repo_scope.clone())], Some(Path::new("/work/other"))), Ask);
     assert_eq!(at_repo(&[rule("bash", "", Allow, repo_scope.clone())], Some(Path::new("/work/repo/"))), Allow);
     let other = RuleScope::Session { session: SessionId::new("s2") };
     assert_eq!(at_repo(&[rule("bash", "", Allow, other)], Some(&repo)), Ask);
@@ -127,6 +137,8 @@ fn most_specific_scope_wins_then_deny_ask_allow() {
     assert_eq!(at_repo(&same, None), Deny);
     let same = vec![rule("bash", "cargo", Deny, session_scope.clone()), rule("bash", "", Allow, session_scope)];
     assert_eq!(at_repo(&same, None), Deny);
+    let same = vec![global("bash", "cargo", Allow), global("bash", "cargo", Ask)];
+    assert_eq!(at_repo(&same, None), Ask);
 }
 
 fn prefix(command: &str) -> Option<String> {
@@ -139,17 +151,18 @@ fn prefix(command: &str) -> Option<String> {
 #[test]
 fn always_rule_takes_the_leading_words_of_a_command() {
     assert_eq!(prefix("bun test src/charges").as_deref(), Some("bun test"));
-    assert_eq!(prefix("cargo build --release").as_deref(), Some("cargo build"));
-    assert_eq!(prefix("nix-shell shell.nix --run 'cargo test -p tools'").as_deref(), Some("nix-shell shell.nix --run"));
-    assert_eq!(prefix("nix-shell shell.nix --run 'cargo build && cargo test'").as_deref(), Some("nix-shell shell.nix --run"));
+    assert_eq!(prefix("cargo build --release").as_deref(), Some("cargo build --release"));
+    assert_eq!(prefix("git push --force").as_deref(), Some("git push --force"));
     assert_eq!(prefix("git commit -m \"fix it\"").as_deref(), Some("git commit -m"));
-    assert_eq!(prefix("cargo test -p tools").as_deref(), Some("cargo test"));
+    assert_eq!(prefix("cargo test -p tools").as_deref(), Some("cargo test -p tools"));
+    assert_eq!(prefix("cargo build --target=x86_64").as_deref(), Some("cargo build"));
+    assert_eq!(prefix("python3 -m pytest tests/").as_deref(), Some("python3 -m pytest"));
     assert_eq!(prefix("ls").as_deref(), Some("ls"));
     assert_eq!(prefix("  git   status  ").as_deref(), Some("git status"));
     assert_eq!(prefix("sleep 5").as_deref(), Some("sleep"));
     assert_eq!(prefix("./run.sh fast").as_deref(), Some("./run.sh fast"));
     // The rule it makes allows the call it was made from.
-    for cmd in ["bun test src/charges", "nix-shell shell.nix --run 'cargo build'", "cargo build --release"] {
+    for cmd in ["bun test src/charges", "git commit -m 'x'", "cargo build --release"] {
         let r = always_rule("bash", ToolClass::Execute, cmd, RuleScope::Global).unwrap();
         assert_eq!(bash(&[r], cmd), Allow, "{cmd}");
     }

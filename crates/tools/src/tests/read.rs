@@ -20,7 +20,7 @@ fn read_file_numbers_lines() {
     assert!(!out.is_error, "{}", out.content);
     assert_eq!(out.content, "     1\tfn a() {}\n     2\tfn b() {}\n");
     assert_eq!(line_result(&out.display), ("read", "src/x.rs", "2 lines"));
-    assert_eq!(ReadFile.subject(&json!({"path": "./src/x.rs"})), "src/x.rs");
+    assert_eq!(ReadFile.subject(&f.ctx(), &json!({"path": "./src/x.rs"})), "src/x.rs");
 }
 
 #[test]

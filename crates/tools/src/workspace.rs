@@ -2,11 +2,12 @@
 //! project's notes for agents, and a short summary for the system prompt. No git here.
 
 use std::fmt::Write as _;
+use std::io::Read;
 use std::path::Path;
 
 use base::fmt::{count, plural};
 
-use crate::sandbox::{canonical_root, rel_display};
+use crate::sandbox::{canonical_root, open_regular, rel_display, resolve};
 use crate::text::walker;
 
 /// Files looked at, at most, when listing a workspace.
@@ -19,8 +20,8 @@ const SUMMARY_MAX_ENTRIES: usize = 60;
 const NOTES_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 
 /// Up to `limit` files under `root`, relative and `/`-separated, sorted by path. Files that
-/// `.gitignore` excludes, hidden files and `.git` are left out. Empty when `root` is not a
-/// folder.
+/// `.gitignore` excludes, hidden files, `.git` and symlinks are left out (links are never
+/// followed). Empty when `root` is not a folder.
 pub fn list_files(root: &Path, limit: usize) -> Vec<String> {
     let Ok(croot) = canonical_root(root) else { return Vec::new() };
     if limit == 0 {
@@ -42,10 +43,18 @@ pub fn list_files(root: &Path, limit: usize) -> Vec<String> {
 
 /// The project's notes for agents: `AGENTS.md`, else `CLAUDE.md`, at the root, trimmed and cut
 /// to [`NOTES_MAX_BYTES`] with a line saying so. `None` when neither exists or both are empty.
+///
+/// The files are read through the sandbox: a notes file that is a symlink out of the root, or
+/// not a regular file, is skipped, so a cloned repository cannot feed outside files to the
+/// model.
 pub fn project_notes(root: &Path) -> Option<String> {
-    let croot = canonical_root(root).ok()?;
     for name in NOTES_FILES {
-        let Ok(bytes) = std::fs::read(croot.join(name)) else { continue };
+        let Ok(target) = resolve(root, name) else { continue };
+        let Ok(file) = open_regular(&target) else { continue };
+        let mut bytes = Vec::new();
+        if file.take(NOTES_MAX_BYTES as u64 * 4).read_to_end(&mut bytes).is_err() {
+            continue;
+        }
         let text = String::from_utf8_lossy(&bytes);
         let text = text.trim();
         if text.is_empty() {
@@ -68,7 +77,8 @@ pub fn project_notes(root: &Path) -> Option<String> {
 }
 
 /// A few lines about the folder for the system prompt: its path and its top-level entries
-/// (folders first) with counts. Ignored entries and `.git` are left out.
+/// (folders first) with counts. Ignored entries and `.git` are left out. Only names are read;
+/// symlinks are not followed.
 pub fn context_summary(root: &Path) -> String {
     let Ok(croot) = canonical_root(root) else {
         return format!("Workspace: {} (not a folder)\n", root.display());

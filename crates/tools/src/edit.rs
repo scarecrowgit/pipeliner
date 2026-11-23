@@ -1,17 +1,18 @@
 //! `edit_file` and `write_file`. Both plan the change first (the preview shows that plan as a
 //! diff) and write only in `run`.
 
-use std::io::ErrorKind;
+use std::io::Read;
 
 use base::fmt::plural;
 use model::{FileChange, FileDiff, ToolClass, ToolDisplay, ToolSpec};
 use serde_json::{Value, json};
 
 use crate::api::{Tool, ToolContext, ToolOutput};
-use crate::args::{Args, peek_str};
+use crate::args::Args;
 use crate::builtin::names::{EDIT_FILE, WRITE_FILE};
 use crate::diff::file_diff;
-use crate::sandbox::{Resolved, normalize_subject, resolve};
+use crate::read::path_subject;
+use crate::sandbox::{OpenError, Resolved, open_regular, resolve, write_regular};
 use crate::text::{is_binary, preview_error};
 
 /// Files larger than this are not edited or diffed.
@@ -31,14 +32,8 @@ struct Plan {
 impl Plan {
     /// Writes the planned content, creating parent directories.
     fn apply(self, tool: &str) -> ToolOutput {
-        let abs = &self.target.abs;
-        if let Some(parent) = abs.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            return ToolOutput::error(tool, format!("Cannot create the folder for {}: {e}", self.target.rel));
-        }
-        if let Err(e) = std::fs::write(abs, &self.content) {
-            return ToolOutput::error(tool, format!("Cannot write {}: {e}", self.target.rel));
+        if let Err(e) = write_regular(&self.target, self.content.as_bytes()) {
+            return ToolOutput::error(tool, e.message(&self.target.rel));
         }
         let files = if self.diff.added + self.diff.removed > 0 || self.diff.created {
             vec![FileChange { path: self.target.rel.clone(), added: self.diff.added, removed: self.diff.removed }]
@@ -49,23 +44,35 @@ impl Plan {
     }
 }
 
-/// The current text of a file, `None` when it does not exist. Directories, binary files,
-/// non-UTF-8 text and huge files are errors.
-fn read_existing(r: &Resolved) -> Result<Option<String>, String> {
-    match std::fs::metadata(&r.abs) {
-        Ok(m) if m.is_dir() => return Err(format!("{} is a directory, not a file", r.rel)),
-        Ok(m) if m.len() > EDIT_MAX_BYTES => {
-            return Err(format!("{} is too large to edit ({})", r.rel, base::fmt::bytes(m.len())));
-        }
-        Ok(_) => {}
-        Err(e) if matches!(e.kind(), ErrorKind::NotFound) => return Ok(None),
-        Err(e) => return Err(format!("Cannot read {}: {e}", r.rel)),
+/// What is at a path before a change.
+enum Existing {
+    Missing,
+    Text(String),
+    /// A regular file that is not editable text (binary, not UTF-8, too large); the message
+    /// says which.
+    Opaque(String),
+}
+
+/// The current content of a file. Directories, FIFOs, sockets, devices and symlinks that
+/// appeared since the path was resolved are errors.
+fn read_existing(r: &Resolved) -> Result<Existing, String> {
+    let file = match open_regular(r) {
+        Ok(file) => file,
+        Err(OpenError::NotFound) => return Ok(Existing::Missing),
+        Err(e) => return Err(e.message(&r.rel)),
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > EDIT_MAX_BYTES {
+        return Ok(Existing::Opaque(format!("{} is too large to edit ({})", r.rel, base::fmt::bytes(len))));
     }
-    let bytes = std::fs::read(&r.abs).map_err(|e| format!("Cannot read {}: {e}", r.rel))?;
+    let mut bytes = Vec::new();
+    file.take(EDIT_MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| format!("Cannot read {}: {e}", r.rel))?;
     if is_binary(&bytes) {
-        return Err(format!("{} is a binary file; it cannot be edited as text", r.rel));
+        return Ok(Existing::Opaque(format!("{} is a binary file; it cannot be edited as text", r.rel)));
     }
-    String::from_utf8(bytes).map(Some).map_err(|_| format!("{} is not UTF-8 text; it cannot be edited", r.rel))
+    Ok(String::from_utf8(bytes).map(Existing::Text).unwrap_or_else(|_| {
+        Existing::Opaque(format!("{} is not UTF-8 text; it cannot be edited", r.rel))
+    }))
 }
 
 /// Replaces exact text in an existing file.
@@ -99,8 +106,8 @@ impl Tool for EditFile {
         ToolClass::Write
     }
 
-    fn subject(&self, input: &Value) -> String {
-        peek_str(input, "path").map(|p| normalize_subject(&p)).unwrap_or_default()
+    fn subject(&self, ctx: &ToolContext<'_>, input: &Value) -> String {
+        path_subject(ctx, input, None)
     }
 
     fn preview(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
@@ -131,8 +138,12 @@ fn plan_edit(ctx: &ToolContext<'_>, input: &Value) -> Result<Plan, String> {
         return Err(format!("{EDIT_FILE}: `old_string` and `new_string` are the same; there is nothing to change"));
     }
     let target = resolve(ctx.root, path).map_err(|e| e.to_string())?;
-    let Some(current) = read_existing(&target)? else {
-        return Err(format!("File not found: {}. Use write_file to create a new file", target.rel));
+    let current = match read_existing(&target)? {
+        Existing::Text(text) => text,
+        Existing::Missing => {
+            return Err(format!("File not found: {}. Use write_file to create a new file", target.rel));
+        }
+        Existing::Opaque(why) => return Err(why),
     };
 
     // A CRLF file edited with LF text: match and replace in the file's own line endings.
@@ -221,8 +232,8 @@ impl Tool for WriteFile {
         ToolClass::Write
     }
 
-    fn subject(&self, input: &Value) -> String {
-        peek_str(input, "path").map(|p| normalize_subject(&p)).unwrap_or_default()
+    fn subject(&self, ctx: &ToolContext<'_>, input: &Value) -> String {
+        path_subject(ctx, input, None)
     }
 
     fn preview(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
@@ -248,11 +259,11 @@ fn plan_write(ctx: &ToolContext<'_>, input: &Value) -> Result<Plan, String> {
     if target.is_root() {
         return Err(format!("{WRITE_FILE}: `path` must name a file, not the workspace root"));
     }
-    let previous = match read_existing(&target) {
-        Ok(p) => p,
+    let previous = match read_existing(&target)? {
+        Existing::Missing => None,
+        Existing::Text(text) => Some(text),
         // Replacing a binary or non-UTF-8 file: there is no text to diff against.
-        Err(_) if target.abs.is_file() => Some(String::new()),
-        Err(e) => return Err(e),
+        Existing::Opaque(_) => Some(String::new()),
     };
     let created = previous.is_none();
     let diff = file_diff(&target.rel, previous.as_deref().unwrap_or(""), content, created);

@@ -53,8 +53,8 @@ impl Tool for Grep {
         ToolClass::Read
     }
 
-    fn subject(&self, input: &Value) -> String {
-        crate::sandbox::normalize_subject(peek_str(input, "path").as_deref().unwrap_or("."))
+    fn subject(&self, ctx: &ToolContext<'_>, input: &Value) -> String {
+        crate::read::path_subject(ctx, input, Some("."))
     }
 
     fn preview(&self, _ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {

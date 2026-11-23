@@ -46,7 +46,7 @@ fn no_tool_panics_on_junk_input() {
     for name in registry.names() {
         let tool = registry.get(name).unwrap();
         for input in junk_inputs() {
-            let _ = tool.subject(&input);
+            let _ = tool.subject(&f.ctx(), &input);
             let _ = tool.preview(&f.ctx(), &input);
             let out = tool.run(&f.ctx(), &input);
             if matches!(input, serde_json::Value::Number(_) | serde_json::Value::Array(_)) {

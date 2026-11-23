@@ -50,12 +50,12 @@ impl Tool for Bash {
         ToolClass::Execute
     }
 
-    fn subject(&self, input: &Value) -> String {
-        peek_str(input, "command").map(|c| c.trim().to_string()).unwrap_or_default()
+    fn subject(&self, _ctx: &ToolContext<'_>, input: &Value) -> String {
+        command_of(input)
     }
 
     fn preview(&self, _ctx: &ToolContext<'_>, input: &Value) -> ToolDisplay {
-        ToolDisplay::Command { command: self.subject(input), output: String::new(), exit_code: None }
+        ToolDisplay::Command { command: command_of(input), output: String::new(), exit_code: None }
     }
 
     fn run(&self, ctx: &ToolContext<'_>, input: &Value) -> ToolOutput {
@@ -103,6 +103,11 @@ impl Tool for Bash {
             files: Vec::new(),
         }
     }
+}
+
+/// The command of a raw input, trimmed; empty when there is none.
+fn command_of(input: &Value) -> String {
+    peek_str(input, "command").map(|c| c.trim().to_string()).unwrap_or_default()
 }
 
 /// The command and the timeout in seconds, clamped to `1..=600`.

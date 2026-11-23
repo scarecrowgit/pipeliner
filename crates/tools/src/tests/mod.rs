@@ -7,6 +7,8 @@ mod misc;
 mod permission;
 mod read;
 mod sandbox;
+mod security;
+mod shell;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

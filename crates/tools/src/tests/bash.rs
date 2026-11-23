@@ -50,7 +50,7 @@ fn runs_in_the_root_with_env_and_reports_exit_code() {
 fn subject_and_preview_are_the_command() {
     let f = Fixture::new();
     let input = json!({"command": "  bun test src  "});
-    assert_eq!(Bash.subject(&input), "bun test src");
+    assert_eq!(Bash.subject(&f.ctx(), &input), "bun test src");
     let preview = Bash.preview(&f.ctx(), &input);
     assert_eq!(preview, ToolDisplay::Command { command: "bun test src".into(), output: String::new(), exit_code: None });
     assert!(!f.path("anything").exists());

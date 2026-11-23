@@ -23,7 +23,7 @@ fn edit_replaces_one_exact_match() {
     let diff = diff_of(&out.display);
     assert!(!diff.created);
     assert_eq!((diff.added, diff.removed), (2, 1));
-    assert_eq!(EditFile.subject(&json!({"path": "src/lib.rs"})), "src/lib.rs");
+    assert_eq!(EditFile.subject(&f.ctx(), &json!({"path": "src//./lib.rs"})), "src/lib.rs");
 }
 
 #[test]

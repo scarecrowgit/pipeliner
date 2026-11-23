@@ -54,9 +54,11 @@ pub trait Tool: Send + Sync {
     /// What the tool can do to the world; permission defaults are per class.
     fn class(&self) -> ToolClass;
 
-    /// The text permission rules match against: the command for `bash`, the path for file
-    /// tools. Empty when a call has nothing to match.
-    fn subject(&self, input: &serde_json::Value) -> String;
+    /// The text permission rules match against: the command for `bash`; for file tools the
+    /// path the call would really touch, relative to the canonical root (in-root symlinks
+    /// followed, absolute and `a/../b` forms normalised). Empty when a call has nothing to
+    /// match, including a path the sandbox refuses.
+    fn subject(&self, ctx: &ToolContext<'_>, input: &serde_json::Value) -> String;
 
     /// What the call would do, without doing it: the diff of an edit, the command of a shell
     /// call. Must not change anything and must not panic on malformed input.

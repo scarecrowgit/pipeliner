@@ -21,6 +21,7 @@ mod bash;
 mod edit;
 mod grep;
 mod read;
+mod shell;
 mod text;
 
 #[cfg(test)]
