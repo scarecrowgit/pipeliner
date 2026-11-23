@@ -54,7 +54,8 @@ impl IssuesScreen {
             .child(self.render_detail_head(issue, cx))
             .child(self.render_about(issue))
             .child(self.render_pipeline_row(issue, run, active, cx))
-            .child(self.render_actions(issue, run, active, cx));
+            .child(self.render_actions(issue, run, active, cx))
+            .child(self.render_activity(issue, window, cx));
         if let Some(run) = run {
             panel = panel.child(self.render_progress(run, active, cx));
             if !run.renders.is_empty() || run.status == RunStatus::WaitingApproval {

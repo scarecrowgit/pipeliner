@@ -8,7 +8,9 @@
 //! (renders, approval) and the render viewer, [`work`] sub-agent tasks, checks, workdirs and
 //! the log.
 
+mod activity;
 mod board;
+mod comments;
 mod detail;
 mod dialog;
 mod header;
@@ -97,6 +99,14 @@ pub struct IssuesScreen {
     menu: Option<menu::Menu>,
     /// Steps whose full notes are shown (else the first lines).
     notes_open: HashSet<String>,
+    /// The comment box in the detail panel.
+    comment_input: Entity<TextInput>,
+    /// Highlighted row of the `@mention` list.
+    mention_ix: usize,
+    /// Esc closed the `@mention` list for the current token.
+    mention_dismissed: bool,
+    /// Posting the last comment failed.
+    comment_error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
     /// Re-renders once in a while so elapsed times move while runs work.
     _ticker: Task<()>,
@@ -112,6 +122,7 @@ impl IssuesScreen {
         let title = cx.new(|cx| TextInput::new("Short summary, e.g. Add an export button", cx));
         let body = cx.new(|cx| TextInput::new("What should change, and why", cx));
         let changes_input = cx.new(|cx| TextInput::new("What should change?", cx));
+        let comment_input = cx.new(|cx| TextInput::new("Leave a comment, @mention a pipeline", cx));
 
         let mut subscriptions = vec![
             cx.observe(&pipes, |this, _, cx| {
@@ -157,6 +168,36 @@ impl IssuesScreen {
                         cx.notify();
                     }
                     _ => {}
+                },
+            ),
+            cx.subscribe_in(
+                &comment_input,
+                window,
+                |this, _, ev: &TextInputEvent, window, cx| match ev {
+                    TextInputEvent::Changed => {
+                        this.mention_ix = 0;
+                        this.mention_dismissed = false;
+                        this.comment_error = None;
+                        cx.notify();
+                    }
+                    TextInputEvent::Up => this.move_mention(-1, cx),
+                    TextInputEvent::Down => this.move_mention(1, cx),
+                    TextInputEvent::Submit | TextInputEvent::Tab => {
+                        if this.mention_open(cx) && !this.mention_rows(cx).is_empty() {
+                            this.insert_mention(this.mention_ix, window, cx);
+                        } else if *ev == TextInputEvent::Submit {
+                            this.post_comment(cx);
+                        }
+                    }
+                    TextInputEvent::Cancel => {
+                        if this.mention_open(cx) {
+                            this.mention_dismissed = true;
+                            cx.notify();
+                        } else {
+                            this.focus_self(window);
+                        }
+                    }
+                    TextInputEvent::Blur => {}
                 },
             ),
         ];
@@ -240,6 +281,10 @@ impl IssuesScreen {
             viewer: None,
             menu: None,
             notes_open: HashSet::new(),
+            comment_input,
+            mention_ix: 0,
+            mention_dismissed: false,
+            comment_error: None,
             _subscriptions: subscriptions,
             _ticker: ticker,
         };
@@ -341,6 +386,10 @@ impl IssuesScreen {
             self.detail_scroll.set_offset(gpui::Point::default());
             self.notes_open.clear();
             self.menu = None;
+            self.comment_input.update(cx, |i, cx| i.set_text("", cx));
+            self.mention_ix = 0;
+            self.mention_dismissed = false;
+            self.comment_error = None;
         }
         self.selected = Some(key);
         self.follow_log(cx);

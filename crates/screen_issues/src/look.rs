@@ -234,6 +234,7 @@ mod tests {
             pipeline: "p".into(),
             run: Some("r".into()),
             pr_url: None,
+            comments: Vec::new(),
         };
         assert_eq!(
             status_line(&issue, None, false).text.as_ref(),

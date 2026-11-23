@@ -95,6 +95,31 @@ pub struct Issue {
     pub run: Option<String>,
     #[serde(default)]
     pub pr_url: Option<String>,
+    /// Comments in the order they were posted.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
+}
+
+/// A comment on an issue.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Comment {
+    /// Unique within the issue, increasing.
+    pub id: u32,
+    pub author: String,
+    pub created: u64,
+    pub text: String,
+    /// Names `@mentioned` in the text (resolved when posted).
+    #[serde(default)]
+    pub mentions: Vec<String>,
+}
+
+/// Who posts comments from this machine: `$USER`, else "You".
+pub fn comment_author() -> String {
+    std::env::var("USER")
+        .ok()
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "You".into())
 }
 
 fn default_kind() -> String {
@@ -149,6 +174,7 @@ pub fn create_issue_in(
         pipeline: pipeline.to_string(),
         run: None,
         pr_url: None,
+        comments: Vec::new(),
     };
     f.items.push(issue.clone());
     write_json(path, &f)?;
@@ -157,14 +183,50 @@ pub fn create_issue_in(
 
 /// Change one issue in place. `false` when there is no such issue.
 pub fn update_issue(key: &str, f: impl FnOnce(&mut Issue)) -> std::io::Result<bool> {
-    let path = issues_path();
-    let mut file = read_issues(&path);
+    update_issue_in(&issues_path(), key, f)
+}
+
+pub fn update_issue_in(path: &Path, key: &str, f: impl FnOnce(&mut Issue)) -> std::io::Result<bool> {
+    let mut file = read_issues(path);
     let Some(issue) = file.items.iter_mut().find(|i| i.key == key) else {
         return Ok(false);
     };
     f(issue);
-    write_json(&path, &file)?;
+    write_json(path, &file)?;
     Ok(true)
+}
+
+/// Append a comment to issue `key` in the file at `path`. `None` when there is no such
+/// issue or the text is empty.
+pub fn add_comment_in(
+    path: &Path,
+    key: &str,
+    author: &str,
+    text: &str,
+    mentions: Vec<String>,
+) -> std::io::Result<Option<Comment>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let mut added = None;
+    update_issue_in(path, key, |issue| {
+        let c = Comment {
+            id: issue.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1,
+            author: author.to_string(),
+            created: now(),
+            text: text.to_string(),
+            mentions,
+        };
+        issue.comments.push(c.clone());
+        added = Some(c);
+    })?;
+    Ok(added)
+}
+
+/// Remove comment `id` from issue `key` in the file at `path`.
+pub fn delete_comment_in(path: &Path, key: &str, id: u32) -> std::io::Result<bool> {
+    update_issue_in(path, key, |issue| issue.comments.retain(|c| c.id != id))
 }
 
 pub fn delete_issue(key: &str) -> std::io::Result<()> {
@@ -514,6 +576,32 @@ mod tests {
         assert_eq!((a.key.as_str(), b.key.as_str()), ("HAR-1", "HAR-2"));
         assert_eq!(b.kind, "Bug");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn comments_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("harness-comments-{}", std::process::id()));
+        let path = dir.join("issues.json");
+        let issue = create_issue_in(&path, "First", "", "", "p").unwrap();
+        assert!(add_comment_in(&path, &issue.key, "me", "   ", vec![]).unwrap().is_none());
+        assert!(add_comment_in(&path, "HAR-99", "me", "hi", vec![]).unwrap().is_none());
+        let a = add_comment_in(&path, &issue.key, "me", " hi @Build ", vec!["Build".into()])
+            .unwrap()
+            .unwrap();
+        let b = add_comment_in(&path, &issue.key, "me", "second", vec![]).unwrap().unwrap();
+        assert_eq!((a.id, b.id, a.text.as_str()), (1, 2, "hi @Build"));
+        let back = read_issues(&path).items.remove(0);
+        assert_eq!(back.comments, vec![a, b.clone()]);
+        assert!(delete_comment_in(&path, &issue.key, 1).unwrap());
+        assert_eq!(read_issues(&path).items[0].comments, vec![b]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn old_issues_have_no_comments() {
+        let v = r#"{"key":"HAR-1","title":"t","created":1,"status":"backlog"}"#;
+        let i: Issue = serde_json::from_str(v).unwrap();
+        assert!(i.comments.is_empty());
     }
 
     #[test]

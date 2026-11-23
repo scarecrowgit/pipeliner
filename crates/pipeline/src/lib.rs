@@ -19,7 +19,7 @@ use gpui::{App, AppContext as _, Context, Entity, Global};
 
 pub use def::{Delegate, PipelineDef, StepDef, StepKind, Tools, WorkdirDef};
 pub use model::{
-    AgentUsage, CoderTask, Decision, Issue, IssueStatus, LogKind, LogLine, Render, Run, RunStatus,
+    AgentUsage, CoderTask, Comment, Decision, Issue, IssueStatus, LogKind, LogLine, Render, Run, RunStatus,
     RunWorkdir, Stage, StageStatus,
 };
 pub use stages::Job;
@@ -302,6 +302,30 @@ impl Pipelines {
             return;
         }
         let _ = model::update_issue(key, |i| i.pipeline = pipeline.to_string());
+        self.issues = model::load_issues();
+        cx.notify();
+    }
+
+    /// Post a comment on issue `key` as [`model::comment_author`]. `mentions` are the
+    /// names the text `@mentions` (the screen resolves them).
+    pub fn add_comment(
+        &mut self,
+        key: &str,
+        text: &str,
+        mentions: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let added = model::add_comment_in(&model::issues_path(), key, &model::comment_author(), text, mentions)?;
+        if added.is_none() {
+            anyhow::bail!("Nothing to post");
+        }
+        self.issues = model::load_issues();
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn delete_comment(&mut self, key: &str, id: u32, cx: &mut Context<Self>) {
+        let _ = model::delete_comment_in(&model::issues_path(), key, id);
         self.issues = model::load_issues();
         cx.notify();
     }
