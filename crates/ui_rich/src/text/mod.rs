@@ -100,6 +100,8 @@ actions!(
 /// `ctrl-` variants for clipboard, select all, undo and redo; `alt-` and `ctrl-` word
 /// movement and deletion; Home/End and their shift variants.
 pub fn bind_keys(cx: &mut App) {
+    // Selection and copy inside rendered Markdown.
+    crate::markdown::bind_keys(cx);
     let mut bindings = Vec::new();
     for ctx in ["TextInput", "TextArea"] {
         let c = Some(ctx);

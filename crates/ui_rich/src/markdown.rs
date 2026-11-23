@@ -1,1 +1,27 @@
-//! Markdown rendered as selectable blocks: prose, lists, code, tables, links.
+//! Markdown for agent and user text.
+//!
+//! - [`parse`] turns Markdown (finished or still streaming) into a [`Document`]: a block tree
+//!   of paragraphs, headings, lists, quotes, code blocks, tables and rules with inline runs.
+//!   It is GPUI-free; [`parse_cached`] keeps parsed documents keyed by their text.
+//! - [`Markdown`] is the view: the Graphite type scale, inline code and `@mention` boxes,
+//!   links with an `on_link` callback, code blocks with a copy button, tables that scroll
+//!   sideways, and mouse selection across blocks copied with Cmd/Ctrl+C ([`bind_keys`]).
+//! - [`plain_text`] and [`first_paragraph`] strip the Markdown for previews and list rows.
+
+mod cache;
+mod element;
+mod layout;
+mod parse;
+mod render;
+mod rich;
+mod selection;
+mod view;
+mod wrap;
+
+#[cfg(test)]
+mod tests;
+
+pub use cache::{ParseCache, parse_cached};
+pub use parse::{Align, Block, Document, Inline, Item, List, Style, Table, parse};
+pub use rich::{first_paragraph, plain_text};
+pub use view::{Copy, KEY_CONTEXT, LinkHandler, Markdown, SelectAll, bind_keys};

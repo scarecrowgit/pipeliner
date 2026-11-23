@@ -65,6 +65,7 @@ icon_names! {
     ChevronRight => "chevron-right",
     Clock => "clock",
     Cloud => "cloud",
+    Copy => "copy",
     Download => "download",
     Edit => "edit",
     External => "external",
