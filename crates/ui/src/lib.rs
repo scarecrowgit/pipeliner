@@ -18,7 +18,7 @@ use gpui::{
     div, prelude::*, px, size,
 };
 
-actions!(harness, [Quit, ToggleChatHistory, NewChat]);
+actions!(harness, [Quit, ToggleChatHistory, NewChat, ToggleSidebar]);
 
 /// Global setup every window needs: keybindings for text inputs, quit.
 pub fn init(cx: &mut App) {
@@ -29,11 +29,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", ToggleChatHistory, None),
         KeyBinding::new("ctrl-n", NewChat, None),
         KeyBinding::new("cmd-n", NewChat, None),
+        KeyBinding::new("ctrl-\\", ToggleSidebar, None),
+        KeyBinding::new("cmd-\\", ToggleSidebar, None),
     ]);
     cx.on_action(|_: &NewChat, cx| {
         nav::set_history_open(false, cx);
         nav::request_chat(nav::ChatRequest::New, cx);
     });
+    cx.on_action(|_: &ToggleSidebar, cx| nav::toggle_sidebar(cx));
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &ToggleChatHistory, cx| {
         let open = nav::history_open(cx);

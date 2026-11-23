@@ -17,6 +17,7 @@ Each screen also runs standalone: `cargo run -p screen_editor --example screen_e
 titles, messages, files and folders with `in:` `agent:` `is:` `has:files` chips, status filters, time
 groups, preview, Open / Fork / Pin / Archive (with Undo), and Select mode for bulk archive, Markdown
 export (to `~/Downloads`) and delete. Pins and archive live in `~/.local/share/harness/chat_flags.json`.
+The button next to the workspace name (or `Ctrl+\`) switches the sidebar between wide and icon-only; the choice is saved in `~/.local/share/harness/sidebar`.
 Home shows the dashboard (mock pipeline data; running and waiting chats are real).
 
 ## Inbox
