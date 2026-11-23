@@ -14,6 +14,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod dev;
 pub mod layout;
 pub mod motion;
 pub mod theme;

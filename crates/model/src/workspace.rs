@@ -89,3 +89,29 @@ impl Default for Settings {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpState {
+    #[default]
+    Starting,
+    Ready,
+    /// Did not start, or died. `McpServerInfo::error` says why.
+    Failed,
+    /// Switched off in the config.
+    Disabled,
+}
+
+/// An MCP server as the chat's context panel shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerInfo {
+    pub name: String,
+    pub state: McpState,
+    /// Tools it offers once ready.
+    pub tools: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Where its config came from: `config.toml`, `.mcp.json`, `~/.claude.json`.
+    #[serde(default)]
+    pub source: String,
+}
