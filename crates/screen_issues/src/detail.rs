@@ -2,21 +2,22 @@
 //! controls, activity feed and the comment box.
 
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, IntoElement, MouseDownEvent, SharedString, Window,
-    deferred, div, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, IntoElement, MouseDownEvent, SharedString, StyledText,
+    TextRun, Window, deferred, div, font, prelude::*, px,
 };
 use ui::images;
 use ui::nav::{Screen, navigate};
 use ui::theme::*;
-use ui::{Button, ButtonVariant, checkbox, icon, spawn_chip, status_dot};
+use ui::{Button, ButtonVariant, Status, checkbox, icon, kbd, spawn_chip, status_dot};
 
 use crate::IssuesScreen;
 use crate::attach::{Target, can_post};
+use crate::comments::{self, Span};
 use crate::data::{
-    Activity, Actor, Column, Issue, RunState, Runner, RunnerKind, Trigger, WARNING_LINE,
-    person_name,
+    self, Activity, Actor, Column, Issue, RunState, Runner, RunnerId, RunnerKind, Trigger,
+    WARNING_LINE, Wake, WakeOutcome, person_name,
 };
-use crate::widgets::{person_avatar, runner_tile, small};
+use crate::widgets::{Ellipsis, person_avatar, runner_tile, runner_tile_sized, small};
 
 /// Width of the `dt` column in the properties grid.
 const DT_WIDTH: f32 = 96.;
@@ -81,7 +82,7 @@ impl IssuesScreen {
             .when_some(issue.runner(), |d, runner| {
                 d.child(self.render_run_section(issue, runner, cx))
             })
-            .child(self.render_activity(issue, cx))
+            .child(self.render_activity(issue, window, cx))
             .into_any_element()
     }
 
@@ -507,11 +508,28 @@ impl IssuesScreen {
             )
     }
 
-    fn render_activity(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_activity(
+        &self,
+        issue: &Issue,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let can_post = can_post(
             self.comment_input.read(cx).text().trim().is_empty(),
             self.comment_images.len(),
             self.comment_loading(),
+        );
+        let focused = self.comment_input.read(cx).is_focused(window);
+        let comment_count = issue.activity.iter().filter(|a| a.comment).count();
+        let counts = format!(
+            "{} · {} {}",
+            issue.activity.len(),
+            comment_count,
+            if comment_count == 1 {
+                "comment"
+            } else {
+                "comments"
+            }
         );
         div()
             .flex()
@@ -520,49 +538,70 @@ impl IssuesScreen {
             .gap(px(12.))
             .px(px(20.))
             .py(px(16.))
-            .child(div().font_weight(FontWeight::MEDIUM).child("Activity"))
+            .child(
+                div()
+                    .flex()
+                    .items_baseline()
+                    .gap(px(6.))
+                    .child(div().font_weight(FontWeight::MEDIUM).child("Activity"))
+                    .child(small(counts, TEXT_MUTED)),
+            )
             .children(
                 issue
                     .activity
                     .iter()
                     .enumerate()
-                    .map(|(n, a)| activity_item(n as u64, a)),
+                    .map(|(ix, a)| self.activity_item(ix, a, cx)),
             )
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_col()
                     .gap(px(6.))
+                    .mt(px(4.))
                     .child(small(
                         "Comment · @mention an agent or pipeline to wake it up",
                         TEXT_MUTED,
                     ))
                     .child(
                         div()
-                            .id("comment-box")
-                            .flex()
-                            .flex_col()
-                            .rounded(px(RADIUS_LG))
-                            .border_1()
-                            .border_color(LINE_STRONG)
-                            .bg(SURFACE_RAISED)
-                            .text_color(TEXT)
-                            .drag_over::<gpui::ExternalPaths>(|s, _, _, _| {
-                                s.border_color(ACCENT).bg(ACCENT_GLOW)
-                            })
-                            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
-                                this.add_paths(Target::Comment, paths.paths().to_vec(), cx)
-                            }))
+                            .relative()
+                            .children(self.render_mention_list(issue, cx))
                             .child(
                                 div()
+                                    .id("comment-box")
                                     .flex()
-                                    .items_start()
-                                    .min_h(px(40.))
-                                    .px(px(10.))
-                                    .py(px(8.))
-                                    .child(self.comment_input.clone()),
-                            )
-                            .children(self.comment_pending_row(cx)),
+                                    .flex_col()
+                                    .rounded(px(RADIUS_LG))
+                                    .border_1()
+                                    .border_color(if focused { ACCENT_STRONG } else { LINE_STRONG })
+                                    .when(focused, |d| d.shadow(selected_glow()))
+                                    .bg(SURFACE_RAISED)
+                                    .text_color(TEXT)
+                                    .drag_over::<gpui::ExternalPaths>(|s, _, _, _| {
+                                        s.border_color(ACCENT).bg(ACCENT_GLOW)
+                                    })
+                                    .on_drop(cx.listener(
+                                        |this, paths: &gpui::ExternalPaths, _, cx| {
+                                            this.add_paths(
+                                                Target::Comment,
+                                                paths.paths().to_vec(),
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_start()
+                                            .min_h(px(40.))
+                                            .px(px(10.))
+                                            .py(px(8.))
+                                            .child(self.comment_input.clone()),
+                                    )
+                                    .children(self.comment_pending_row(cx)),
+                            ),
                     )
                     .children(self.comment_error_line())
                     .child(
@@ -585,8 +624,9 @@ impl IssuesScreen {
                                     .min_w_0()
                                     .text_size(px(12.))
                                     .text_color(TEXT_MUTED)
-                                    .child("Paste or drop images"),
+                                    .child("Mentions wake the agent when you post"),
                             )
+                            .child(kbd("↵"))
                             .child(
                                 Button::new("post-comment", "Comment")
                                     .small()
@@ -596,54 +636,288 @@ impl IssuesScreen {
                     ),
             )
     }
-}
 
-fn activity_item(n: u64, a: &Activity) -> impl IntoElement {
-    let person = a.actor == Actor::Person;
-    let tile_bg: Hsla = match a.actor {
-        Actor::Pipeline => INFO_SOFT,
-        Actor::Agent if a.spawn => SPAWN_SOFT,
-        Actor::Agent => ACCENT_SOFT,
-        Actor::Person => SURFACE_HOVER,
-    };
-    let who: SharedString = if person {
-        person_name(&a.who)
-            .map(SharedString::from)
-            .unwrap_or_else(|| a.who.clone())
-    } else {
-        a.who.clone()
-    };
-    let tile = if person {
-        person_avatar(&a.who, 22., 9.)
-    } else {
-        div()
-            .size(px(22.))
-            .flex_none()
-            .rounded(px(RADIUS_MD))
-            .bg(tile_bg)
-    };
+    /// The @mention autocomplete, above the comment box (nothing when closed).
+    fn render_mention_list(&self, issue: &Issue, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.mention_open(cx) {
+            return None;
+        }
+        let (_, query) = self.mention_token(cx)?;
+        let rows = self.mention_rows(cx);
+        let selected = self.mention_ix.min(rows.len().saturating_sub(1));
+        let header = if rows.is_empty() {
+            format!("No agent, orchestrator or pipeline matches “{query}”")
+        } else if query.is_empty() {
+            format!(
+                "Agents, orchestrators and pipelines · {}",
+                data::RUNNERS.len()
+            )
+        } else {
+            format!(
+                "Matching “{query}” · {} of {}",
+                rows.len(),
+                data::RUNNERS.len()
+            )
+        };
 
-    div().flex().gap(px(10.)).child(tile).child(
-        div()
+        let list = div()
+            .id("mention-list")
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_full()
             .flex()
             .flex_col()
-            .flex_1()
-            .min_w_0()
+            .p(px(4.))
+            .rounded(px(RADIUS_XL))
+            .border_1()
+            .border_color(LINE_STRONG)
+            .bg(SURFACE)
+            .shadow(popover_shadow())
+            .occlude()
+            .child(
+                div()
+                    .px(px(8.))
+                    .pt(px(6.))
+                    .pb(px(4.))
+                    .text_size(px(12.))
+                    .text_color(TEXT_MUTED)
+                    .child(header),
+            )
+            .children(rows.into_iter().enumerate().map(|(ix, (id, matched))| {
+                self.mention_row(issue, ix, id, matched, ix == selected, cx)
+            }))
             .child(
                 div()
                     .flex()
-                    .gap(px(4.))
+                    .flex_wrap()
+                    .items_center()
+                    .gap_x(px(10.))
+                    .gap_y(px(4.))
+                    .mt(px(4.))
+                    .px(px(8.))
+                    .pt(px(6.))
+                    .pb(px(4.))
+                    .border_t_1()
+                    .border_color(LINE_SUBTLE)
                     .text_size(px(12.))
+                    .text_color(TEXT_MUTED)
+                    .child(hint(vec![kbd("↑"), kbd("↓")], "move"))
+                    .child(hint(vec![kbd("↵")], "insert"))
+                    .child(hint(vec![kbd("esc")], "close")),
+            );
+
+        Some(
+            deferred(ui::motion::pop_in(
+                "mention-list-in",
+                ui::motion::Pop::Above,
+                list,
+            ))
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    fn mention_row(
+        &self,
+        issue: &Issue,
+        ix: usize,
+        id: RunnerId,
+        matched: std::ops::Range<usize>,
+        highlighted: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let r = data::runner(id);
+        let offline = self.offline.contains(&id);
+        let on_issue = comments::on_issue(issue, id);
+        let sub = if offline {
+            format!(
+                "{} · runtime laptop offline · won't wake until it's back",
+                r.kind.label()
+            )
+        } else if on_issue {
+            format!(
+                "{} · on this issue now · gets your comment as input",
+                r.kind.label()
+            )
+        } else {
+            format!("{} · starts a new run on {}", r.kind.label(), issue.key)
+        };
+        let (status, status_color): (SharedString, Hsla) = if offline {
+            ("offline".into(), DANGER)
+        } else if on_issue && issue.is_running() {
+            ("running".into(), INFO)
+        } else if r.load.contains("running") {
+            (r.load.into(), INFO)
+        } else if r.load.contains("blocked") {
+            (r.load.into(), WARNING)
+        } else {
+            (r.load.into(), TEXT_MUTED)
+        };
+
+        let name_parts = [
+            (r.name[..matched.start].to_string(), TEXT),
+            (r.name[matched.clone()].to_string(), ACCENT_TEXT),
+            (r.name[matched.end..].to_string(), TEXT),
+        ];
+
+        div()
+            .id(SharedString::from(format!("mention-{}", r.id)))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .min_h(px(44.))
+            .px(px(8.))
+            .py(px(6.))
+            .rounded(px(RADIUS_MD))
+            .cursor_pointer()
+            .when(highlighted, |d| d.bg(SURFACE_HOVER))
+            .hover(|s| s.bg(SURFACE_HOVER))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered && this.mention_ix != ix {
+                    this.mention_ix = ix;
+                    cx.notify();
+                }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| this.insert_mention(ix, window, cx)))
+            .child(runner_tile_sized(r.kind, 24.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(colored_text(&name_parts, FontWeight::MEDIUM))
                     .child(
                         div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(if a.spawn { SPAWN_TEXT } else { TEXT })
-                            .child(who),
-                    )
-                    .child(div().text_color(TEXT_MUTED).child(a.when.clone())),
+                            .ellipsis()
+                            .text_size(px(12.))
+                            .line_height(px(16.))
+                            .text_color(TEXT_MUTED)
+                            .child(sub),
+                    ),
             )
-            .when(!a.text.is_empty(), |d| {
-                d.child(
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(px(12.))
+                    .text_color(status_color)
+                    .child(status),
+            )
+            .into_any_element()
+    }
+
+    fn activity_item(&self, ix: usize, a: &Activity, cx: &mut Context<Self>) -> AnyElement {
+        let person = a.actor == Actor::Person;
+        let tile_bg: Hsla = match a.actor {
+            Actor::Pipeline => INFO_SOFT,
+            Actor::Agent if a.spawn => SPAWN_SOFT,
+            Actor::Agent => ACCENT_SOFT,
+            Actor::Person => SURFACE_HOVER,
+        };
+        let who: SharedString = if person {
+            person_name(&a.who)
+                .map(SharedString::from)
+                .unwrap_or_else(|| a.who.clone())
+        } else {
+            a.who.clone()
+        };
+        let tile = if person {
+            person_avatar(&a.who, 22., 9.)
+        } else {
+            div()
+                .size(px(22.))
+                .flex_none()
+                .rounded(px(RADIUS_MD))
+                .bg(tile_bg)
+        };
+
+        let meta = if let Some(by) = &a.woken_by {
+            colored_text(
+                &[
+                    (format!("{} · woken by ", a.when), TEXT_MUTED),
+                    ("@mention".to_string(), TEXT_SECONDARY),
+                    (format!(" from {by}"), TEXT_MUTED),
+                ],
+                FontWeight::NORMAL,
+            )
+        } else if a.comment {
+            colored_text(
+                &[(format!("{} · comment", a.when), TEXT_MUTED)],
+                FontWeight::NORMAL,
+            )
+        } else {
+            colored_text(&[(a.when.to_string(), TEXT_MUTED)], FontWeight::NORMAL)
+        };
+        let header = div()
+            .flex()
+            .gap(px(4.))
+            .text_size(px(12.))
+            .child(
+                div()
+                    .flex_none()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(if a.spawn { SPAWN_TEXT } else { TEXT })
+                    .child(who),
+            )
+            .child(div().min_w_0().child(meta));
+
+        let body = rich_text(
+            &a.text,
+            if a.spawn_note {
+                SPAWN_TEXT
+            } else {
+                TEXT_SECONDARY
+            },
+        );
+
+        let image_row = (!a.images.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.))
+                .children(a.images.iter().enumerate().map(|(n, image)| {
+                    images::image_card(("comment-card", (ix * 100 + n) as u64), image, 160., 90.)
+                }))
+        });
+
+        let content = if a.comment {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .flex_1()
+                .min_w_0()
+                .child(header)
+                .when(!a.text.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(RADIUS_LG))
+                            .border_1()
+                            .border_color(LINE)
+                            .bg(SURFACE)
+                            .text_color(TEXT_SECONDARY)
+                            .child(body),
+                    )
+                })
+                .children(image_row)
+                .children(
+                    a.wakes
+                        .iter()
+                        .enumerate()
+                        .map(|(wi, w)| self.receipt(ix, wi, w, cx)),
+                )
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .child(header)
+                .child(
                     div()
                         .text_color(if a.spawn_note {
                             SPAWN_TEXT
@@ -658,15 +932,162 @@ fn activity_item(n: u64, a: &Activity) -> impl IntoElement {
                                 .border_1()
                                 .border_color(WARNING_LINE)
                         })
-                        .child(a.text.clone()),
+                        .child(body),
                 )
-            })
-            .when(!a.images.is_empty(), |d| {
-                d.child(div().flex().flex_wrap().gap(px(8.)).mt(px(6.)).children(
-                    a.images.iter().enumerate().map(|(ix, image)| {
-                        images::image_card(("comment-card", n * 100 + ix as u64), image, 160., 90.)
-                    }),
-                ))
+                .children(image_row.map(|row| row.mt(px(6.))))
+        };
+
+        div()
+            .flex()
+            .gap(px(10.))
+            .child(tile)
+            .child(content)
+            .into_any_element()
+    }
+
+    /// What a mention did: woken (with a link to the run) or not woken (with Retry).
+    fn receipt(
+        &self,
+        activity_ix: usize,
+        wake_ix: usize,
+        w: &Wake,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let r = data::runner(w.runner);
+        let (dot, text) = match &w.outcome {
+            WakeOutcome::Woken { run } => (
+                Status::Running,
+                colored_text(
+                    &[
+                        (format!("{} woken", r.name), INFO),
+                        (
+                            format!(" · run {run} on this issue · comment passed as input"),
+                            TEXT_MUTED,
+                        ),
+                    ],
+                    FontWeight::NORMAL,
+                ),
+            ),
+            WakeOutcome::NotWoken { reason } => (
+                Status::Error,
+                colored_text(
+                    &[
+                        (format!("{} not woken", r.name), DANGER),
+                        (format!(" · {reason}"), TEXT_MUTED),
+                    ],
+                    FontWeight::NORMAL,
+                ),
+            ),
+        };
+        let id = format!("receipt-{activity_ix}-{wake_ix}");
+        let action = match &w.outcome {
+            WakeOutcome::Woken { .. } => {
+                let screen = if r.kind == RunnerKind::Pipeline {
+                    Screen::PipelineEditor
+                } else {
+                    Screen::Chat
+                };
+                link_button(format!("{id}-open"), "Open run")
+                    .on_click(move |_, _, cx| navigate(screen, cx))
+            }
+            WakeOutcome::NotWoken { .. } => link_button(format!("{id}-retry"), "Retry now")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.retry_wake(activity_ix, wake_ix, cx);
+                })),
+        };
+
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(8.))
+            .gap_y(px(6.))
+            .text_size(px(12.))
+            .line_height(px(16.))
+            .text_color(TEXT_MUTED)
+            .child(status_dot(dot, true))
+            .child(div().min_w_0().child(text))
+            .child(action)
+            .into_any_element()
+    }
+}
+
+/// `kbd` keys followed by a label.
+fn hint(keys: Vec<gpui::Div>, label: &'static str) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .children(keys)
+        .child(label)
+}
+
+/// Text-style button in a receipt line ("Open run", "Retry now").
+fn link_button(id: String, text: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(id))
+        .px(px(4.))
+        .rounded(px(RADIUS_SM))
+        .text_color(TEXT_SECONDARY)
+        .cursor_pointer()
+        .hover(|s| s.bg(SURFACE_HOVER))
+        .child(text)
+}
+
+fn text_run(
+    len: usize,
+    family: &str,
+    weight: FontWeight,
+    color: Hsla,
+    bg: Option<Hsla>,
+) -> TextRun {
+    let mut f = font(family.to_string());
+    f.weight = weight;
+    TextRun {
+        len,
+        font: f,
+        color,
+        background_color: bg,
+        underline: None,
+        strikethrough: None,
+    }
+}
+
+/// One text made of colored pieces (empty pieces are dropped).
+fn colored_text(parts: &[(String, Hsla)], weight: FontWeight) -> StyledText {
+    let parts: Vec<_> = parts.iter().filter(|(s, _)| !s.is_empty()).collect();
+    let text: String = parts.iter().map(|(s, _)| s.as_str()).collect();
+    let runs = parts
+        .iter()
+        .map(|(s, color)| text_run(s.len(), FONT_SANS, weight, *color, None))
+        .collect();
+    StyledText::new(text).with_runs(runs)
+}
+
+/// Activity / comment text: `@mentions` as accent chips, `code` in mono, rest in `base`.
+fn rich_text(text: &str, base: Hsla) -> StyledText {
+    let mut out = String::new();
+    let mut runs = Vec::new();
+    for span in comments::mention_spans(text) {
+        let (range, run): (_, fn(usize, Hsla) -> TextRun) = match span {
+            Span::Text(r) => (r, |len, base| {
+                text_run(len, FONT_SANS, FontWeight::NORMAL, base, None)
             }),
-    )
+            Span::Mention(r, _) => (r, |len, _| {
+                text_run(
+                    len,
+                    FONT_SANS,
+                    FontWeight::MEDIUM,
+                    ACCENT_TEXT,
+                    Some(ACCENT_SOFT),
+                )
+            }),
+            Span::Code(r) => (r, |len, _| {
+                text_run(len, FONT_MONO, FontWeight::NORMAL, TEXT, None)
+            }),
+        };
+        out.push_str(&text[range.clone()]);
+        runs.push(run(range.len(), base));
+    }
+    StyledText::new(out).with_runs(runs)
 }

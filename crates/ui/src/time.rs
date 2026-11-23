@@ -1,6 +1,34 @@
 //! Local-time helpers for "12m", "Sat 18:20", "Nov 9" style labels and calendar
 //! grouping (no date crate: the UTC offset comes from libc `localtime_r`).
 
+/// How often relative-time labels ("now", "12m") are re-rendered.
+pub const AGE_REFRESH: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Re-render the entity every `AGE_REFRESH` while it is alive, so relative ages stay current.
+pub fn refresh_ages<T: 'static>(cx: &mut gpui::Context<T>) -> gpui::Task<()> {
+    refresh_ages_when(cx, |_| true)
+}
+
+/// Like [`refresh_ages`], but only notifies while `needed(&entity)` holds (e.g. a picker is open).
+pub fn refresh_ages_when<T: 'static>(
+    cx: &mut gpui::Context<T>,
+    needed: impl Fn(&T) -> bool + 'static,
+) -> gpui::Task<()> {
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor().timer(AGE_REFRESH).await;
+            let alive = this.update(cx, |this, cx| {
+                if needed(this) {
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
+                return;
+            }
+        }
+    })
+}
+
 pub const MONTHS: [&str; 12] = [
     "January", "February", "March", "April", "May", "June", "July", "August", "September",
     "October", "November", "December",

@@ -1,5 +1,7 @@
 //! App-wide navigation: which screen is shown. Any screen can call [`navigate`].
 
+use std::path::{Path, PathBuf};
+
 use gpui::{App, AppContext, Context, Entity, Global, SharedString, Subscription, Window};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -39,6 +41,8 @@ pub struct Nav {
     pub inbox_count: usize,
     /// Inbox item to select next time the Inbox screen renders (one-shot).
     pub inbox_focus: Option<SharedString>,
+    /// The sidebar shows only icons (56px) instead of the wide column. Saved on disk.
+    pub sidebar_collapsed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +97,8 @@ pub fn install(initial: Screen, cx: &mut App) -> Entity<Nav> {
         inbox_version: 0,
         inbox_count: 0,
         inbox_focus: None,
+        sidebar_collapsed: sidebar_state_path()
+            .is_some_and(|p| load_sidebar_collapsed(&p)),
     });
     cx.set_global(GlobalNav(nav.clone()));
     nav
@@ -260,4 +266,107 @@ pub fn open_inbox_item(id: impl Into<SharedString>, cx: &mut App) {
 pub fn take_inbox_focus(cx: &mut App) -> Option<SharedString> {
     let nav = nav_entity(cx)?;
     nav.update(cx, |n, _| n.inbox_focus.take())
+}
+
+// ── Sidebar mode ────────────────────────────────────────────────────────
+
+/// `$XDG_DATA_HOME/harness/sidebar` (absolute `XDG_DATA_HOME` only), else
+/// `~/.local/share/harness/sidebar`.
+fn sidebar_state_path() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .map(|h| h.join(".local").join("share"))
+        })?;
+    Some(data.join("harness").join("sidebar"))
+}
+
+fn serialize_sidebar_collapsed(collapsed: bool) -> &'static str {
+    if collapsed { "collapsed" } else { "expanded" }
+}
+
+/// `collapsed` → true; anything else (unknown content) → false.
+fn parse_sidebar_collapsed(text: &str) -> bool {
+    text.trim() == "collapsed"
+}
+
+/// Read the saved mode from `path`; a missing or unreadable file means expanded.
+fn load_sidebar_collapsed(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|t| parse_sidebar_collapsed(&t))
+}
+
+/// Write the mode to a temp file next to `path`, then rename it into place.
+fn save_sidebar_collapsed(path: &Path, collapsed: bool) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, serialize_sidebar_collapsed(collapsed))?;
+    std::fs::rename(&tmp, path)
+}
+
+pub fn sidebar_collapsed(cx: &App) -> bool {
+    nav_entity(cx).is_some_and(|n| n.read(cx).sidebar_collapsed)
+}
+
+/// Switch the sidebar mode, re-render observers and save the choice (best effort).
+pub fn set_sidebar_collapsed(collapsed: bool, cx: &mut App) {
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            if n.sidebar_collapsed != collapsed {
+                n.sidebar_collapsed = collapsed;
+                if let Some(path) = sidebar_state_path() {
+                    let _ = save_sidebar_collapsed(&path, collapsed);
+                }
+                cx.notify();
+            }
+        });
+    }
+}
+
+pub fn toggle_sidebar(cx: &mut App) {
+    let collapsed = sidebar_collapsed(cx);
+    set_sidebar_collapsed(!collapsed, cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("harness-nav-test-{}-{name}", std::process::id()))
+            .join("harness")
+            .join("sidebar")
+    }
+
+    #[test]
+    fn sidebar_mode_round_trip() {
+        let path = temp_path("round-trip");
+        save_sidebar_collapsed(&path, true).unwrap();
+        assert!(load_sidebar_collapsed(&path));
+        save_sidebar_collapsed(&path, false).unwrap();
+        assert!(!load_sidebar_collapsed(&path));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn missing_file_is_expanded() {
+        assert!(!load_sidebar_collapsed(&temp_path("missing")));
+    }
+
+    #[test]
+    fn garbage_is_expanded() {
+        let path = temp_path("garbage");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "wat\u{0}\n").unwrap();
+        assert!(!load_sidebar_collapsed(&path));
+        assert!(!parse_sidebar_collapsed(""));
+        assert!(parse_sidebar_collapsed("collapsed\n"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
 }

@@ -250,7 +250,7 @@ pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
             )
             .child(
                 div()
-                    .w(px(52.))
+                    .w(px(60.))
                     .flex_none()
                     .flex()
                     .justify_end()

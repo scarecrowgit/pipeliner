@@ -445,33 +445,39 @@ impl Render for PipelineEditorScreen {
         div()
             .id("pipeline-editor")
             .size_full()
-            .overflow_y_scroll()
+            .flex()
+            .flex_col()
             .bg(BG)
             .text_color(TEXT)
+            .child(div().flex_none().w_full().child(self.render_header(cx)))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
                     .w_full()
-                    .child(self.render_header(cx))
+                    .flex()
                     .child(
                         div()
-                            .flex()
-                            .w_full()
+                            .id("editor-main-scroll")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .border_r_1()
+                            .border_color(LINE)
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .border_r_1()
-                                    .border_color(LINE)
+                                    .flex_none()
+                                    .w_full()
                                     .child(self.render_toolbar(cx))
                                     .child(self.render_canvas(window, cx))
                                     .child(self.render_run_panel(cx)),
-                            )
-                            .child(self.render_inspector(window, cx)),
-                    ),
+                            ),
+                    )
+                    .child(self.render_inspector(window, cx)),
             )
     }
 }
