@@ -21,6 +21,7 @@ mod blobs;
 mod catalog;
 mod codec;
 mod db;
+pub mod import_v1;
 mod inbox;
 mod issues;
 mod ledger;
