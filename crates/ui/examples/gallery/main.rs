@@ -4,6 +4,7 @@
 mod choice;
 mod containers;
 mod lists;
+mod overlays;
 mod status;
 
 use gpui::{AnyElement, Context, Render, Window, div};
@@ -21,6 +22,10 @@ struct Gallery {
     seg_full: usize,
     chips: [bool; 3],
     clicks: usize,
+    archived: bool,
+    dlg_option: usize,
+    dlg_steps: i32,
+    dlg_rollout: usize,
 }
 
 impl Render for Gallery {
@@ -36,6 +41,7 @@ impl Render for Gallery {
                         .gap(px(SPACE_8))
                         .child(div().type_style(TITLE_LG).child("Graphite components"))
                         .child(self.actions(cx))
+                        .child(self.overlays(cx))
                         .child(self.status())
                         .child(self.choice(cx))
                         .child(self.containers())
@@ -157,6 +163,10 @@ fn main() {
             seg_full: 0,
             chips: [true, false, false],
             clicks: 0,
+            archived: false,
+            dlg_option: 0,
+            dlg_steps: 2,
+            dlg_rollout: 0,
         })
     });
 }

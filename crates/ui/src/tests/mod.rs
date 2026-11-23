@@ -1,6 +1,8 @@
 //! Tests of the kit: the GPUI test harness itself, and clicks on every interactive component.
 
 mod interactions;
+mod keyboard;
+mod overlays;
 
 use gpui::{Context, IntoElement, Modifiers, ParentElement, Render, Styled, TestAppContext, Window, div, prelude::*, px};
 

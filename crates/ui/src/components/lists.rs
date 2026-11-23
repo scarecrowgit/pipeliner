@@ -7,7 +7,7 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use super::{ClickHandler, CountBadge, Kbd, Status, StatusDot};
+use super::{ClickHandler, CountBadge, Kbd, Status, StatusDot, Tag};
 use crate::assets::{IconName, icon};
 use crate::layout::{col, grow, row, truncate_lh};
 use crate::motion::{self, Look};
@@ -220,20 +220,26 @@ impl RenderOnce for ListItem {
 /// One row of a popover or dialog list: an optional check column, an optional icon or tile,
 /// a label with an optional muted sub-line, and a hint or key cap on the right. 36px tall at
 /// least. `checked` marks the current choice; `selected` the keyboard or pointer position.
+/// `disabled` rows are dimmed and skipped; `coming_soon` is the app's way of showing a
+/// feature that is not there yet: disabled, with a "Coming soon" tag at the right.
 #[derive(IntoElement)]
 pub struct MenuItem {
-    id: ElementId,
-    label: SharedString,
+    pub(crate) id: ElementId,
+    pub(crate) label: SharedString,
     sub: Option<SharedString>,
     icon: Option<IconName>,
     tile: Option<AnyElement>,
     hint: Option<SharedString>,
     kbd: Option<SharedString>,
     check_column: bool,
-    checked: bool,
-    selected: bool,
+    pub(crate) checked: bool,
+    pub(crate) selected: bool,
     danger: bool,
-    on_click: Option<ClickHandler>,
+    pub(crate) disabled: bool,
+    coming_soon: bool,
+    pub(crate) on_click: Option<ClickHandler>,
+    /// Set by a [`Menu`](crate::menu::Menu): the pointer moved over the row.
+    pub(crate) on_move: Option<crate::overlay::Callback>,
 }
 
 impl MenuItem {
@@ -251,7 +257,10 @@ impl MenuItem {
             checked: false,
             selected: false,
             danger: false,
+            disabled: false,
+            coming_soon: false,
             on_click: None,
+            on_move: None,
         }
     }
 
@@ -310,6 +319,19 @@ impl MenuItem {
         self
     }
 
+    /// Dimmed; not clickable, and skipped by the keyboard in a menu.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// A feature that is not there yet: disabled, with a "Coming soon" tag at the right.
+    pub fn coming_soon(mut self) -> Self {
+        self.coming_soon = true;
+        self.disabled = true;
+        self
+    }
+
     /// Called when the row is clicked.
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(f));
@@ -319,8 +341,14 @@ impl MenuItem {
 
 impl RenderOnce for MenuItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let fg: Hsla = if self.danger { DANGER } else { TEXT };
-        let (r, h) = motion::row_looks(self.selected, SURFACE_HOVER);
+        let disabled = self.disabled;
+        let fg: Hsla = match (disabled, self.danger) {
+            (true, _) => TEXT_DISABLED,
+            (false, true) => DANGER,
+            (false, false) => TEXT,
+        };
+        let (r, h) = motion::row_looks(self.selected && !disabled, SURFACE_HOVER);
+        let h = if disabled { r } else { h };
         let selector = self.id.to_string();
         let faded =
             motion::hover_fade_state(self.id.clone(), r.fg(fg), h.fg(fg), window, cx);
@@ -334,7 +362,8 @@ impl RenderOnce for MenuItem {
             .py(px(SPACE_1_5))
             .rounded(px(RADIUS_MD))
             .type_style(BODY)
-            .cursor_pointer();
+            .when(!disabled, |d| d.cursor_pointer());
+        let sub_color = if disabled { TEXT_DISABLED } else { TEXT_MUTED };
         faded
             .apply(el)
             .when(self.check_column, |d| {
@@ -353,7 +382,7 @@ impl RenderOnce for MenuItem {
                     .flex_1()
                     .child(div().child(self.label))
                     .when_some(self.sub, |d, s| {
-                        d.child(div().type_style(LABEL).text_color(TEXT_MUTED).child(s))
+                        d.child(div().type_style(LABEL).text_color(sub_color).child(s))
                     }),
             )
             .when_some(self.hint, |d, h| {
@@ -367,7 +396,11 @@ impl RenderOnce for MenuItem {
                 )
             })
             .when_some(self.kbd, |d, k| d.child(Kbd::new(k)))
-            .when_some(self.on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
+            .when(self.coming_soon, |d| d.child(Tag::new("Coming soon")))
+            .when_some(self.on_move, |d, f| d.on_mouse_move(move |_, w, cx| f(w, cx)))
+            .when_some(self.on_click.filter(|_| !disabled), |d, f| {
+                d.on_click(move |e, w, cx| f(e, w, cx))
+            })
     }
 }
 

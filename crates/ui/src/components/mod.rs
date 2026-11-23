@@ -20,7 +20,6 @@ mod identity;
 mod lists;
 mod status;
 mod table;
-mod tooltip;
 
 pub use actions::{Button, IconButton, Link};
 pub use choice::{Chip, Segmented, Tabs};
@@ -28,7 +27,7 @@ pub use containers::{
     Banner, BannerTone, Card, CardFooter, CardHeader, Divider, KeyValue, Note, Section, Stat,
     StatStrip,
 };
-pub use controls::{Checkbox, Radio, SelectBox, Stepper, Toggle};
+pub use controls::{Checkbox, Radio, RadioGroup, SelectBox, Stepper, Toggle};
 pub use fields::{Field, InputFrame};
 pub use identity::{Avatar, Code, Tile, TileTone};
 pub use lists::{ListItem, MenuItem, NavItem, PopLabel, PopSeparator};
@@ -37,7 +36,8 @@ pub use status::{
     SpawnChip, Status, StatusDot, Tag, TagTone,
 };
 pub use table::{Align, Column, Table, TableRow};
-pub use tooltip::Tooltip;
+pub use crate::tooltip::Tooltip;
+pub(crate) use controls::radio_dot;
 
 use std::rc::Rc;
 

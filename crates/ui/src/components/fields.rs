@@ -67,6 +67,8 @@ pub struct InputFrame {
     small: bool,
     multiline: bool,
     focused: bool,
+    danger: bool,
+    sunken: bool,
     content: Vec<AnyElement>,
 }
 
@@ -82,6 +84,8 @@ impl InputFrame {
             small: false,
             multiline: false,
             focused: false,
+            danger: false,
+            sunken: false,
             content: Vec::new(),
         }
     }
@@ -127,6 +131,18 @@ impl InputFrame {
         self.focused = focused;
         self
     }
+
+    /// The `danger` border and halo of a type-to-confirm field for a destructive action.
+    pub fn danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
+    }
+
+    /// `surface` instead of `surface-raised`: a field inside a popover (the search slot).
+    pub fn sunken(mut self) -> Self {
+        self.sunken = true;
+        self
+    }
 }
 
 impl ParentElement for InputFrame {
@@ -139,7 +155,11 @@ impl RenderOnce for InputFrame {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border = motion::fade_color(
             child_id(&self.id, "border"),
-            if self.focused { ACCENT } else { LINE_STRONG },
+            match (self.danger, self.focused) {
+                (true, _) => DANGER,
+                (false, true) => ACCENT,
+                (false, false) => LINE_STRONG,
+            },
             window,
             cx,
         );
@@ -175,10 +195,11 @@ impl RenderOnce for InputFrame {
             .border_1()
             .border_color(border)
             .rounded(px(RADIUS_LG))
-            .bg(SURFACE_RAISED)
+            .bg(if self.sunken { SURFACE } else { SURFACE_RAISED })
             .text_color(TEXT)
             .type_style(BODY)
-            .when(self.focused, |d| d.shadow(input_glow()))
+            .when(self.danger, |d| d.shadow(danger_glow()))
+            .when(self.focused && !self.danger, |d| d.shadow(input_glow()))
             .when_some(self.icon, |d, i| d.child(icon(i, 14., TEXT_MUTED)))
             .child(body)
             .when_some(self.kbd, |d, k| d.child(Kbd::new(k)))

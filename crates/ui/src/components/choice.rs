@@ -8,6 +8,7 @@ use gpui::{
 };
 
 use super::{ClickHandler, ValueHandler, child_id};
+use crate::focus;
 use crate::assets::{IconName, icon};
 use crate::motion::{self, Look};
 use crate::theme::*;
@@ -64,6 +65,7 @@ impl Tabs {
 
 impl RenderOnce for Tabs {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let handles = focus::roving_handles(&self.id, self.tabs.len(), self.selected, window, cx);
         let tabs: Vec<_> = self
             .tabs
             .into_iter()
@@ -80,9 +82,8 @@ impl RenderOnce for Tabs {
                     window,
                     cx,
                 );
-                let el = div()
-                    .id(id)
-                    .debug_selector(move || selector)
+                let el = div().id(id).debug_selector(move || selector);
+                let el = focus::track(el, &handles[ix], cx)
                     .flex()
                     .flex_none()
                     .items_center()
@@ -106,8 +107,8 @@ impl RenderOnce for Tabs {
             })
             .collect();
         // The bar's hairline sits behind the tabs so the selected underline covers it.
-        div()
-            .id(self.id)
+        let root = div().id(self.id);
+        focus::roving_keys(root, handles, self.selected, false, self.on_select)
             .relative()
             .flex()
             .flex_none()
@@ -195,9 +196,8 @@ impl RenderOnce for Chip {
         let faded = motion::hover_fade_state(self.id.clone(), rest, hover, window, cx);
         let color = faded.fg.unwrap_or(fg);
         let count_color = if self.spawn { SPAWN_TEXT } else { TEXT_MUTED };
-        let el = div()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = div().id(self.id).debug_selector(move || selector);
+        let el = focus::tab_stop(el, false, cx)
             .flex()
             .flex_none()
             .items_center()
@@ -289,6 +289,7 @@ impl RenderOnce for Segmented {
         } else {
             (CONTROL_HEIGHT, 3., RADIUS_MD, BODY)
         };
+        let handles = focus::roving_handles(&self.id, self.options.len(), self.selected, window, cx);
         let items: Vec<_> = self
             .options
             .into_iter()
@@ -306,9 +307,8 @@ impl RenderOnce for Segmented {
                     cx,
                 );
                 let color = faded.fg.unwrap_or(TEXT_MUTED);
-                let el = div()
-                    .id(id)
-                    .debug_selector(move || selector)
+                let el = div().id(id).debug_selector(move || selector);
+                let el = focus::track(el, &handles[ix], cx)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -328,8 +328,8 @@ impl RenderOnce for Segmented {
                     .when_some(on_select, |d, f| d.on_click(move |_, w, cx| f(ix, w, cx)))
             })
             .collect();
-        div()
-            .id(self.id)
+        let root = div().id(self.id);
+        focus::roving_keys(root, handles, self.selected, false, self.on_select)
             .flex()
             .gap(px(SPACE_0_5))
             .h(px(h))

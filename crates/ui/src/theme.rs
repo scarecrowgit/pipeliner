@@ -187,6 +187,14 @@ pub const RADIUS_DIALOG: f32 = 12.0;
 /// Status pills, count badges, dots.
 pub const RADIUS_FULL: f32 = 999.0;
 
+// Dialogs.
+/// Default dialog width (the command palette's).
+pub const DIALOG_WIDTH: f32 = 640.0;
+/// Default distance of a dialog from the window's top, as a fraction of its height (12vh).
+pub const DIALOG_TOP: f32 = 0.12;
+/// Gap between blocks of a dialog body.
+pub const DIALOG_GAP: f32 = 18.0;
+
 // Control and row sizes.
 /// Buttons and inputs in headers and action bars.
 pub const CONTROL_HEIGHT: f32 = 40.0;
@@ -250,6 +258,8 @@ pub const DURATION_ENTER: Duration = Duration::from_millis(180);
 pub const DURATION_OVERLAY: Duration = Duration::from_millis(220);
 /// Toast rising from the bottom edge.
 pub const DURATION_TOAST: Duration = Duration::from_millis(240);
+/// How long a toast stays up when nobody hovers it.
+pub const TOAST_STAY: Duration = Duration::from_secs(4);
 
 /// A CSS `cubic-bezier(x1, y1, x2, y2)` timing function.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -340,6 +350,8 @@ pub const TITLE: TypeStyle = sans(20., 28., 600.);
 pub const STAT: TypeStyle = sans(28., 32., 600.);
 /// Numbers in a stats strip. 18/24, 500. Pair with `.tabular()`.
 pub const STAT_SM: TypeStyle = sans(18., 24., 500.);
+/// Dialog titles (`.dlg-h h2`). 15/22, 500.
+pub const TITLE_SM: TypeStyle = sans(15., 22., 500.);
 /// Panel and page headers. 14/20, 500.
 pub const HEADING: TypeStyle = sans(14., 20., 500.);
 /// Default UI text. 13/20, 400.
@@ -411,6 +423,11 @@ pub fn selected_glow() -> Vec<BoxShadow> {
 /// Halo around a focused input.
 pub fn input_glow() -> Vec<BoxShadow> {
     selected_glow()
+}
+
+/// Halo around an input that confirms something destructive (type-to-delete).
+pub fn danger_glow() -> Vec<BoxShadow> {
+    vec![ring(DANGER_SOFT, 3.)]
 }
 
 fn ring(color: Hsla, spread: f32) -> BoxShadow {

@@ -9,23 +9,39 @@
 //!   version fixed once.
 //! - [`motion`]: hover fades, popup presence, reduced motion.
 //! - [`components`]: the Graphite components as `RenderOnce` builders.
+//! - [`overlay`]: the overlay host at the root of each window and the [`overlays`] handle
+//!   that opens [`popover`]s, [`menu`]s, [`dialog`]s and [`toast`]s.
+//! - [`keys`]: the kit's key contexts and actions (`Cancel`, `Confirm`, `MoveUp`…), bound
+//!   once for every screen; [`focus`]: the keyboard focus ring and tab order.
+//! - [`tooltip`]: the one tooltip view.
 //!
 //! `use ui::prelude::*;` brings the common names in.
 
 pub mod assets;
 pub mod components;
 pub mod dev;
+pub mod dialog;
+pub mod focus;
+pub mod keys;
 pub mod layout;
+pub mod menu;
 pub mod motion;
+pub mod overlay;
+pub mod popover;
 pub mod theme;
+pub mod toast;
+pub mod tooltip;
 
 #[cfg(test)]
 mod tests;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, KeyBinding, Window, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, size,
+    AnyView, App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
+
+pub use keys::Quit;
+pub use overlay::{OverlayHost, Overlays, overlays};
 
 /// The names most views need, in one import.
 pub mod prelude {
@@ -33,21 +49,25 @@ pub mod prelude {
     pub use gpui::px;
     pub use crate::assets::{IconName, icon};
     pub use crate::components::*;
+    pub use crate::dialog::{ConfirmInput, Dialog, OptionCard, OptionGroup};
+    pub use crate::keys;
     pub use crate::layout::{col, grow, hr, row, truncate, truncate_block, truncate_lh, vr};
+    pub use crate::menu::Menu;
     pub use crate::motion;
+    pub use crate::overlay::{Anchor, Placement, PopoverAnchorExt, overlays};
+    pub use crate::popover::Popover;
+    pub use crate::toast::Toast;
     pub use crate::theme::*;
     pub use crate::{Preview, root};
 }
 
-actions!(ui, [Quit]);
-
 /// Global setup every window needs: reads the reduced-motion preference once and binds the
-/// keys that belong to the kit itself (quit). The text input and the overlay hosts add their
-/// own bindings here as they land.
+/// kit's keys ([`keys::init`]). The text input adds its own bindings here as it lands.
 pub fn init(cx: &mut App) {
     motion::init();
-    cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None), KeyBinding::new("cmd-q", Quit, None)]);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    keys::init(cx);
+    // Inert unless HARNESS_DEV_SOCKET is set: scripted input for checks in a real window.
+    dev::install(cx);
 }
 
 /// Base style for a window's root element: bg ground, primary text, Inter 13/20 with the
@@ -61,8 +81,9 @@ pub fn root() -> gpui::Div {
 }
 
 /// Open a window of `width` × `height` px and run the app until it closes. `build` creates
-/// the root view. For standalone previews of one screen or of the gallery; the window's app
-/// id is `harness-demo`.
+/// the content view; the window's root is an [`OverlayHost`] around it, so overlays work.
+/// For standalone previews of one screen or of the gallery; the window's app id is
+/// `harness-demo`.
 pub fn run_app<V: Render + 'static>(
     title: &'static str,
     width: f32,
@@ -83,7 +104,10 @@ pub fn run_app<V: Render + 'static>(
                 window_min_size: Some(size(px(900.), px(600.))),
                 ..Default::default()
             },
-            move |window, cx| build(window, cx),
+            move |window, cx| {
+                let content = build(window, cx);
+                OverlayHost::wrap(content, window, cx)
+            },
         );
         if let Err(err) = opened {
             eprintln!("could not open the window: {err:#}");

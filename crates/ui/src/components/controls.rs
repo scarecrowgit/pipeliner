@@ -2,11 +2,16 @@
 
 use std::rc::Rc;
 
+use std::time::{Duration, Instant};
+
 use gpui::{
-    App, ClickEvent, ElementId, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px,
+    App, ClickEvent, ElementId, FocusHandle, IntoElement, RenderOnce, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use super::{ClickHandler, ValueHandler, child_id};
+use crate::focus;
+use crate::keys::{MoveDown, MoveUp};
 use crate::assets::{IconName, icon};
 use crate::layout::{row, truncate_lh};
 use crate::motion::{self, Look};
@@ -60,9 +65,8 @@ impl RenderOnce for Toggle {
         let selector = self.id.to_string();
         let disabled = self.disabled;
         let on_change = self.on_change.filter(|_| !disabled);
-        div()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = div().id(self.id).debug_selector(move || selector);
+        focus::tab_stop(el, disabled, cx)
             .relative()
             .flex_none()
             .w(px(28.))
@@ -85,12 +89,21 @@ impl RenderOnce for Toggle {
 }
 
 /// The row around a checkbox or radio: the control and an optional label, one click target.
-fn choice_row(id: ElementId, label: Option<SharedString>, disabled: bool) -> gpui::Stateful<gpui::Div> {
+fn choice_row(
+    id: ElementId,
+    label: Option<SharedString>,
+    disabled: bool,
+    focus: Option<&FocusHandle>,
+    cx: &App,
+) -> gpui::Stateful<gpui::Div> {
     let selector = id.to_string();
-    row()
-        .id(id)
-        .debug_selector(move || selector)
-        .flex_none()
+    let el = row().id(id).debug_selector(move || selector);
+    let el = match focus {
+        Some(h) if !disabled => focus::track(el, h, cx),
+        _ => focus::tab_stop(el, disabled, cx),
+    };
+    el.flex_none()
+        .rounded(px(RADIUS_SM))
         .gap(px(SPACE_2))
         .when(label.is_some(), |d| d.type_style(BODY))
         .when(disabled, |d| d.opacity(0.45).cursor_not_allowed())
@@ -154,7 +167,7 @@ impl RenderOnce for Checkbox {
             .border_color(faded.border.unwrap_or(LINE_STRONG))
             .when(checked, |d| d.child(icon(IconName::Check, 10., ON_ACCENT)));
         let on_change = self.on_change.filter(|_| !self.disabled);
-        choice_row(self.id, self.label.clone(), self.disabled)
+        choice_row(self.id, self.label.clone(), self.disabled, None, cx)
             .child(boxed)
             .when_some(self.label, |d, l| d.child(l))
             .when_some(on_change, |d, f| d.on_click(move |_, w, cx| f(!checked, w, cx)))
@@ -170,12 +183,14 @@ pub struct Radio {
     label: Option<SharedString>,
     disabled: bool,
     on_select: Option<ClickHandler>,
+    /// Set by a [`RadioGroup`]: the group moves focus between its radios.
+    focus: Option<FocusHandle>,
 }
 
 impl Radio {
     /// A radio that is `selected` or not.
     pub fn new(id: impl Into<ElementId>, selected: bool) -> Self {
-        Self { id: id.into(), selected, label: None, disabled: false, on_select: None }
+        Self { id: id.into(), selected, label: None, disabled: false, on_select: None, focus: None }
     }
 
     /// A label that is part of the click target.
@@ -200,25 +215,99 @@ impl Radio {
 impl RenderOnce for Radio {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected = self.selected;
-        let look = if selected {
-            Look::bg(ON_ACCENT).border(ACCENT_STRONG)
-        } else {
-            Look::bg(SURFACE_RAISED).border(LINE_STRONG)
-        };
-        let faded = motion::hover_fade_state(child_id(&self.id, "dot"), look, look, window, cx);
-        let dot = div()
-            .flex_none()
-            .size(px(16.))
-            .rounded_full()
-            .when(selected, |d| d.border(px(5.)))
-            .when(!selected, |d| d.border_1())
-            .bg(faded.bg)
-            .border_color(faded.border.unwrap_or(LINE_STRONG));
+        let dot = radio_dot(&self.id, selected, window, cx);
         let on_select = self.on_select.filter(|_| !self.disabled && !selected);
-        choice_row(self.id, self.label.clone(), self.disabled)
+        choice_row(self.id, self.label.clone(), self.disabled, self.focus.as_ref(), cx)
             .child(dot)
             .when_some(self.label, |d, l| d.child(l))
             .when_some(on_select, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
+    }
+}
+
+/// The 16px radio circle: a 5px accent ring around white when `selected`, fading.
+pub(crate) fn radio_dot(id: &ElementId, selected: bool, window: &mut Window, cx: &mut App) -> gpui::Div {
+    let look = if selected {
+        Look::bg(ON_ACCENT).border(ACCENT_STRONG)
+    } else {
+        Look::bg(SURFACE_RAISED).border(LINE_STRONG)
+    };
+    let faded = motion::hover_fade_state(child_id(id, "dot"), look, look, window, cx);
+    div()
+        .flex_none()
+        .size(px(16.))
+        .rounded_full()
+        .when(selected, |d| d.border(px(5.)))
+        .when(!selected, |d| d.border_1())
+        .bg(faded.bg)
+        .border_color(faded.border.unwrap_or(LINE_STRONG))
+}
+
+/// Radios that belong together: one tab stop (the selected radio); arrow keys move the
+/// selection. `on_select` receives the index of the radio to select.
+#[derive(IntoElement)]
+pub struct RadioGroup {
+    id: ElementId,
+    options: Vec<SharedString>,
+    selected: usize,
+    horizontal: bool,
+    on_select: Option<ValueHandler<usize>>,
+}
+
+impl RadioGroup {
+    /// An empty group.
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into(), options: Vec::new(), selected: 0, horizontal: false, on_select: None }
+    }
+
+    /// Add a radio labelled `label`.
+    pub fn option(mut self, label: impl Into<SharedString>) -> Self {
+        self.options.push(label.into());
+        self
+    }
+
+    /// Index of the selected radio.
+    pub fn selected(mut self, ix: usize) -> Self {
+        self.selected = ix;
+        self
+    }
+
+    /// Lay the radios out in a row (they stack by default).
+    pub fn horizontal(mut self) -> Self {
+        self.horizontal = true;
+        self
+    }
+
+    /// Called with the index of the radio to select.
+    pub fn on_select(mut self, f: impl Fn(usize, &mut Window, &mut App) + 'static) -> Self {
+        self.on_select = Some(Rc::new(f));
+        self
+    }
+}
+
+impl RenderOnce for RadioGroup {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let n = self.options.len();
+        let handles = focus::roving_handles(&self.id, n, self.selected, window, cx);
+        let radios: Vec<_> = self
+            .options
+            .into_iter()
+            .enumerate()
+            .map(|(ix, label)| {
+                let f = self.on_select.clone();
+                let mut r = Radio::new(child_id(&self.id, ix), ix == self.selected).label(label);
+                r.focus = handles.get(ix).cloned();
+                if let Some(f) = f {
+                    r = r.on_select(move |_, w, cx| f(ix, w, cx));
+                }
+                r
+            })
+            .collect();
+        let root = div()
+            .id(self.id)
+            .flex()
+            .when(!self.horizontal, |d| d.flex_col().gap(px(SPACE_2)))
+            .when(self.horizontal, |d| d.gap(px(SPACE_4)));
+        focus::roving_keys(root, handles, self.selected, true, self.on_select).children(radios)
     }
 }
 
@@ -284,8 +373,37 @@ impl RenderOnce for Stepper {
         };
         let dec = button("dec", IconName::Minus, (value - 1).max(min), value > min);
         let inc = button("inc", IconName::Plus, (value + 1).min(max), value < max);
-        row()
-            .id(self.id)
+        let typed = window.use_keyed_state(child_id(&self.id, "typed"), cx, |_, _| Typed::default());
+        let step = |delta: i32| {
+            let f = self.on_change.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let to = (value + delta).clamp(min, max);
+                focus::set_focus_visible(true, window, cx);
+                if let Some(f) = f.as_ref().filter(|_| to != value) {
+                    f(to, window, cx);
+                }
+            }
+        };
+        let (up, down) = (step(1), step(-1));
+        let on_digit = self.on_change.clone();
+        let selector = self.id.to_string();
+        let el = row().id(self.id).debug_selector(move || selector);
+        focus::tab_stop(el, false, cx)
+            .key_context(crate::keys::STEPPER)
+            .on_action(move |_: &MoveUp, w, cx| up(w, cx))
+            .on_action(move |_: &MoveDown, w, cx| down(w, cx))
+            .on_key_down(move |ev, window, cx| {
+                let k = &ev.keystroke;
+                let Some(d) = k.key.parse::<u32>().ok().filter(|_| k.key.len() == 1) else { return };
+                if k.modifiers.modified() {
+                    return;
+                }
+                let next = typed.update(cx, |t, _| t.push(d, value, min, max));
+                cx.stop_propagation();
+                if let (Some(to), Some(f)) = (next, on_digit.as_ref()) {
+                    f(to, window, cx);
+                }
+            })
             .flex_none()
             .h(px(CONTROL_HEIGHT_MD))
             .border_1()
@@ -298,6 +416,28 @@ impl RenderOnce for Stepper {
                 div().min_w(px(20.)).flex().justify_center().tabular().child(value.to_string()),
             )
             .child(inc)
+    }
+}
+
+/// Digits typed into a focused stepper: a second digit within a second extends the first.
+#[derive(Default)]
+struct Typed {
+    last: Option<(i32, Instant)>,
+}
+
+impl Typed {
+    /// The value to set after typing `d` on a stepper showing `value`, if any is in range.
+    fn push(&mut self, d: u32, value: i32, min: i32, max: i32) -> Option<i32> {
+        let d = d as i32;
+        let now = Instant::now();
+        let longer = self
+            .last
+            .filter(|(_, at)| now.duration_since(*at) < Duration::from_secs(1))
+            .map(|(prev, _)| prev * 10 + d)
+            .filter(|v| (min..=max).contains(v));
+        let to = longer.or(Some(d).filter(|v| (min..=max).contains(v)));
+        self.last = Some((to.unwrap_or(d), now));
+        to.filter(|v| *v != value)
     }
 }
 
@@ -374,9 +514,8 @@ impl RenderOnce for SelectBox {
             cx,
         );
         let selector = self.id.to_string();
-        row()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = row().id(self.id).debug_selector(move || selector);
+        focus::tab_stop(el, false, cx)
             .gap(px(SPACE_2))
             .h(px(h))
             .pl(px(SPACE_2_5))

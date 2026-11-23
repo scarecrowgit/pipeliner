@@ -7,7 +7,9 @@ use gpui::{
     prelude::*, px,
 };
 
-use super::{ClickHandler, Kbd, Tooltip, child_id};
+use super::{ClickHandler, Kbd, child_id};
+use crate::focus;
+use crate::tooltip::Tooltip;
 use crate::assets::{IconName, icon};
 use crate::motion::{self, Look};
 use crate::theme::*;
@@ -155,9 +157,8 @@ impl RenderOnce for Button {
         let icon_color = faded.fg.unwrap_or(fg);
         let disabled = self.disabled;
         let on_click = self.on_click.filter(|_| !disabled);
-        let el = div()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = div().id(self.id).debug_selector(move || selector);
+        let el = focus::tab_stop(el, disabled, cx)
             .flex()
             .flex_none()
             .items_center()
@@ -307,9 +308,8 @@ impl RenderOnce for IconButton {
         let color = faded.fg.unwrap_or(TEXT_MUTED);
         let disabled = self.disabled;
         let on_click = self.on_click.filter(|_| !disabled);
-        let el = div()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = div().id(self.id).debug_selector(move || selector);
+        let el = focus::tab_stop(el, disabled, cx)
             .relative()
             .flex()
             .flex_none()
@@ -387,10 +387,10 @@ impl RenderOnce for Link {
         let look = Look::bg(TRANSPARENT).fg(ACCENT_TEXT);
         let faded = motion::hover_fade_state(child_id(&self.id, "hover"), look, look, window, cx);
         let underline = motion::hovered(child_id(&self.id, "hover"), window, cx);
-        let el = div()
-            .id(self.id)
-            .debug_selector(move || selector)
+        let el = div().id(self.id).debug_selector(move || selector);
+        let el = focus::tab_stop(el, false, cx)
             .flex_none()
+            .rounded(px(RADIUS_SM))
             .cursor_pointer()
             .when(underline, |d| d.underline());
         faded
