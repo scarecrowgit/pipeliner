@@ -2,9 +2,9 @@
 //!
 //! - `div()` is a flex *row* by default and a row does not shrink below its content.
 //!   [`row`] and [`col`] say what they are and allow children to shrink (`min-width: 0`).
-//! - Text in a shrink-to-fit container is measured at one-line width and never ellipsizes.
-//!   [`truncate`] lays the text out in an absolutely positioned box inside a definite-width
-//!   cell, which is the only arrangement that ends a long label in `…`.
+//! - `nowrap` text is measured once per frame, often at min-content width, and then shows only
+//!   its first letters. [`truncate`] keeps a label to one line with `line_clamp(1)` instead,
+//!   which GPUI re-measures at the final width, so it ends in `…` only when it does not fit.
 //! - Children of a column inside a scroll container shrink unless they are `flex_none`.
 
 use gpui::{Div, SharedString, Styled, div, prelude::*, px};
@@ -40,28 +40,44 @@ pub fn vr() -> Div {
 
 /// Single-line text that fills the rest of its flex row and ends in `…` when it does not fit.
 ///
+/// In a shrink-to-fit parent (a select trigger with no width) the cell is as wide as the
+/// text; in a narrower row it shrinks and the text ends in `…`.
+///
 /// The cell is `BODY` line height (20px); chain `.h(px(..))` and a text style for another size.
 /// Colour, family and weight are inherited from the parent.
 pub fn truncate(text: impl Into<SharedString>) -> Div {
     truncate_lh(text, BODY.line)
 }
 
+/// One line of `text` that ends in `…` at whatever width its box is given.
+///
+/// GPUI 0.2.2 measures `nowrap` text once per frame and keeps that first size, which is
+/// often taken at min-content width (a few letters). Wrapping text is re-measured whenever
+/// the width changes, so the line is kept to one by `line_clamp(1)` instead of `nowrap`.
+fn one_line(text: SharedString) -> Div {
+    div().w_full().min_w_0().overflow_hidden().whitespace_normal().line_clamp(1).text_ellipsis().child(text)
+}
+
 /// [`truncate`] for a line height other than 20px, e.g. 18 for labels and 16 for captions.
 pub fn truncate_lh(text: impl Into<SharedString>, line_height: f32) -> Div {
     div()
-        .relative()
-        .flex_1()
+        .flex()
+        .flex_grow()
+        .flex_shrink()
         .min_w_0()
         .h(px(line_height))
-        .child(div().absolute().inset_0().truncate().child(text.into()))
+        .overflow_hidden()
+        .child(one_line(text.into()))
 }
 
 /// Like [`truncate`] but for a column (or any block): full width, fixed height, no flex growth.
 pub fn truncate_block(text: impl Into<SharedString>, line_height: f32) -> Div {
     div()
-        .relative()
+        .flex()
         .w_full()
+        .min_w_0()
         .flex_none()
         .h(px(line_height))
-        .child(div().absolute().inset_0().truncate().child(text.into()))
+        .overflow_hidden()
+        .child(one_line(text.into()))
 }

@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, RenderOnce, SharedString,
-    Window, div, prelude::*, px,
+    AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, RenderOnce, ScrollHandle,
+    SharedString, Window, div, prelude::*, px,
 };
 
 use crate::components::{ClickHandler, MenuItem, PopLabel, PopSeparator};
@@ -113,6 +113,8 @@ impl Menu {
 struct MenuState {
     selected: Option<usize>,
     focus: FocusHandle,
+    /// Scroll position of a menu with a `max_height`.
+    scroll: ScrollHandle,
 }
 
 struct Row {
@@ -177,12 +179,22 @@ impl RenderOnce for Menu {
             if autofocus {
                 window.focus(&focus);
             }
-            MenuState { selected: initial, focus }
+            MenuState { selected: initial, focus, scroll: ScrollHandle::new() }
         });
-        let (selected, focus) = {
+        let (selected, focus, scroll) = {
             let s = state.read(cx);
-            (s.selected, s.focus.clone())
+            (s.selected, s.focus.clone(), s.scroll.clone())
         };
+        // Child index of each row in the list (labels and rules sit between rows), so the
+        // keyboard can scroll the selected row into view.
+        let child_ix: Rc<Vec<usize>> = Rc::new(
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| matches!(e, Entry::Item(_)))
+                .map(|(i, _)| i)
+                .collect(),
+        );
         let rows = Rc::new(rows);
         let enabled: Rc<Vec<bool>> = Rc::new(rows.iter().map(|r| r.enabled).collect());
         let labels: Rc<Vec<(SharedString, bool)>> =
@@ -215,13 +227,23 @@ impl RenderOnce for Menu {
                 })
             }
         };
+        let reveal = {
+            let (scroll, child_ix) = (scroll.clone(), child_ix.clone());
+            move |row: usize| {
+                if let Some(ix) = child_ix.get(row) {
+                    scroll.scroll_to_item(*ix);
+                }
+            }
+        };
         let mover = |step: Step| {
-            let (state, enabled, select) = (state.clone(), enabled.clone(), select.clone());
+            let (state, enabled, select, reveal) =
+                (state.clone(), enabled.clone(), select.clone(), reveal.clone());
             move |window: &mut Window, cx: &mut App| {
                 crate::focus::set_focus_visible(true, window, cx);
                 let from = state.read(cx).selected;
                 if let Some(to) = step_enabled(&enabled, from, step) {
                     select(Some(to), cx);
+                    reveal(to);
                 }
             }
         };
@@ -252,7 +274,7 @@ impl RenderOnce for Menu {
 
         let confirm = activate.clone();
         let jump = {
-            let (state, select) = (state.clone(), select.clone());
+            let (state, select, reveal) = (state.clone(), select.clone(), reveal.clone());
             move |ev: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
                 let k = &ev.keystroke;
                 if k.modifiers.control || k.modifiers.alt || k.modifiers.platform || k.modifiers.function {
@@ -267,6 +289,7 @@ impl RenderOnce for Menu {
                 let from = state.read(cx).selected;
                 if let Some(to) = jump_to(&labels, from, ch) {
                     select(Some(to), cx);
+                    reveal(to);
                 }
                 cx.stop_propagation();
             }
@@ -289,7 +312,7 @@ impl RenderOnce for Menu {
                 }
             })
             .on_key_down(jump)
-            .when_some(self.max_height, |d, h| d.max_h(px(h)).overflow_y_scroll())
+            .when_some(self.max_height, |d, h| d.max_h(px(h)).overflow_y_scroll().track_scroll(&scroll))
             .children(children)
     }
 }

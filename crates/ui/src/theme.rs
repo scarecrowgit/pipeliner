@@ -434,7 +434,9 @@ fn ring(color: Hsla, spread: f32) -> BoxShadow {
     BoxShadow {
         color,
         offset: point(px(0.), px(0.)),
-        blur_radius: px(0.),
+        // GPUI's shadow shader integrates the blur over ±3 × blur_radius: at 0 it draws
+        // nothing. A tenth of a pixel is still a crisp edge.
+        blur_radius: px(0.1),
         spread_radius: px(spread),
     }
 }

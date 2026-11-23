@@ -60,19 +60,20 @@ pub enum TileTone {
     Warn,
 }
 
-/// A rounded icon tile in a card head or menu row: 24px (14px icon), or `large` 32px (16px
-/// icon, 8px radius).
+/// A rounded icon tile in a card head or menu row: 24px (14px icon), `medium` 28px in menu
+/// rows (`.mi .tile`), or `large` 32px (16px icon, 8px radius).
 #[derive(IntoElement)]
 pub struct Tile {
     icon: IconName,
     tone: TileTone,
     large: bool,
+    medium: bool,
 }
 
 impl Tile {
     /// A neutral tile showing `icon`.
     pub fn new(icon: IconName) -> Self {
-        Self { icon, tone: TileTone::Neutral, large: false }
+        Self { icon, tone: TileTone::Neutral, large: false, medium: false }
     }
 
     /// Set the colour family.
@@ -86,6 +87,12 @@ impl Tile {
         self.large = true;
         self
     }
+
+    /// 28px: the tile of a menu row.
+    pub fn medium(mut self) -> Self {
+        self.medium = true;
+        self
+    }
 }
 
 impl RenderOnce for Tile {
@@ -97,8 +104,11 @@ impl RenderOnce for Tile {
             TileTone::Spawn => (SPAWN_SOFT, SPAWN_TEXT),
             TileTone::Warn => (WARNING_SOFT, WARNING),
         };
-        let (size, radius, glyph) =
-            if self.large { (32., RADIUS_LG, 16.) } else { (24., RADIUS_MD, 14.) };
+        let (size, radius, glyph) = match (self.large, self.medium) {
+            (true, _) => (32., RADIUS_LG, 16.),
+            (false, true) => (28., RADIUS_MD, 14.),
+            (false, false) => (24., RADIUS_MD, 14.),
+        };
         div()
             .flex()
             .flex_none()

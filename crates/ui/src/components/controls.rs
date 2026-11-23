@@ -529,7 +529,7 @@ impl RenderOnce for SelectBox {
             .cursor_pointer()
             .when_some(self.icon, |d, i| d.child(icon(i, 14., TEXT_MUTED)))
             .child(truncate_lh(self.value, lh))
-            .child(icon(IconName::ChevronDown, 14., TEXT_MUTED))
+            .child(icon(IconName::ChevronDown, 12., TEXT_MUTED))
             .when_some(self.on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
     }
 }

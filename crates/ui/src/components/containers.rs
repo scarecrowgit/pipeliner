@@ -61,7 +61,11 @@ impl ParentElement for Card {
 
 impl RenderOnce for Card {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        // Like the CSS block it comes from, a card is as wide as its container (several in a
+        // row share it) and as tall as its content. A content-sized card gets its text
+        // measured at a sliver of width first, and GPUI keeps that very tall height.
         col()
+            .w_full()
             .bg(SURFACE)
             .border_1()
             .border_color(if self.selected { ACCENT_RING } else { LINE })
@@ -450,7 +454,9 @@ impl RenderOnce for KeyValue {
                         .text_color(TEXT_MUTED)
                         .child(key),
                 )
-                .child(div().flex_1().min_w_0().child(value))
+                // Basis auto (not 0): in a content-sized parent the value keeps its width
+                // instead of being measured at zero and wrapping a letter per line.
+                .child(div().flex_grow().flex_shrink().min_w_0().child(value))
         }))
     }
 }

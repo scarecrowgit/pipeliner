@@ -26,8 +26,8 @@ use crate::theme::*;
 ///
 /// Escape, the close button and [`Dialog::cancel_button`] cancel (`on_cancel`, then close);
 /// Cmd/Ctrl-Enter runs the primary action. Open it with
-/// [`Overlays::open_dialog`](crate::overlay::Overlays::open_dialog); it takes focus when it
-/// appears and the host keeps Tab inside it.
+/// [`Overlays::open_dialog`](crate::overlay::Overlays::open_dialog); focus moves to its first
+/// control (in the body, else the close button) and the host keeps Tab inside it.
 #[derive(IntoElement)]
 pub struct Dialog {
     id: ElementId,
@@ -153,14 +153,18 @@ impl RenderOnce for Dialog {
         let vh = f32::from(window.viewport_size().height);
         let top = self.top.unwrap_or((vh * DIALOG_TOP).round());
         let max_h = (vh - top - SPACE_6).max(CONTROL_HEIGHT * 4.);
-        let focus = window
-            .use_keyed_state(child_id(&self.id, "focus"), cx, |window, cx| {
-                let f = cx.focus_handle();
-                window.focus(&f);
-                f
-            })
-            .read(cx)
-            .clone();
+        let state = window.use_keyed_state(child_id(&self.id, "focus"), cx, |window, cx| {
+            let (root, body) = (cx.focus_handle(), cx.focus_handle());
+            window.focus(&root);
+            // Once this frame is drawn the controls are in the tab order: focus the first.
+            let (r, b) = (root.clone(), body.clone());
+            window.defer(cx, move |window, cx| focus_first_control(&r, &b, window, cx));
+            DialogFocus { root, body }
+        });
+        let (focus, body_focus) = {
+            let s = state.read(cx);
+            (s.root.clone(), s.body.clone())
+        };
 
         let (layer, on_cancel) = (self.layer, self.on_cancel.clone());
         let cancel: Callback = Rc::new(move |window, cx| {
@@ -202,6 +206,7 @@ impl RenderOnce for Dialog {
 
         let body = div()
             .id(child_id(&self.id, "body"))
+            .track_focus(&body_focus)
             .flex()
             .flex_col()
             .flex_1()
@@ -277,6 +282,31 @@ impl RenderOnce for Dialog {
             })
             .child(panel)
     }
+}
+
+/// Focus handles of an open dialog: its root (key context) and its body.
+struct DialogFocus {
+    root: FocusHandle,
+    body: FocusHandle,
+}
+
+/// Focus the dialog's first control (the body's first, else the head's close button), unless
+/// focus has left the dialog meanwhile.
+fn focus_first_control(root: &FocusHandle, body: &FocusHandle, window: &mut Window, cx: &mut App) {
+    if !root.is_focused(window) {
+        return;
+    }
+    let inside = |h: &FocusHandle, window: &Window, cx: &App| {
+        window.focused(cx).is_some_and(|f| &f != h && h.contains(&f, window))
+    };
+    for scope in [body, root] {
+        window.focus(scope);
+        window.focus_next();
+        if inside(scope, window, cx) {
+            return;
+        }
+    }
+    window.focus(root);
 }
 
 /// A radio card (`.opt`): a radio, a strong title, a muted description and optional content

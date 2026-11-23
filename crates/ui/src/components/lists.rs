@@ -3,13 +3,13 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, Hsla, IntoElement, RenderOnce, SharedString, Window,
+    AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, IntoElement, RenderOnce, SharedString, Window,
     div, prelude::*, px,
 };
 
 use super::{ClickHandler, CountBadge, Kbd, Status, StatusDot, Tag};
 use crate::assets::{IconName, icon};
-use crate::layout::{col, grow, row, truncate_lh};
+use crate::layout::{col, grow, row, truncate_block, truncate_lh};
 use crate::motion::{self, Look};
 use crate::theme::*;
 
@@ -276,7 +276,8 @@ impl MenuItem {
         self
     }
 
-    /// A [`Tile`](super::Tile) or avatar before the label.
+    /// A [`Tile`](super::Tile) (`.medium()`, 28px, in a menu) or avatar before the label. The
+    /// label of a row with a tile is medium weight.
     pub fn tile(mut self, tile: impl IntoElement) -> Self {
         self.tile = Some(tile.into_any_element());
         self
@@ -364,6 +365,8 @@ impl RenderOnce for MenuItem {
             .type_style(BODY)
             .when(!disabled, |d| d.cursor_pointer());
         let sub_color = if disabled { TEXT_DISABLED } else { TEXT_MUTED };
+        // Rows that lead with a tile (agents, projects) name things: the label is medium.
+        let strong = self.tile.is_some();
         faded
             .apply(el)
             .when(self.check_column, |d| {
@@ -379,10 +382,12 @@ impl RenderOnce for MenuItem {
             .when_some(self.icon, |d, i| d.child(icon(i, 14., fg)))
             .child(
                 col()
-                    .flex_1()
-                    .child(div().child(self.label))
+                    .flex_grow()
+                    .flex_shrink()
+                    .min_w_0()
+                    .child(truncate_block(self.label, BODY.line).when(strong, |d| d.font_weight(FontWeight::MEDIUM)))
                     .when_some(self.sub, |d, s| {
-                        d.child(div().type_style(LABEL).text_color(sub_color).child(s))
+                        d.child(truncate_block(s, LABEL.line).type_style(LABEL).text_color(sub_color))
                     }),
             )
             .when_some(self.hint, |d, h| {

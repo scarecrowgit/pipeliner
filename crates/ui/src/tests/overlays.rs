@@ -267,8 +267,7 @@ fn a_dialog_keeps_tab_inside(cx: &mut TestAppContext) {
     });
     click(&mut cx, "open-dlg");
     let focused = |cx: &mut VisualTestContext, h: &FocusHandle| cx.update(|window, _| h.is_focused(window));
-    cx.simulate_keystrokes("tab");
-    assert!(focused(&mut cx, &d1), "Tab goes to the dialog's first control");
+    assert!(focused(&mut cx, &d1), "the dialog focuses its first control");
     cx.simulate_keystrokes("tab");
     assert!(focused(&mut cx, &d2));
     let mut seen_d1_again = false;

@@ -39,7 +39,7 @@ impl Render for Gallery {
                     col()
                         .p(px(SPACE_6))
                         .gap(px(SPACE_8))
-                        .child(div().type_style(TITLE_LG).child("Graphite components"))
+                        .child(ui::dev::Probe::probe(div().type_style(TITLE_LG).child("Graphite components"), "title"))
                         .child(self.actions(cx))
                         .child(self.overlays(cx))
                         .child(self.status())

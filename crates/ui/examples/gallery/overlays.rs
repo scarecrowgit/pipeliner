@@ -2,6 +2,7 @@
 //! Undo and tooltips, all opened through the overlay host.
 
 use gpui::{AnyElement, App, Context, WeakEntity, Window, div};
+use ui::dev::Probe;
 use ui::prelude::*;
 
 use super::{Gallery, caption, group, variants};
@@ -11,7 +12,7 @@ type BuildFn = dyn Fn(&mut Window, &mut App) -> AnyElement;
 
 fn new_menu(_: &mut Window, _: &mut App) -> Menu {
     let it = |id: &'static str, icon: IconName, tone: TileTone, name: &'static str, desc: &'static str, key: &'static str| {
-        MenuItem::new(id, name).tile(Tile::new(icon).tone(tone)).subline(desc).kbd(key)
+        MenuItem::new(id, name).tile(Tile::new(icon).tone(tone).medium()).subline(desc).kbd(key)
     };
     Menu::new("new-menu")
         .width(384.)
@@ -68,7 +69,7 @@ fn archive(gallery: WeakEntity<Gallery>, window: &mut Window, cx: &mut App) {
 
 fn project_switcher(_: &mut Window, _: &mut App) -> AnyElement {
     let proj = |id: &'static str, letter: IconName, name: &'static str, sub: &'static str, key: &'static str, cur: bool| {
-        MenuItem::new(id, name).tile(Tile::new(letter)).subline(sub).kbd(key).checked(cur)
+        MenuItem::new(id, name).tile(Tile::new(letter).medium()).subline(sub).kbd(key).checked(cur)
     };
     let menu = Menu::new("projects")
         .label_with(PopLabel::new("Acme · team · 8 people").trailing("4 projects"))
@@ -261,6 +262,7 @@ impl Gallery {
                         overlays(window, cx).open_menu(anchor, Placement::below().end(), new_menu, window, cx);
                     })
                     .popover_anchor("ov-new")
+                    .probe("ov-new")
                     .into_any_element(),
             ),
             (
@@ -275,6 +277,7 @@ impl Gallery {
                             overlays(window, cx).open_menu(anchor, Placement::below().end(), more_menu(me.clone()), window, cx);
                         })
                         .popover_anchor("ov-more")
+                    .probe("ov-more")
                         .into_any_element()
                 },
             ),
@@ -287,6 +290,7 @@ impl Gallery {
                         overlays(window, cx).open_popover(anchor, Placement::below(), project_switcher, window, cx);
                     })
                     .popover_anchor("ov-proj")
+                    .probe("ov-proj")
                     .into_any_element(),
             ),
             (
@@ -299,27 +303,30 @@ impl Gallery {
                         overlays(window, cx).open_popover(anchor, Placement::above(), autopilots, window, cx);
                     })
                     .popover_anchor("ov-auto")
+                    .probe("ov-auto")
                     .into_any_element(),
             ),
         ]);
         let dialog_button = |id: &'static str, label: &'static str, build: Box<BuildFn>| {
             let build: std::rc::Rc<BuildFn> = build.into();
-            Button::new(id, label).on_click(move |_, window, cx| {
-                let build = build.clone();
-                overlays(window, cx).open_dialog(id, move |w, cx| build(w, cx), window, cx);
-            })
+            Button::new(id, label)
+                .on_click(move |_, window, cx| {
+                    let build = build.clone();
+                    overlays(window, cx).open_dialog(id, move |w, cx| build(w, cx), window, cx);
+                })
+                .probe(id)
         };
         let dialogs = row()
             .gap(px(SPACE_2))
             .child(dialog_button("ov-send", "Send back…", Box::new(send_back_dialog(me.clone()))))
             .child(dialog_button("ov-issue", "New issue…", Box::new(new_issue_dialog)))
             .child(dialog_button("ov-deploy", "Deploy v15…", Box::new(deploy_dialog(me.clone()))))
-            .child(Button::new("ov-delete", "Delete…").danger().on_click(|_, window, cx| delete_dialog(window, cx)));
+            .child(Button::new("ov-delete", "Delete…").danger().on_click(|_, window, cx| delete_dialog(window, cx)).probe("ov-delete"));
         let toast = {
             let me = me.clone();
             row()
                 .gap(px(SPACE_3))
-                .child(Button::new("ov-archive", "Archive Release captain").on_click(move |_, window, cx| archive(me.clone(), window, cx)))
+                .child(Button::new("ov-archive", "Archive Release captain").on_click(move |_, window, cx| archive(me.clone(), window, cx)).probe("ov-archive"))
                 .child(Button::new("ov-toast", "Show a plain toast").ghost().on_click(|_, window, cx| {
                     overlays(window, cx).toast(Toast::new("Link copied").detail("harness.acme.dev/c/7f3a92e1"), cx)
                 }))

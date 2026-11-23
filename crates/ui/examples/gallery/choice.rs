@@ -99,11 +99,11 @@ impl Gallery {
             ("stepper at min", Stepper::new("stepper-min", 1).into_any_element()),
         ]);
         let selects = variants(vec![
-            ("select", row().w(px(220.)).child(SelectBox::new("sel", "Claude Sonnet")).into_any_element()),
-            ("with icon", row().w(px(220.)).child(SelectBox::new("sel-icon", "main").icon(IconName::Branch)).into_any_element()),
-            ("small", row().w(px(180.)).child(SelectBox::new("sel-sm", "Any priority").small()).into_any_element()),
-            ("placeholder", row().w(px(220.)).child(SelectBox::new("sel-ph", "Choose a repo").placeholder(true)).into_any_element()),
-            ("open", row().w(px(220.)).child(SelectBox::new("sel-open", "Claude Sonnet").open(true)).into_any_element()),
+            ("select", col().w(px(220.)).child(SelectBox::new("sel", "Claude Sonnet")).into_any_element()),
+            ("with icon", col().w(px(220.)).child(SelectBox::new("sel-icon", "fix/PAY-1423-idempotency-key-retry").icon(IconName::Branch)).into_any_element()),
+            ("small", col().w(px(180.)).child(SelectBox::new("sel-sm", "Any priority").small()).into_any_element()),
+            ("placeholder", col().w(px(220.)).child(SelectBox::new("sel-ph", "Choose a repo").placeholder(true)).into_any_element()),
+            ("open", col().w(px(220.)).child(SelectBox::new("sel-open", "Claude Sonnet").open(true)).into_any_element()),
         ]);
         group(
             "Choice",
