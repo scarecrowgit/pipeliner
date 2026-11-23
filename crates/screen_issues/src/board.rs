@@ -1,61 +1,27 @@
-//! Board view: horizontally scrolling status columns with draggable issue cards.
+//! Board view: horizontally scrolling columns, one per issue status, and the empty state.
 
 use gpui::{
-    Context, Div, FontWeight, IntoElement, SharedString, Stateful, Window, div, prelude::*, px,
+    AnyElement, Context, Div, FontWeight, IntoElement, SharedString, Stateful, div, prelude::*, px,
 };
+use pipeline::IssueStatus;
+use ui::motion::{Look, fade};
 use ui::theme::*;
-use ui::{Badge, icon, progress, status_dot};
+use ui::{Badge, Button, icon, progress, status_dot};
 
-use crate::IssuesScreen;
-use crate::data::{Column, Issue};
-use crate::widgets::{Ellipsis, person_avatar, runner_tile, small, spawn_pill};
+use crate::look::{COLUMNS, column_dot};
+use crate::widgets::{mono, small, status_line};
+use crate::{Card, IssuesScreen};
 
-/// Drag payload: the key of the card being moved.
-#[derive(Clone)]
-pub struct DraggedIssue {
-    key: SharedString,
-    title: SharedString,
-}
-
-/// Floating card shown under the cursor while dragging.
-struct DragGhost(DraggedIssue);
-
-impl Render for DragGhost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .w(px(236.))
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .px(px(12.))
-            .py(px(10.))
-            .rounded(px(RADIUS_XL))
-            .border_1()
-            .border_color(ACCENT_RING)
-            .bg(SURFACE)
-            .shadow(popover_shadow())
-            .opacity(0.9)
-            .font_family(FONT_SANS)
-            .text_size(px(TEXT_BODY))
-            .text_color(TEXT)
-            .child(
-                div()
-                    .font_family(FONT_MONO)
-                    .text_size(px(12.))
-                    .text_color(TEXT_MUTED)
-                    .child(self.0.key.clone()),
-            )
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .line_height(px(18.))
-                    .child(self.0.title.clone()),
-            )
-    }
-}
+const COLUMN_WIDTH: f32 = 252.;
 
 impl IssuesScreen {
-    pub(crate) fn render_board(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_board(&self, cards: &[Card], cx: &mut Context<Self>) -> impl IntoElement {
+        let failed = cards.iter().any(|c| c.status == IssueStatus::Failed);
+        let columns: Vec<IssueStatus> = COLUMNS
+            .into_iter()
+            .chain(failed.then_some(IssueStatus::Failed))
+            .collect();
+
         div()
             .id("board-scroll")
             .size_full()
@@ -67,41 +33,31 @@ impl IssuesScreen {
                     .flex()
                     .flex_none()
                     .items_start()
-                    .gap(px(12.))
-                    .pt(px(16.))
-                    .px(px(24.))
-                    .pb(px(24.))
+                    .gap(px(SPACE_3))
+                    .pt(px(SPACE_4))
+                    .px(px(SPACE_6))
+                    .pb(px(SPACE_6))
                     .children(
-                        Column::ALL
+                        columns
                             .into_iter()
-                            .map(|c| self.render_column(c, cx))
+                            .map(|c| self.render_column(c, cards, cx))
                             .collect::<Vec<_>>(),
                     ),
             )
     }
 
-    fn render_column(&self, column: Column, cx: &mut Context<Self>) -> Stateful<Div> {
-        let cards: Vec<&Issue> = self.visible().filter(|i| i.status == column).collect();
-        let waiting = cards.iter().filter(|i| i.needs_you()).count();
+    fn render_column(&self, status: IssueStatus, cards: &[Card], cx: &mut Context<Self>) -> Div {
+        let mine: Vec<&Card> = cards.iter().filter(|c| c.status == status).collect();
+        let n = mine.len();
 
         div()
-            .id(SharedString::from(format!("col-{}", column.name())))
-            .w(px(252.))
+            .w(px(COLUMN_WIDTH))
             .flex_none()
-            .min_h(px(640.))
+            .min_h(px(480.))
             .p(px(8.))
-            .rounded(px(RADIUS_XL))
-            .border_1()
-            .border_color(gpui::transparent_black())
             .flex()
             .flex_col()
             .gap(px(8.))
-            .drag_over::<DraggedIssue>(|s, _, _, _| {
-                s.bg(ACCENT_GLOW).border_color(ACCENT_RING).border_dashed()
-            })
-            .on_drop(cx.listener(move |this, d: &DraggedIssue, window, cx| {
-                this.drop_on(&d.key, column, window, cx)
-            }))
             .child(
                 div()
                     .flex()
@@ -109,59 +65,50 @@ impl IssuesScreen {
                     .gap(px(8.))
                     .h(px(28.))
                     .px(px(4.))
-                    .child(status_dot(column.dot(), true))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(column.name()))
+                    .child(status_dot(column_dot(status), true))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(status.label()))
                     .child(
                         div()
                             .text_color(TEXT_MUTED)
-                            .child(SharedString::from(cards.len().to_string())),
+                            .child(SharedString::from(n.to_string())),
                     )
                     .child(div().flex_1())
-                    .when(waiting > 0, |d| {
-                        d.child(small(format!("{waiting} need you"), WARNING))
+                    .when(status == IssueStatus::Approval && n > 0, |d| {
+                        d.child(small(format!("{n} need you"), WARNING))
                     }),
             )
-            .children(
-                cards
-                    .into_iter()
-                    .map(|i| self.render_card(i, cx))
-                    .collect::<Vec<_>>(),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("add-{}", column.name())))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(32.))
-                    .px(px(8.))
-                    .rounded(px(RADIUS_MD))
-                    .text_color(TEXT_MUTED)
-                    .text_size(px(12.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(SURFACE_RAISED).text_color(TEXT_SECONDARY))
-                    .child(icon("plus", 12., TEXT_MUTED))
-                    .child("Add issue")
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.add_issue(column, window, cx)),
-                    ),
-            )
+            .children(mine.into_iter().map(|c| self.render_card(c, cx)))
+            .when(status == IssueStatus::Backlog, |d| {
+                d.child(
+                    div()
+                        .id("board-add")
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .h(px(CONTROL_HEIGHT_SM))
+                        .px(px(8.))
+                        .rounded(px(RADIUS_MD))
+                        .text_color(TEXT_MUTED)
+                        .text_size(px(12.))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(SURFACE_RAISED).text_color(TEXT_SECONDARY))
+                        .child(icon("plus", 12., TEXT_MUTED))
+                        .child("New issue")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_new(window, cx))),
+                )
+            })
     }
 
-    fn render_card(&self, issue: &Issue, cx: &mut Context<Self>) -> Stateful<Div> {
-        let selected = self.selected.as_ref() == Some(&issue.key);
-        // `dragging` is only cleared lazily, so it counts only while a drag is active.
-        let dragging = cx.has_active_drag() && self.dragging.as_ref() == Some(&issue.key);
-        let runner = issue.runner();
-        let key = issue.key.clone();
-        let payload = DraggedIssue {
-            key: issue.key.clone(),
-            title: issue.title.clone(),
-        };
-        let weak = cx.entity().downgrade();
+    fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.selected.as_ref() == Some(&card.key);
+        let key = card.key.clone();
+        let id = SharedString::from(format!("card-{}", card.key));
+        let border = if selected { ACCENT_RING } else { LINE };
+        let rest = Look::bg(SURFACE).border(border);
+        let hover = Look::bg(SURFACE).border(if selected { ACCENT_RING } else { LINE_STRONG });
 
-        div()
-            .id(SharedString::from(format!("card-{}", issue.key)))
+        let el: Stateful<Div> = div()
+            .id(id.clone())
             .flex()
             .flex_col()
             .gap(px(8.))
@@ -170,112 +117,123 @@ impl IssuesScreen {
             .py(px(10.))
             .rounded(px(RADIUS_XL))
             .border_1()
-            .border_color(if selected { ACCENT_RING } else { LINE })
             .when(selected, |d| d.shadow(selected_glow()))
-            .when(!selected, |d| d.hover(|s| s.border_color(LINE_STRONG)))
-            .bg(SURFACE)
-            .when(dragging, |d| d.opacity(0.4))
-            .cursor_grab()
+            .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| this.select(key.clone(), window, cx)))
-            .on_drag(payload, move |d, _, _, cx| {
-                let key = d.key.clone();
-                weak.update(cx, |this, cx| {
-                    this.dragging = Some(key);
-                    cx.notify();
-                })
-                .ok();
-                cx.new(|_| DragGhost(d.clone()))
-            })
-            // Head: key · priority · owner · runner tile
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .w_full()
-                    .child(
-                        div()
-                            .font_family(FONT_MONO)
-                            .text_size(px(12.))
-                            .text_color(TEXT_MUTED)
-                            .child(issue.key.clone()),
-                    )
-                    .child(small(issue.prio.label(), issue.prio.color()))
+                    .child(mono(card.key.clone(), TEXT_MUTED))
                     .child(div().flex_1())
-                    .when_some(issue.person, |d, p| d.child(person_avatar(p, 22., 10.)))
-                    .when_some(runner, |d, r| d.child(runner_tile(r.kind))),
+                    .when_some(card.elapsed.clone(), |d, e| d.child(mono(e, TEXT_MUTED))),
             )
             .child(
                 div()
                     .font_weight(FontWeight::MEDIUM)
                     .line_height(px(18.))
-                    .child(issue.title.clone()),
+                    .child(card.title.clone()),
+            )
+            .child(div().flex().child(Badge::new(card.kind.clone())))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .w_full()
+                    .pt(px(8.))
+                    .border_t_1()
+                    .border_color(LINE_SUBTLE)
+                    .child(self.card_line(card, cx))
+                    .when_some(card.progress, |d, f| d.child(progress(f, ACCENT))),
+            );
+        fade(el, id, rest, hover).into_any_element()
+    }
+
+    /// The run line; "PR open" is a link to the pull request.
+    fn card_line(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
+        let Some(url) = card.line.pr.clone() else {
+            return status_line(&card.line).into_any_element();
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .id(SharedString::from(format!("card-pr-{}", card.key)))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(12.))
+                    .text_color(ACCENT_TEXT)
+                    .cursor_pointer()
+                    .hover(|s| s.underline())
+                    .child(icon("git-branch", 12., ACCENT_TEXT))
+                    .child("PR open")
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.open_url(&url);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// No issues yet: what the board is for and a way to start.
+    pub(crate) fn render_empty(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let errors = self.pipes.read(cx).pipeline_errors.join("\n");
+        let errors = (!errors.is_empty()).then_some(errors);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(SPACE_4))
+            .px(px(SPACE_6))
+            .child(
+                div()
+                    .size(px(40.))
+                    .rounded(px(RADIUS_XL))
+                    .bg(SURFACE_RAISED)
+                    .border_1()
+                    .border_color(LINE_STRONG)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("pipelines", 18., TEXT_SECONDARY)),
             )
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
+                    .flex_col()
                     .items_center()
                     .gap(px(6.))
-                    .child(Badge::new(issue.label.clone()))
-                    .when_some(issue.created_by.clone(), |d, by| {
-                        d.child(spawn_pill(format!("by {by}")))
-                    }),
+                    .max_w(px(420.))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_HEADING))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("No issues yet"),
+                    )
+                    .child(div().text_center().text_color(TEXT_MUTED).child(
+                        "Describe a change and pick a pipeline; its steps take it from \
+                                 there and stop when one needs you.",
+                    )),
             )
-            .when_some(runner, |d, r| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .w_full()
-                        .pt(px(8.))
-                        .border_t_1()
-                        .border_color(LINE_SUBTLE)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .min_w_0()
-                                .text_size(px(12.))
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(TEXT_MUTED)
-                                        .child(r.kind.label()),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .ellipsis()
-                                        .text_color(TEXT_SECONDARY)
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(r.name),
-                                ),
-                        )
-                        .when_some(issue.run.as_ref(), |d, run| {
-                            d.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(12.))
-                                    .line_height(px(16.))
-                                    .child(status_dot(run.state.dot(), true))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_color(run.state.color())
-                                            .child(run.text.clone()),
-                                    ),
-                            )
-                            .when(issue.is_running(), |d| {
-                                d.child(progress(run.pct as f32 / 100., ACCENT))
-                            })
-                        }),
-                )
+            .child(
+                // The header's "New issue" is the page's one primary action.
+                Button::new("empty-new-issue", "New issue")
+                    .icon("plus")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_new(window, cx))),
+            )
+            .when_some(errors, |d, e| {
+                d.child(div().max_w(px(520.)).text_center().child(small(
+                    format!("Some pipeline files could not be read: {e}"),
+                    WARNING,
+                )))
             })
     }
 }

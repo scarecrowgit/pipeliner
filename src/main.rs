@@ -19,6 +19,9 @@ impl Shell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = nav::install(initial_screen(), cx);
         cx.observe(&nav, |_, _, cx| cx.notify()).detach();
+        // The pipeline service (issues, runs, agent config) is global; the issue board and
+        // the agents screen read it, so it must exist before they are built.
+        pipeline::init(cx);
         Self {
             nav,
             sidebar: cx.new(|cx| sidebar::Sidebar::new(window, cx)),
@@ -34,6 +37,9 @@ impl Shell {
 }
 
 /// `HARNESS_SCREEN=chat|home|editor|inbox|issues|agents` picks the start screen (default: chat).
+/// Test hooks read by the screens: `HARNESS_ISSUE=<KEY>` opens that issue's detail,
+/// `HARNESS_ISSUES_DIALOG=new` opens the "New issue" dialog, `HARNESS_AGENTS_TAB=pipeline`
+/// opens the "Pipeline agents" tab.
 fn initial_screen() -> Screen {
     match std::env::var("HARNESS_SCREEN").as_deref() {
         Ok("home") => Screen::Home,

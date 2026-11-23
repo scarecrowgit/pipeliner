@@ -1,8 +1,9 @@
 //! Standalone preview: `cargo run -p screen_home --example screen_home`
 //!
 //! A blank 232px strip stands in for the app sidebar so the layout matches the app.
-//! `HOME_DEMO_CHATS=1` installs a nav entity with two fake chat sessions (one running,
-//! one waiting) to preview how real chats are merged into "Working now" / "Needs you".
+//! Reads the real pipeline and Inbox data (`$XDG_DATA_HOME/harness`).
+//! `HOME_DEMO_CHATS=1` publishes two fake chat sessions (one running, one waiting) to
+//! preview chats in "Working now" / "Needs you".
 
 use gpui::{AnyView, AppContext as _, Context, IntoElement, Render, Window, div, prelude::*, px};
 use ui::nav::{self, ChatSessionInfo, ChatStatus, Screen};
@@ -65,8 +66,9 @@ fn demo_chats() -> Vec<ChatSessionInfo> {
 
 fn main() {
     ui::run_app("Home (preview)", 1440., 960., |window, cx| {
+        nav::install(Screen::Home, cx);
+        pipeline::init(cx);
         if std::env::var_os("HOME_DEMO_CHATS").is_some() {
-            nav::install(Screen::Home, cx);
             nav::set_chat_sessions(demo_chats(), None, 3, cx);
         }
         let view = cx.new(|cx| screen_home::HomeScreen::new(window, cx));

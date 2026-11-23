@@ -1,73 +1,55 @@
 //! Small building blocks shared by the board, list and detail views.
 
-use gpui::{FontWeight, Hsla, SharedString, div, prelude::*, px};
-use ui::icon;
+use gpui::{Div, FontWeight, Hsla, SharedString, div, prelude::*, px};
+use ui::status_dot;
 use ui::theme::*;
 
-use crate::data::RunnerKind;
-
-/// Initials avatar with the mockup's exact sizes (22px / 10px on cards, 20px / 9px in the panel).
-pub fn person_avatar(initials: &str, size: f32, font: f32) -> gpui::Div {
-    div()
-        .size(px(size))
-        .flex_none()
-        .rounded_full()
-        .bg(SURFACE_HOVER)
-        .border_1()
-        .border_color(LINE_STRONG)
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(font))
-        .line_height(px(font + 2.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(TEXT_SECONDARY)
-        .child(SharedString::from(initials.to_string()))
-}
-
-/// 22px rounded tile with the runner-kind icon (12px).
-pub fn runner_tile(kind: RunnerKind) -> gpui::Div {
-    runner_tile_sized(kind, 22.)
-}
-
-/// Rounded runner-kind tile of any size (12px icon).
-pub fn runner_tile_sized(kind: RunnerKind, size: f32) -> gpui::Div {
-    let (bg, fg) = kind.tile_colors();
-    div()
-        .size(px(size))
-        .flex_none()
-        .rounded(px(RADIUS_MD))
-        .bg(bg)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(icon(kind.icon(), 12., fg))
-}
+use crate::look::Line;
 
 /// 12px text in a given color.
-pub fn small(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
+pub fn small(text: impl Into<SharedString>, color: Hsla) -> Div {
     div()
         .text_size(px(12.))
         .text_color(color)
         .child(text.into())
 }
 
-/// Spawn-colored "by Analyst" pill (22px).
-pub fn spawn_pill(text: impl Into<SharedString>) -> gpui::Div {
+/// Machine text (keys, durations): 12px mono.
+pub fn mono(text: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .font_family(FONT_MONO)
+        .text_size(px(TEXT_MONO))
+        .text_color(color)
+        .child(text.into())
+}
+
+/// Section heading inside the detail panel, with optional muted meta on the right.
+pub fn heading(text: impl Into<SharedString>) -> Div {
     div()
         .flex()
-        .flex_none()
         .items_center()
-        .gap(px(4.))
-        .h(px(22.))
-        .px(px(8.))
-        .rounded_full()
-        .bg(SPAWN_SOFT)
-        .text_color(SPAWN_TEXT)
+        .gap(px(8.))
+        .child(div().font_weight(FontWeight::MEDIUM).child(text.into()))
+}
+
+/// Status dot + coloured words (the card's run line).
+pub fn status_line(line: &Line) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .w_full()
+        .min_w_0()
         .text_size(px(12.))
-        .whitespace_nowrap()
-        .child(icon("spawn", 12., SPAWN_TEXT))
-        .child(text.into())
+        .line_height(px(16.))
+        .child(status_dot(line.dot, true))
+        .child(
+            div()
+                .flex_1()
+                .ellipsis()
+                .text_color(line.color)
+                .child(line.text.clone()),
+        )
 }
 
 /// Single-line text cut with "…".

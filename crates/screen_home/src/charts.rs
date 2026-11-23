@@ -2,22 +2,25 @@
 
 use gpui::{IntoElement, SharedString, div, prelude::*, px, relative};
 use ui::theme::*;
-use ui::{Status, icon, progress, status_dot};
+use ui::{Status, icon, status_dot};
 
-use crate::data::{DAY_LIMIT, DAYS, RUNTIMES, Range, looks};
+use crate::data::{Range, looks, money};
 use crate::flex_item;
+use crate::stats::{AgentSpend, DaySpend, Kpis, nice_ceil};
 use crate::tooltip::tooltip;
-use crate::view::{ellipsis, heading, muted};
+use crate::view::{ellipsis, empty_state, heading, muted};
 
 /// Plot height of the daily spend chart.
 const PLOT_H: f32 = 140.;
 /// Width of the y-axis label column and its gap to the plot.
-const AXIS_W: f32 = 36.;
+const AXIS_W: f32 = 40.;
 const AXIS_GAP: f32 = 8.;
 /// Gap between bars and the plot's side padding.
 const BAR_GAP: f32 = 10.;
 const BAR_PAD: f32 = 6.;
 const BAR_MAX_W: f32 = 28.;
+
+const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /// Card shell of the bottom row: `flex: <grow> 1 <basis>px`, 12/14/14 padding.
 fn chart_card(grow: f32, basis: f32, gap: f32) -> gpui::Div {
@@ -44,31 +47,41 @@ fn card_head(title: &'static str, note: impl Into<SharedString>) -> gpui::Div {
         .child(muted(note))
 }
 
-fn money(v: f32) -> String {
-    format!("${v:.2}")
+/// Axis label: `$0`, `$0.25`, `$2.5`, `$10`.
+fn axis_money(v: f64) -> String {
+    if v == 0. {
+        "$0".into()
+    } else if v < 1. {
+        format!("${v:.2}")
+    } else if v.fract() == 0. {
+        format!("${v:.0}")
+    } else {
+        format!("${v:.1}")
+    }
 }
 
 // ── Spend per day ───────────────────────────────────────────────────────
 
-/// 1px dashed limit line along the top of the plot (3px dashes, clipped to the width).
-fn dashed_line() -> gpui::Div {
+fn grid_line(top: f32) -> gpui::Div {
     div()
         .absolute()
-        .top_0()
+        .top(px(top))
         .left_0()
         .right_0()
         .h(px(1.))
-        .overflow_hidden()
-        .flex()
-        .gap(px(3.))
-        .children((0..160).map(|_| div().w(px(3.)).h_full().flex_none().bg(LINE_STRONG)))
+        .bg(LINE_SUBTLE)
 }
 
-pub(crate) fn spend_per_day() -> impl IntoElement {
-    let last = DAYS.len() - 1;
-    let max = DAYS.iter().map(|d| d.1).fold(0., f32::max);
+pub(crate) fn spend_per_day(days: &[DaySpend], offset: i64) -> impl IntoElement {
+    let last = days.len().saturating_sub(1);
+    let max = days.iter().map(DaySpend::total).fold(0., f64::max);
+    let top = nice_ceil(max);
+    let label_of = |d: &DaySpend| {
+        let date = ui::time::date_of(d.start, offset);
+        (WEEKDAYS[date.weekday as usize % 7], date)
+    };
 
-    let axis_label = |text: &'static str| {
+    let axis_label = |text: String| {
         div()
             .absolute()
             .right_0()
@@ -84,18 +97,31 @@ pub(crate) fn spend_per_day() -> impl IntoElement {
         .font_family(FONT_MONO)
         .text_size(px(TEXT_MONO_SM))
         .text_color(TEXT_MUTED)
-        .child(axis_label("$10").top(px(-8.)))
-        .child(axis_label("$5").top(px(PLOT_H / 2. - 8.)))
-        .child(axis_label("$0").bottom(px(-8.)));
+        .when(top > 0., |d| {
+            d.child(axis_label(axis_money(top)).top(px(-8.)))
+                .child(axis_label(axis_money(top / 2.)).top(px(PLOT_H / 2. - 8.)))
+        })
+        .child(axis_label(axis_money(0.)).bottom(px(-8.)));
 
-    let bars = DAYS.iter().enumerate().map(|(i, &(day, v))| {
+    let bars = days.iter().enumerate().map(|(i, d)| {
         let today = i == last;
-        let h = (v / DAY_LIMIT).clamp(0., 1.) * PLOT_H;
+        let v = d.total();
+        let h = if top > 0. {
+            (v / top).clamp(0., 1.) as f32 * PLOT_H
+        } else {
+            0.
+        };
+        let (weekday, date) = label_of(d);
         let tip = format!(
-            "{day}: {} of {}{}",
+            "{weekday} {} {}: {}{} · runs {} · chats {}",
+            date.day,
+            ui::time::month_name(date.month)
+                .get(..3)
+                .unwrap_or_default(),
             money(v),
-            money(DAY_LIMIT),
-            if today { " so far" } else { "" }
+            if today { " so far" } else { "" },
+            money(d.runs),
+            money(d.chats),
         );
         div()
             .id(("home-day", i))
@@ -117,7 +143,7 @@ pub(crate) fn spend_per_day() -> impl IntoElement {
                     .bg(if today { ACCENT_RING } else { ACCENT })
                     .group_hover("home-day", |s| s.bg(ACCENT_TEXT)),
             )
-            .when(today || v == max, |d| {
+            .when(v > 0. && (today || v == max), |d| {
                 d.child(
                     div()
                         .absolute()
@@ -142,17 +168,20 @@ pub(crate) fn spend_per_day() -> impl IntoElement {
         .h(px(PLOT_H))
         .border_b_1()
         .border_color(LINE_STRONG)
-        // Limit line (dashed) and the $5 grid line.
-        .child(dashed_line())
-        .child(
-            div()
-                .absolute()
-                .top(px(PLOT_H / 2.))
-                .left_0()
-                .right_0()
-                .h(px(1.))
-                .bg(LINE_SUBTLE),
-        )
+        .when(top > 0., |d| {
+            d.child(grid_line(0.)).child(grid_line(PLOT_H / 2.))
+        })
+        .when(top == 0., |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(muted("No spend in the last 7 days")),
+            )
+        })
         .child(
             div()
                 .absolute()
@@ -173,15 +202,21 @@ pub(crate) fn spend_per_day() -> impl IntoElement {
         .text_size(px(TEXT_MONO_SM))
         .line_height(px(16.))
         .text_color(TEXT_MUTED)
-        .children(
-            DAYS.iter()
-                .map(|&(day, _)| div().flex_1().min_w_0().flex().justify_center().child(day)),
-        );
+        .children(days.iter().map(|d| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .justify_center()
+                .child(label_of(d).0)
+        }));
 
+    let week: f64 = days.iter().map(DaySpend::total).sum();
+    let today = days.get(last).map_or(0., DaySpend::total);
     chart_card(1.4, 380., 10.)
         .child(card_head(
             "Spend per day",
-            format!("last 7 days · limit {} a day", money(DAY_LIMIT)),
+            format!("last 7 days · {}", money(week)),
         ))
         .child(
             div()
@@ -192,20 +227,28 @@ pub(crate) fn spend_per_day() -> impl IntoElement {
                 .child(day_labels),
         )
         .child(muted(format!(
-            "Today so far is lighter: {} of {}. Hover a bar for the day total.",
-            money(DAYS[last].1),
-            money(DAY_LIMIT)
+            "Today so far: {}. Hover a bar for the day total.",
+            money(today)
         )))
 }
 
 // ── Spend by agent ──────────────────────────────────────────────────────
 
-pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
-    let by = range.by_agent();
-    let max = by[0].2;
-    let rows = by.iter().enumerate().map(|(i, &(name, kind, v))| {
-        let l = looks(kind);
-        let w = (v / max * 100.).round().max(2.) / 100.;
+pub(crate) fn spend_by_agent(by: &[AgentSpend], range: Range) -> impl IntoElement {
+    let max = by.iter().map(|r| r.cost).fold(0., f64::max);
+    let rows = by.iter().enumerate().map(|(i, row)| {
+        let (icon_name, color) = match row.kind {
+            Some(kind) => {
+                let l = looks(kind);
+                (l.icon, l.fg)
+            }
+            None => ("more", TEXT_MUTED),
+        };
+        let w = if max > 0. {
+            (row.cost / max * 100.).round().max(2.) / 100.
+        } else {
+            0.
+        };
         div()
             .id(("home-by-agent", i))
             .flex()
@@ -213,8 +256,9 @@ pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
             .gap(px(8.))
             .min_h(px(24.))
             .tooltip(tooltip(format!(
-                "{name}: {} {}",
-                money(v),
+                "{}: {} {}",
+                row.name,
+                money(row.cost),
                 range.sentence()
             )))
             .child(
@@ -224,9 +268,9 @@ pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(icon(l.icon, 12., l.fg))
+                    .child(icon(icon_name, 12., color))
                     .child(
-                        ellipsis(name, 18.)
+                        ellipsis(row.name.clone(), 18.)
                             .flex_1()
                             .text_size(px(TEXT_LABEL))
                             .line_height(px(18.))
@@ -243,7 +287,7 @@ pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
                     .child(
                         div()
                             .h_full()
-                            .w(relative(w))
+                            .w(relative(w as f32))
                             .rounded_r(px(RADIUS_SM))
                             .bg(ACCENT),
                     ),
@@ -256,48 +300,65 @@ pub(crate) fn spend_by_agent(range: Range) -> impl IntoElement {
                     .justify_end()
                     .font_family(FONT_MONO)
                     .text_size(px(TEXT_MONO))
-                    .child(money(v)),
+                    .child(money(row.cost)),
             )
     });
     chart_card(1., 320., 8.)
         .child(card_head("Spend by agent", range.sentence()))
+        .when(by.is_empty(), |d| {
+            d.child(empty_state(
+                "No spend",
+                "Pipeline agents and chats with a known price show up here.",
+            ))
+        })
         .children(rows)
 }
 
 // ── Runtimes ────────────────────────────────────────────────────────────
 
-pub(crate) fn runtimes() -> impl IntoElement {
-    let items = RUNTIMES.iter().map(|rt| {
+/// The local machine: every pipeline worker and chat runs here.
+pub(crate) fn runtimes(host: &SharedString, k: &Kpis) -> impl IntoElement {
+    let busy = k.working() > 0;
+    let line = |label: &'static str, n: usize| {
+        div()
+            .flex()
+            .items_center()
+            .text_size(px(TEXT_LABEL))
+            .child(div().flex_1().text_color(TEXT_SECONDARY).child(label))
+            .child(
+                div()
+                    .font_family(FONT_MONO)
+                    .text_size(px(TEXT_MONO))
+                    .text_color(if n > 0 { TEXT } else { TEXT_MUTED })
+                    .child(n.to_string()),
+            )
+    };
+    chart_card(1., 260., 12.).child(heading("Runtimes")).child(
         div()
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(8.))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(status_dot(
-                        if rt.online {
-                            Status::Live
-                        } else {
-                            Status::Draft
-                        },
-                        true,
-                    ))
+                    .child(status_dot(Status::Live, true))
                     .child(
-                        div()
+                        ellipsis(host.clone(), 18.)
                             .flex_1()
                             .font_family(FONT_MONO)
                             .text_size(px(TEXT_MONO))
-                            .child(rt.name),
+                            .line_height(px(18.)),
                     )
-                    .child(muted(rt.usage)),
+                    .child(muted(if busy {
+                        format!("{} running", k.working())
+                    } else {
+                        "idle".to_string()
+                    })),
             )
-            .child(progress(rt.used as f32 / rt.max as f32, ACCENT))
-            .child(muted(rt.note))
-    });
-    chart_card(1., 260., 12.)
-        .child(heading("Runtimes"))
-        .children(items)
+            .child(line("Pipeline workers", k.working_runs))
+            .child(line("Chats", k.working_chats))
+            .child(muted("Local machine: pipelines and chats run here.")),
+    )
 }

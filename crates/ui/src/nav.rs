@@ -43,6 +43,10 @@ pub struct Nav {
     pub inbox_focus: Option<SharedString>,
     /// The sidebar shows only icons (56px) instead of the wide column. Saved on disk.
     pub sidebar_collapsed: bool,
+    /// Issue to open on the board next time it renders (one-shot).
+    pub issue_focus: Option<SharedString>,
+    /// Pipeline to show in the editor next time it renders (one-shot).
+    pub pipeline_focus: Option<SharedString>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +103,8 @@ pub fn install(initial: Screen, cx: &mut App) -> Entity<Nav> {
         inbox_focus: None,
         sidebar_collapsed: sidebar_state_path()
             .is_some_and(|p| load_sidebar_collapsed(&p)),
+        issue_focus: None,
+        pipeline_focus: None,
     });
     cx.set_global(GlobalNav(nav.clone()));
     nav
@@ -331,6 +337,42 @@ pub fn set_sidebar_collapsed(collapsed: bool, cx: &mut App) {
 pub fn toggle_sidebar(cx: &mut App) {
     let collapsed = sidebar_collapsed(cx);
     set_sidebar_collapsed(!collapsed, cx);
+}
+
+/// Show the issue board with issue `key` open.
+pub fn open_issue(key: impl Into<SharedString>, cx: &mut App) {
+    let key = key.into();
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            n.screen = Screen::Issues;
+            n.issue_focus = Some(key);
+            cx.notify();
+        });
+    }
+}
+
+/// Issue board: take the pending issue to open, if any.
+pub fn take_issue_focus(cx: &mut App) -> Option<SharedString> {
+    let nav = nav_entity(cx)?;
+    nav.update(cx, |n, _| n.issue_focus.take())
+}
+
+/// Show the pipeline editor with pipeline `id` open.
+pub fn open_pipeline(id: impl Into<SharedString>, cx: &mut App) {
+    let id = id.into();
+    if let Some(nav) = nav_entity(cx) {
+        nav.update(cx, |n, cx| {
+            n.screen = Screen::PipelineEditor;
+            n.pipeline_focus = Some(id);
+            cx.notify();
+        });
+    }
+}
+
+/// Pipeline editor: take the pending pipeline to open, if any.
+pub fn take_pipeline_focus(cx: &mut App) -> Option<SharedString> {
+    let nav = nav_entity(cx)?;
+    nav.update(cx, |n, _| n.pipeline_focus.take())
 }
 
 #[cfg(test)]

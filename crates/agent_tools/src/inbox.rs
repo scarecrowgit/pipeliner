@@ -168,11 +168,21 @@ impl InboxItem {
 
 // ── Store ───────────────────────────────────────────────────────────────
 
+/// `$XDG_DATA_HOME/harness` (default `~/.local/share/harness`): app data shared by the
+/// chat, the Inbox and pipelines.
+pub fn data_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share")
+        })
+        .join("harness")
+}
+
 pub fn path() -> PathBuf {
-    crate::session::sessions_dir()
-        .parent()
-        .map(|p| p.join("inbox.json"))
-        .unwrap_or_else(|| PathBuf::from("inbox.json"))
+    data_dir().join("inbox.json")
 }
 
 /// All items, newest first.
@@ -318,7 +328,7 @@ pub fn parse(input: &Value) -> Result<Report, String> {
         }
     }
     Ok(Report {
-        title: crate::session::truncate(title, 120),
+        title: truncate(title, 120),
         summary: summary.to_string(),
         outcome,
         links,
@@ -525,7 +535,19 @@ pub fn pr_info_from_json(v: &Value) -> PrInfo {
 }
 
 pub fn new_id() -> String {
-    format!("r{}", crate::session::new_id())
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("r{}-{:04}", now.as_millis(), now.subsec_nanos() % 10_000)
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 #[cfg(test)]

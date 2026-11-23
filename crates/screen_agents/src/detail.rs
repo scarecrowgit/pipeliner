@@ -1,18 +1,21 @@
-//! Right-hand details panel for the selected entry. Sections differ per kind:
-//! orchestrators show their team and agent-creation limits, pipelines how they are called and
-//! what is inside, agents their tools and the teams they belong to. Every kind has a
-//! skills section (see [`crate::skills`]).
+//! Right-hand details panel for the selected entry: the shared head and building blocks
+//! (sections, facts, usage stats, run and chat lists), a pipeline's sections and a created
+//! task's sections. Step, sub-agent and chat agent sections live in [`crate::detail_agents`].
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, Hsla, IntoElement, SharedString, div, prelude::*, px,
+    AnyElement, Context, Div, FontWeight, IntoElement, SharedString, Window, div, prelude::*, px,
 };
-use ui::nav::{Screen, navigate};
+use ui::nav::{ChatRequest, ChatSessionInfo, ChatStatus, Screen, navigate, open_issue, request_chat};
 use ui::theme::*;
-use ui::{Button, Stepper, checkbox, icon};
+use ui::{Button, Stat};
 
-use crate::data::{Entry, Kind, Use};
-use crate::looks::{heading, looks, name_with_kind, small_tile, tile};
-use crate::{AgentsScreen, DETAIL_WIDTH};
+use crate::looks::{ellipsis_line, heading, looks, tile};
+use crate::entries::step_id;
+use crate::model::{Entry, Kind, RunInfo, State, plural, stage_word};
+use crate::{AgentsScreen, DETAIL_WIDTH, fmt};
+
+/// Rows of the "Recent runs" lists.
+const RECENT_RUNS: usize = 8;
 
 /// `section` with the panel's standard padding; `last` drops the bottom rule.
 pub(crate) fn section(gap: f32, last: bool) -> Div {
@@ -32,8 +35,16 @@ pub(crate) fn muted_12(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+pub(crate) fn body_text(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(13.))
+        .line_height(px(20.))
+        .text_color(TEXT_SECONDARY)
+        .child(text.into())
+}
+
 /// `<dl>` with a 96px key column (`gap: 4px 12px`, 12px text).
-fn facts(rows: Vec<(&'static str, SharedString)>, mono_values: bool) -> Div {
+pub(crate) fn facts(rows: Vec<(&'static str, SharedString)>, mono_values: bool) -> Div {
     div()
         .flex()
         .flex_col()
@@ -55,34 +66,75 @@ fn facts(rows: Vec<(&'static str, SharedString)>, mono_values: bool) -> Div {
         }))
 }
 
+/// A clickable 36px list row; bleeds 8px into the section padding.
+pub(crate) fn list_row(id: impl Into<gpui::ElementId>) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .min_h(px(36.))
+        .py(px(4.))
+        .px(px(8.))
+        .mx(px(-8.))
+        .rounded(px(RADIUS_MD))
+        .cursor_pointer()
+        .hover(|s| s.bg(SURFACE_HOVER))
+}
+
+/// Section heading with a muted count on the right.
+pub(crate) fn heading_count(title: &'static str, count: impl Into<SharedString>) -> Div {
+    div()
+        .flex()
+        .justify_between()
+        .items_baseline()
+        .gap(px(8.))
+        .child(heading(title))
+        .child(muted_12(count))
+}
+
+/// Runs / tokens / cost; a muted line when nothing was recorded.
+pub(crate) fn usage_stats(runs: usize, tokens: u64, cost: f64) -> Div {
+    if tokens == 0 {
+        return muted_12("No usage recorded yet.");
+    }
+    div()
+        .flex()
+        .gap(px(SPACE_6))
+        .child(Stat::new("Runs", runs.to_string()))
+        .child(Stat::new("Tokens", fmt::tokens(tokens)))
+        // Runs record 0 when the model's price is unknown.
+        .child(Stat::new(
+            "Cost",
+            if cost > 0. { fmt::cost(cost) } else { "Unknown".into() },
+        ))
+}
+
 impl AgentsScreen {
-    pub(crate) fn render_detail(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let e = self.selected();
-        let mut sections: Vec<AnyElement> = vec![
-            self.detail_head(e).into_any_element(),
-            self.detail_actions(e).into_any_element(),
-            self.detail_about(e, cx).into_any_element(),
-            self.detail_uses(e, cx).into_any_element(),
-            self.detail_skills(e, cx).into_any_element(),
-        ];
-        match e.kind {
-            Kind::Orchestrator => {
-                sections.push(self.detail_team(e, cx).into_any_element());
-                sections.push(self.detail_create(e, cx).into_any_element());
-                sections.push(
-                    section(6., true)
-                        .child(heading("How it routes"))
-                        .child(div().text_color(TEXT_SECONDARY).child(
-                            "Splits the issue, hands each part to the cheapest teammate with the right \
-                             skill, and creates a helper only when nobody fits. Asks you when two plans \
-                             disagree.",
-                        ))
-                        .into_any_element(),
-                );
+    pub(crate) fn render_detail(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let sections: Vec<AnyElement> = match self.selected().cloned() {
+            None => vec![
+                section(6., true)
+                    .child(muted_12("Nothing to show."))
+                    .into_any_element(),
+            ],
+            Some(e) => {
+                let mut s = vec![self.detail_head(&e).into_any_element()];
+                s.extend(match e.kind {
+                    Kind::Pipeline(i) => self.pipeline_sections(i, cx),
+                    Kind::Step(r, role) => self.step_sections(r, role, window, cx),
+                    Kind::Delegate(r) => self.delegate_sections(r, window, cx),
+                    Kind::Chat(kind) => self.chat_sections(kind, cx),
+                    Kind::Custom(i) => self.custom_sections(i, cx),
+                    Kind::Task(i) => self.task_sections(i, cx),
+                });
+                s
             }
-            Kind::Pipeline => sections.push(self.detail_called(e).into_any_element()),
-            Kind::Agent => sections.push(self.detail_tools(e).into_any_element()),
-        }
+        };
 
         div()
             .id("agents-detail")
@@ -94,6 +146,36 @@ impl AgentsScreen {
             .border_color(LINE)
             .bg(BG_SIDEBAR)
             .children(sections)
+    }
+
+    /// "Lead agent · Mockup → GPUI build", "Sub-agent task · created by Build"…
+    fn kind_line(&self, e: &Entry) -> String {
+        match e.kind {
+            Kind::Step(r, _) => match self.snap.step(r) {
+                Some((def, _)) => format!("{} · {}", e.kind.label(), def.name),
+                None => e.kind.label().into(),
+            },
+            Kind::Delegate(r) => match self.snap.step(r) {
+                Some((def, step)) => format!("Sub-agent · led by {} in {}", step.name, def.name),
+                None => e.kind.label().into(),
+            },
+            Kind::Chat(_) => "Chat agent · built-in".into(),
+            Kind::Custom(i) => match self.catalog.agents.get(i) {
+                Some(a) => format!(
+                    "Chat agent · {}",
+                    crate::model::source_label(&a.source).to_lowercase()
+                ),
+                None => e.kind.label().into(),
+            },
+            Kind::Task(i) => match self.snap.task_lead(i) {
+                Some(lead) => format!("Sub-agent task · created by {lead}"),
+                None => e.kind.label().into(),
+            },
+            Kind::Pipeline(i) => match self.snap.pipeline(i) {
+                Some(d) => format!("Pipeline · {} step{}", d.steps.len(), plural(d.steps.len())),
+                None => e.kind.label().into(),
+            },
+        }
     }
 
     fn detail_head(&self, e: &Entry) -> impl IntoElement {
@@ -118,433 +200,446 @@ impl AgentsScreen {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(l.name_color)
                             .truncate()
-                            .child(e.name),
+                            .child(e.name.clone()),
                     )
                     .child(
                         div()
                             .flex()
-                            .flex_wrap()
                             .items_center()
                             .gap(px(6.))
                             .text_size(px(12.))
                             .child(
                                 div()
+                                    .min_w_0()
+                                    .truncate()
                                     .text_color(l.kind_color)
                                     .child(SharedString::from(self.kind_line(e))),
                             )
                             .child(div().text_color(TEXT_DISABLED).child("·"))
                             .child(
                                 div()
+                                    .flex_none()
                                     .text_color(e.state.color())
-                                    .child(SharedString::from(e.status_text.clone())),
+                                    .child(e.status.clone()),
                             ),
                     ),
             )
     }
 
-    fn detail_actions(&self, e: &Entry) -> impl IntoElement {
+    /// Row of small buttons under the head.
+    pub(crate) fn actions(&self, buttons: Vec<Button>) -> Div {
         div()
             .flex()
-            .flex_wrap()
             .gap(px(8.))
             .py(px(12.))
             .px(px(SPACE_5))
             .border_b_1()
             .border_color(LINE)
-            .child(
-                Button::new("agents-chat", "Chat with it")
-                    .small()
-                    .on_click(|_, _, cx| navigate(Screen::Chat, cx)),
-            )
-            .child(
-                Button::new("agents-assign", "Assign an issue")
-                    .small()
-                    .on_click(|_, _, cx| navigate(Screen::Issues, cx)),
-            )
-            .when(e.kind == Kind::Pipeline, |d| {
-                d.child(
-                    Button::new("agents-open-editor", "Open in editor")
-                        .small()
-                        .on_click(|_, _, cx| navigate(Screen::PipelineEditor, cx)),
-                )
-            })
+            .children(buttons)
     }
 
-    fn detail_about(&self, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut rows = Vec::new();
-        if let Some(m) = e.model {
-            rows.push(("Model", SharedString::from(m)));
-        }
-        if let Some(r) = e.runtime {
-            rows.push(("Runtime", SharedString::from(r)));
-        }
-        rows.push(("Activity", SharedString::from(e.meta)));
-
-        section(8., false)
-            .child(div().text_color(TEXT_SECONDARY).child(e.desc))
-            .when_some(e.created_by, |d, by| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .py(px(10.))
-                        .px(px(12.))
-                        .rounded(px(RADIUS_LG))
-                        .bg(SPAWN_SOFT)
-                        .border_1()
-                        .border_color(SPAWN_LINE)
-                        .child(div().text_size(px(12.)).text_color(SPAWN_TEXT).child(
-                            SharedString::from(format!(
-                                "Created by {} for {} · ends when the issue closes",
-                                self.name_of(by),
-                                e.for_issue
-                            )),
-                        ))
-                        .child(
-                            div().flex().child(
-                                Button::new("agents-promote", "Keep as a permanent agent")
-                                    .small()
-                                    .on_click(cx.listener(|this, _, _, cx| this.promote(cx))),
-                            ),
-                        ),
-                )
-            })
-            .child(facts(rows, true))
-    }
-
-    fn detail_uses(&self, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
-        let hint = if e.kind == Kind::Pipeline {
-            "In chat it appears in the agent picker next to Build and Plan. On the board it can be \
-             assigned like a teammate."
-        } else {
-            "The same agent, with the same tools and limits, wherever it runs."
-        };
-        section(8., false)
-            .child(heading("Use it from"))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(6.))
-                    .children(Use::ALL.iter().map(|&u| {
-                        let on = e.uses(u);
-                        let (bg, border, color) = if on {
-                            (ACCENT_SOFT, ACCENT_RING, ACCENT_TEXT)
-                        } else {
-                            (gpui::transparent_black(), LINE_STRONG, TEXT_MUTED)
-                        };
+    /// Issue rows (key, title, run status, when); a click opens the issue on the board.
+    pub(crate) fn run_rows(&self, prefix: &'static str, runs: Vec<&RunInfo>) -> Vec<AnyElement> {
+        runs.into_iter()
+            .take(RECENT_RUNS)
+            .enumerate()
+            .map(|(i, r)| {
+                let key = r.issue.clone();
+                list_row((prefix, i))
+                    .child(
                         div()
-                            .id(("agents-use", u.index()))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .h(px(CONTROL_HEIGHT_SM))
-                            .px(px(10.))
-                            .rounded(px(RADIUS_MD))
-                            .border_1()
-                            .border_color(border)
-                            .bg(bg)
-                            .text_color(color)
+                            .w(px(48.))
+                            .flex_none()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_MONO_SM))
+                            .text_color(TEXT_MUTED)
+                            .child(SharedString::from(r.issue.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(ellipsis_line(r.title.clone(), 13., TEXT)),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
                             .text_size(px(12.))
-                            .cursor_pointer()
-                            .when(!on, |d| d.hover(|s| s.text_color(TEXT).bg(SURFACE_RAISED)))
-                            .child(icon(
-                                "check",
-                                12.,
-                                if on { color } else { alpha(color, 0.) },
-                            ))
-                            .child(u.label())
-                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_use(u, cx)))
-                    })),
-            )
-            .child(muted_12(hint))
-    }
-
-    fn detail_team(&self, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
-        let team: Vec<&Entry> = e.team.iter().filter_map(|id| self.entry(id)).collect();
-        let count = format!(
-            "{} {}",
-            team.len(),
-            if team.len() == 1 { "member" } else { "members" }
-        );
-        let addable: Vec<&Entry> = self
-            .list
-            .iter()
-            .filter(|m| {
-                m.id != e.id
-                    && m.created_by.is_none()
-                    && !e.team.contains(&m.id)
-                    && m.kind != Kind::Orchestrator
+                            .text_color(r.state().color())
+                            .child(r.status_word()),
+                    )
+                    .child(muted_12(fmt::when(r.created)).flex_none())
+                    .on_click(move |_, _, cx| open_issue(key.clone(), cx))
+                    .into_any_element()
             })
-            .collect();
-
-        let rows = team.iter().enumerate().map(|(i, m)| {
-            let id = m.id;
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .min_h(px(32.))
-                .child(small_tile(looks(m)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(name_with_kind(m.name, m.kind.label())),
-                )
-                .child(muted_12(m.status_text.clone()))
-                .child(
-                    Button::new(("agents-team-remove", i), "")
-                        .small()
-                        .ghost()
-                        .icon("x")
-                        .on_click(cx.listener(move |this, _, _, cx| this.remove_member(id, cx))),
-                )
-        });
-
-        let add = div()
-            .flex()
-            .flex_col()
-            .child(
-                div().flex().child(
-                    Button::new("agents-team-add", "Add agent or pipeline")
-                        .small()
-                        .icon("plus")
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_add(cx))),
-                ),
-            )
-            .when(self.add_open, |d| {
-                d.child(
-                    div()
-                        .mt(px(6.))
-                        .p(px(4.))
-                        .flex()
-                        .flex_col()
-                        .border_1()
-                        .border_color(LINE_STRONG)
-                        .rounded(px(RADIUS_XL))
-                        .bg(SURFACE_RAISED)
-                        .when(addable.is_empty(), |d| {
-                            d.child(
-                                div()
-                                    .px(px(8.))
-                                    .py(px(8.))
-                                    .child(muted_12("Everyone is already on the team")),
-                            )
-                        })
-                        .children(addable.iter().enumerate().map(|(i, m)| {
-                            let id = m.id;
-                            div()
-                                .id(("agents-team-addable", i))
-                                .flex()
-                                .items_center()
-                                .gap(px(10.))
-                                .w_full()
-                                .min_h(px(36.))
-                                .py(px(4.))
-                                .px(px(8.))
-                                .rounded(px(RADIUS_MD))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(SURFACE_HOVER))
-                                .child(small_tile(looks(m)))
-                                .child(name_with_kind(m.name, m.kind.label()))
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.add_member(id, cx)),
-                                )
-                        })),
-                )
-            });
-
-        section(8., false)
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(heading("Team it runs"))
-                    .child(muted_12(count)),
-            )
-            .children(rows)
-            .child(add)
+            .collect()
     }
 
-    fn detail_create(&self, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
-        let toggle = div()
-            .id("agents-can-create")
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .min_h(px(CONTROL_HEIGHT_SM))
-            .cursor_pointer()
-            .child(checkbox("agents-can-create-box", e.can_create))
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("Can create its own agents"),
-            )
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_create(cx)));
+    /// "Recent runs" section with an empty state.
+    pub(crate) fn runs_section(
+        &self,
+        prefix: &'static str,
+        runs: Vec<&RunInfo>,
+        empty: &'static str,
+    ) -> Div {
+        let n = runs.len();
+        section(4., false)
+            .child(heading_count(
+                "Recent runs",
+                if n > 0 { format!("{n} issue{}", plural(n)) } else { String::new() },
+            ))
+            .when(n == 0, |d| d.child(muted_12(empty)))
+            .children(self.run_rows(prefix, runs))
+    }
 
-        // `items_start` keeps the stepper at its compact intrinsic width.
-        let stepper_cell = |caption: &'static str, stepper: Stepper| {
-            div()
-                .flex()
-                .flex_col()
-                .items_start()
-                .child(
-                    div()
-                        .mb(px(6.))
-                        .text_size(px(12.))
-                        .text_color(TEXT_MUTED)
-                        .child(caption),
-                )
-                .child(stepper)
-        };
-
-        // Agents this one created; "Nothing yet" placeholder when empty.
-        let created: Vec<(&'static str, &'static str, String, Hsla)> = self
-            .list
-            .iter()
-            .filter(|m| m.created_by == Some(e.id))
-            .map(|m| (m.id, m.name, m.status_text.clone(), m.state.color()))
-            .collect();
-
-        section(10., false).child(toggle).when(e.can_create, |d| {
-            let list: Vec<AnyElement> = if created.is_empty() {
-                vec![created_row(0, "Nothing yet", String::new(), TEXT_MUTED).into_any_element()]
-            } else {
-                created
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (id, name, status, color))| {
-                        created_row(i, name, status, color)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(SURFACE_HOVER))
-                            .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
-                            .into_any_element()
+    /// "Recent chats" with an agent, from the chat screen's session list.
+    pub(crate) fn chats_section(&self, agent: &str) -> Div {
+        let mine: Vec<&ChatSessionInfo> =
+            self.chats.iter().filter(|c| c.agent == agent).collect();
+        let n = mine.len();
+        section(4., false)
+            .child(heading_count(
+                "Recent chats",
+                if n > 0 { n.to_string() } else { String::new() },
+            ))
+            .when(n == 0, |d| d.child(muted_12("No recent chats with this agent.")))
+            .children(mine.into_iter().take(RECENT_RUNS).enumerate().map(|(i, c)| {
+                let id = c.id.clone();
+                let (word, color) = match c.status {
+                    ChatStatus::Running => ("Running", State::Running.color()),
+                    ChatStatus::Waiting => ("Waiting for you", State::Waiting.color()),
+                    ChatStatus::Error => ("Failed", State::Failed.color()),
+                    ChatStatus::Idle => ("", TEXT_MUTED),
+                };
+                list_row(("agents-chat-row", i))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(ellipsis_line(c.title.clone(), 13., TEXT)),
+                    )
+                    .when(!word.is_empty(), |d| {
+                        d.child(div().flex_none().text_size(px(12.)).text_color(color).child(word))
                     })
-                    .collect()
-            };
-            d.child(
-                div()
-                    .grid()
-                    .grid_cols(2)
-                    .gap(px(12.))
-                    .child(stepper_cell(
-                        "Alive at once",
-                        Stepper::new("agents-max-alive", e.max_alive)
-                            .range(1, 8)
-                            .on_change(cx.listener(|this, v: &i32, _, cx| this.set_max_alive(*v, cx))),
-                    ))
-                    .child(stepper_cell(
-                        "Depth",
-                        Stepper::new("agents-depth", e.depth)
-                            .range(1, 3)
-                            .on_change(cx.listener(|this, v: &i32, _, cx| this.set_depth(*v, cx))),
-                    )),
-            )
-            .child(muted_12(
-                "Each created agent gets a subset of its tools and ≤$0.50 per issue. Deeper than 2 asks you first.",
-            ))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(SPAWN_TEXT)
-                    .child(SharedString::from(format!("Created by {}", e.name))),
-            )
-            .children(list)
-        })
-    }
-
-    fn detail_called(&self, e: &Entry) -> impl IntoElement {
-        section(8., false)
-            .child(heading("Called as an agent"))
-            .child(facts(
-                vec![("Takes", e.input.into()), ("Returns", e.output.into())],
-                false,
-            ))
-            .child(div().mt(px(4.)).child(muted_12("Inside")))
-            .children(e.team.iter().filter_map(|id| self.entry(id)).map(|m| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .min_h(px(28.))
-                    .child(small_tile(looks(m)))
-                    .child(m.name)
+                    .when(c.updated > 0, |d| {
+                        d.child(muted_12(fmt::when(c.updated)).flex_none())
+                    })
+                    .on_click(move |_, _, cx| request_chat(ChatRequest::Open(id.clone()), cx))
             }))
     }
 
-    fn detail_tools(&self, e: &Entry) -> impl IntoElement {
-        let in_teams: Vec<&str> = self
-            .list
-            .iter()
-            .filter(|o| o.team.contains(&e.id))
-            .map(|o| o.name)
+    /// Tasks sub-agents worked on, newest run first; a click selects the task.
+    pub(crate) fn tasks_section(
+        &self,
+        title: &'static str,
+        ixs: Vec<usize>,
+        empty: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let n = ixs.len();
+        let rows: Vec<AnyElement> = ixs
+            .into_iter()
+            .enumerate()
+            .filter_map(|(row, ix)| {
+                let e = self.list.iter().find(|e| e.kind == Kind::Task(ix))?;
+                let (run, _) = self.snap.task(ix)?;
+                let id = e.id.clone();
+                Some(
+                    list_row(("agents-task-row", row))
+                        .child(
+                            div()
+                                .size(px(22.))
+                                .flex_none()
+                                .rounded(px(RADIUS_MD))
+                                .bg(SPAWN_SOFT)
+                                .border_1()
+                                .border_dashed()
+                                .border_color(SPAWN_LINE)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(ui::icon("spawn", 12., SPAWN_TEXT)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(ellipsis_line(e.name.clone(), 13., SPAWN_TEXT)),
+                        )
+                        .child(muted_12(run.issue.clone()).flex_none())
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(12.))
+                                .text_color(e.state.color())
+                                .child(e.status.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)))
+                        .into_any_element(),
+                )
+            })
             .collect();
-        let in_teams = if in_teams.is_empty() {
-            "Not in any orchestrator’s team".to_string()
-        } else {
-            format!("In the team of {}", in_teams.join(", "))
+        section(4., false)
+            .child(heading_count(title, if n > 0 { n.to_string() } else { String::new() }))
+            .when(n == 0, |d| d.child(muted_12(empty)))
+            .children(rows)
+    }
+
+    // ── Pipeline ────────────────────────────────────────────────────────
+
+    fn pipeline_sections(&self, pi: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let snap = &self.snap;
+        let Some(def) = snap.pipeline(pi) else {
+            return vec![section(6., true).child(muted_12("This pipeline is gone.")).into_any_element()];
         };
-        section(8., false)
-            .child(heading("Tools"))
-            .child(
+        let runs = snap.runs_in(&def.id);
+        let n_runs = runs.len();
+
+        let editor_id = def.id.clone();
+        let actions = self.actions(vec![
+            Button::new("agents-open-editor", "Open in editor")
+                .small()
+                .on_click(move |_, _, cx| ui::nav::open_pipeline(editor_id.clone(), cx)),
+            Button::new("agents-new-issue", "New issue")
+                .small()
+                .icon("plus")
+                .on_click(|_, _, cx| navigate(Screen::Issues, cx)),
+        ]);
+
+        let problems = def.problems();
+        let about = section(8., false)
+            .when(!def.description.trim().is_empty(), |d| {
+                d.child(body_text(def.description.trim().to_string()))
+            })
+            .child(facts(
+                vec![
+                    ("Steps", def.steps.len().to_string().into()),
+                    ("Workdirs", def.workdirs.len().to_string().into()),
+                    ("File", fmt::path_label(&def.path()).into()),
+                ],
+                false,
+            ))
+            .children(problems.iter().map(|p| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(WARNING)
+                    .child(SharedString::from(p.clone()))
+            }));
+
+        let pipeline_id = def.id.clone();
+        let steps = section(4., false)
+            .child(heading_count("Steps", def.steps.len().to_string()))
+            .when(def.steps.is_empty(), |d| {
+                d.child(muted_12("No steps yet. Add them in the editor."))
+            })
+            .children(def.steps.iter().enumerate().map(|(i, step)| {
+                let who = if step.kind.uses_model() {
+                    let mut who = fmt::short_model(&step.model).to_string();
+                    if let Some(d) = &step.delegate {
+                        who.push_str(&format!(" · leads {}s", d.name));
+                    }
+                    who
+                } else {
+                    step.kind.about().to_string()
+                };
+                let num = div()
+                    .w(px(16.))
+                    .flex_none()
+                    .font_family(FONT_MONO)
+                    .text_size(px(TEXT_MONO_SM))
+                    .text_color(TEXT_MUTED)
+                    .child(SharedString::from((i + 1).to_string()));
+                let body = div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(div().min_w_0().truncate().child(SharedString::from(step.name.clone())))
+                            .child(muted_12(step.kind.label()).flex_none()),
+                    )
+                    .child(ellipsis_line(who, 12., TEXT_MUTED));
+                if step.kind.uses_model() {
+                    let id = step_id(&pipeline_id, &step.id);
+                    list_row(("agents-step", i))
+                        .child(num)
+                        .child(body)
+                        .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)))
+                        .into_any_element()
+                } else {
+                    // Same box as a list row, without the click affordance.
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .min_h(px(36.))
+                        .py(px(4.))
+                        .px(px(8.))
+                        .mx(px(-8.))
+                        .child(num)
+                        .child(body)
+                        .into_any_element()
+                }
+            }));
+
+        let mut rows = Vec::new();
+        if let Some(t) = snap.last_run_in(&def.id) {
+            rows.push(("Last run", SharedString::from(fmt::when(t))));
+        }
+        if n_runs > 0 {
+            rows.push(("Running now", snap.active_in(&def.id).to_string().into()));
+            rows.push(("For approval", snap.waiting_in(&def.id).to_string().into()));
+        }
+        let activity = section(10., false)
+            .child(heading("Activity"))
+            .when(n_runs == 0, |d| {
+                d.child(muted_12("No runs yet. Put an issue on the board to start one."))
+            })
+            .when(n_runs > 0, |d| {
+                d.child(usage_stats(n_runs, snap.tokens_in(&def.id), snap.cost_in(&def.id)))
+                    .child(facts(rows, false))
+                    .child(muted_12("Counts the latest run of each issue."))
+            });
+
+        let workdirs = section(8., false)
+            .child(heading_count("Workdirs", def.workdirs.len().to_string()))
+            .when(def.workdirs.is_empty(), |d| d.child(muted_12("No workdirs.")))
+            .children(def.workdirs.iter().map(|w| {
+                let how = if w.worktree {
+                    format!("A worktree per run, from {}", w.base_branch)
+                } else {
+                    "Used as it is, shared by all runs".to_string()
+                };
                 div()
                     .flex()
-                    .flex_wrap()
-                    .gap(px(6.))
-                    .children(e.tools.iter().map(|s| {
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(div().font_weight(FontWeight::MEDIUM).child(SharedString::from(w.name.clone())))
+                            .child(muted_12(how).min_w_0().truncate()),
+                    )
+                    .child(
                         div()
                             .flex()
                             .items_center()
-                            .h(px(24.))
-                            .px(px(8.))
-                            .rounded(px(RADIUS_MD))
-                            .border_1()
-                            .border_color(LINE_STRONG)
-                            .bg(SURFACE_RAISED)
-                            .font_family(FONT_MONO)
-                            .text_size(px(12.))
-                            .text_color(TEXT_SECONDARY)
-                            .child(*s)
-                    })),
-            )
-            .child(muted_12(in_teams))
-    }
-}
+                            .gap(px(6.))
+                            .child(ui::icon("folder", 12., TEXT_MUTED))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(ellipsis_line(fmt::path_label(&w.path), TEXT_MONO_SM, TEXT_SECONDARY).font_family(FONT_MONO)),
+                            ),
+                    )
+            }))
+            .children(snap.errors.iter().map(|e| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(WARNING)
+                    .child(SharedString::from(format!("Could not read: {e}")))
+            }));
 
-/// One row of the "Created by …" list (36px, bleeds 8px into the section padding).
-fn created_row(ix: usize, name: &'static str, status: String, color: Hsla) -> gpui::Stateful<Div> {
-    div()
-        .id(("agents-created", ix))
-        .flex()
-        .items_center()
-        .gap(px(10.))
-        .min_h(px(36.))
-        .py(px(4.))
-        .px(px(8.))
-        .mx(px(-8.))
-        .rounded(px(RADIUS_MD))
-        .child(
+        let recent = self.runs_section("agents-pipeline-run", runs, "No runs yet.");
+
+        vec![
+            actions.into_any_element(),
+            about.into_any_element(),
+            steps.into_any_element(),
+            activity.into_any_element(),
+            recent.into_any_element(),
+            workdirs.border_b_0().into_any_element(),
+        ]
+    }
+
+    // ── Created by agents ───────────────────────────────────────────────
+
+    fn task_sections(&self, ix: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some((run, task)) = self.snap.task(ix) else {
+            return vec![section(6., true).child(muted_12("This task is gone.")).into_any_element()];
+        };
+        let key = run.issue.clone();
+        let actions = self.actions(vec![
+            Button::new("agents-task-issue", format!("Open {key}"))
+                .small()
+                .on_click(move |_, _, cx| open_issue(key.clone(), cx)),
+        ]);
+
+        let lead = self.snap.task_lead(ix).unwrap_or_else(|| "a pipeline step".into());
+        let origin = section(8., false).child(
             div()
-                .size(px(22.))
-                .flex_none()
-                .rounded(px(RADIUS_MD))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .py(px(10.))
+                .px(px(12.))
+                .rounded(px(RADIUS_LG))
                 .bg(SPAWN_SOFT)
                 .border_1()
-                .border_dashed()
                 .border_color(SPAWN_LINE)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon("spawn", 12., SPAWN_TEXT)),
-        )
-        .child(div().flex_1().text_color(SPAWN_TEXT).child(name))
-        .child(
-            div()
                 .text_size(px(12.))
-                .text_color(color)
-                .child(SharedString::from(status)),
-        )
+                .text_color(SPAWN_TEXT)
+                .child(SharedString::from(format!(
+                    "Created by {lead} for {} · {}",
+                    run.issue,
+                    fmt::when(run.created)
+                )))
+                .child(
+                    div()
+                        .text_color(TEXT_SECONDARY)
+                        .child(SharedString::from(run.title.clone())),
+                ),
+        );
+
+        let usage = self.snap.task_usage(ix);
+        let mut rows = vec![("Status", SharedString::from(stage_word(task.status)))];
+        if let Some(c) = self.snap.task_agent(ix) {
+            rows.push(("Worked by", c.into()));
+        }
+        if let Some(u) = usage.first() {
+            rows.push(("Model", u.model.clone().into()));
+        }
+        let tokens: u64 = usage.iter().map(|u| u.tokens).sum();
+        let cost: f64 = usage.iter().map(|u| u.cost_usd).sum();
+        if tokens > 0 {
+            rows.push(("Tokens", fmt::tokens(tokens).into()));
+        }
+        if cost > 0. {
+            rows.push(("Cost", fmt::cost(cost).into()));
+        }
+        let about = section(8., false).child(facts(rows, false));
+
+        let summary = section(8., false)
+            .child(heading("What it did"))
+            .child(if task.summary.trim().is_empty() {
+                muted_12("No summary yet.")
+            } else {
+                body_text(fmt::plain_markdown(&task.summary))
+            });
+
+        let siblings: Vec<usize> = (0..self.snap.tasks.len())
+            .filter(|&i| i != ix && self.snap.tasks[i].run == self.snap.tasks[ix].run)
+            .collect();
+        let others = self.tasks_section(
+            "Other tasks in this run",
+            siblings,
+            "It was the only task in this run.",
+            cx,
+        );
+
+        vec![
+            actions.into_any_element(),
+            origin.into_any_element(),
+            about.into_any_element(),
+            summary.into_any_element(),
+            others.border_b_0().into_any_element(),
+        ]
+    }
 }

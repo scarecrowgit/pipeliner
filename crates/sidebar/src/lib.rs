@@ -177,7 +177,7 @@ impl Sidebar {
             .child(
                 workspace_mark()
                     .id("sidebar-workspace-mark")
-                    .tooltip(tooltip(data::WORKSPACE)),
+                    .tooltip(tooltip(workspace_name(cx))),
             )
             .child(toggle_button(true, window, cx));
 
@@ -320,6 +320,14 @@ impl Render for Sidebar {
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────
+
+/// The workspace label: the pipeline's code repository (`pipeliner`).
+fn workspace_name(cx: &gpui::App) -> SharedString {
+    pipeline::global(cx)
+        .map(|p| p.read(cx).workspace_name())
+        .unwrap_or_else(|| "Harness".into())
+        .into()
+}
 
 /// Inbox badge: reports and reviews waiting (published by the Inbox screen).
 fn inbox_count(cx: &gpui::App) -> Option<u32> {
@@ -522,7 +530,7 @@ fn workspace_row(window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
                 .min_w_0()
                 .truncate()
                 .font_weight(FontWeight::MEDIUM)
-                .child(data::WORKSPACE),
+                .child(workspace_name(cx)),
         )
         .child(toggle_button(false, window, cx))
 }

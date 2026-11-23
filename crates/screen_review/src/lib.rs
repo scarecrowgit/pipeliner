@@ -1,7 +1,8 @@
-//! Review queue ("Inbox") screen: issues waiting for a person to pick one of the
-//! agent-produced variants, inspect its diff and ship / skip / send it back.
+//! Inbox: what waits for the user. Mockups the pipeline needs approved (renders before /
+//! after, approve or request changes) and reports agents posted when they finished work
+//! (pull requests with live status, summaries).
 
-mod data;
+mod approval;
 mod report;
 mod view;
 
@@ -12,20 +13,7 @@ use gpui::{
 use ui::nav::Screen;
 use ui::{TextInput, TextInputEvent};
 
-use data::{ISSUES, Issue, Variant};
-
-actions!(
-    review_screen,
-    [
-        MoveDown,
-        MoveUp,
-        Pick1,
-        Pick2,
-        Pick3,
-        SendBack,
-        CancelSendBack
-    ]
-);
+actions!(review_screen, [MoveDown, MoveUp]);
 
 const KEY_CONTEXT: &str = "ReviewScreen";
 
@@ -44,41 +32,32 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", MoveDown, ctx),
         KeyBinding::new("k", MoveUp, ctx),
         KeyBinding::new("up", MoveUp, ctx),
-        KeyBinding::new("1", Pick1, ctx),
-        KeyBinding::new("2", Pick2, ctx),
-        KeyBinding::new("3", Pick3, ctx),
-        KeyBinding::new("r", SendBack, ctx),
-        KeyBinding::new("escape", CancelSendBack, ctx),
     ]);
 }
 
-/// What happened to a queue item.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Done {
-    Shipped,
-    /// Sent back with notes; the agent is re-running.
-    Back,
+/// A queue row: a mockup waiting for approval (issue key) or an agent report (item id).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Entry {
+    Approval(String),
+    Report(String),
 }
 
 pub struct ReviewScreen {
     focus: FocusHandle,
-    /// Index of the open issue in `ISSUES`.
-    cur: usize,
-    /// Picked variant per issue.
-    picked: Vec<usize>,
-    done: Vec<Option<Done>>,
-    sending_back: bool,
-    /// Send-back notes per issue (kept while switching issues).
-    notes: Vec<String>,
-    notes_input: Entity<TextInput>,
-    /// Agent reports (`screen_chat::inbox`), newest first.
-    reports: Vec<screen_chat::inbox::InboxItem>,
-    /// The open report; `None` shows the pipeline review `cur`.
+    /// Agent reports (`agent_tools::inbox`), newest first.
+    reports: Vec<agent_tools::inbox::InboxItem>,
+    /// The open report; `None` with `approval` set shows an approval.
     report: Option<String>,
+    /// Issue whose mockup approval is open.
+    approval: Option<String>,
     /// Pull request status by URL.
     prs: report::PrCache,
     inbox_version: u64,
-    /// The newest report was opened on the first visit.
+    /// "Request changes…" is open, with its notes.
+    changes_open: bool,
+    changes_input: Entity<TextInput>,
+    pipes: Option<Entity<pipeline::Pipelines>>,
+    /// The first entry was opened on the first visit.
     auto_opened: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -91,9 +70,9 @@ impl ReviewScreen {
         if ui::nav::nav_entity(cx).is_none() || ui::nav::current(cx) == Screen::Inbox {
             window.focus(&focus);
         }
-
-        let notes_input = cx.new(|cx| TextInput::new("What should the agent change?", cx));
-        let mut subscriptions = vec![cx.subscribe_in(&notes_input, window, Self::on_notes_event)];
+        let changes_input =
+            cx.new(|cx| TextInput::new("What should the designer change?", cx));
+        let mut subscriptions = vec![cx.subscribe_in(&changes_input, window, Self::on_changes_event)];
         subscriptions.extend(ui::nav::on_activate(
             Screen::Inbox,
             window,
@@ -117,221 +96,136 @@ impl ReviewScreen {
                 }
             }));
         }
-        let reports = screen_chat::inbox::load();
-        let unread = screen_chat::inbox::unread(&reports) + ISSUES.len();
-        cx.defer(move |cx| ui::nav::set_inbox_count(unread, cx));
-
-        Self {
+        // Approvals come and go with pipeline runs.
+        let pipes = pipeline::global(cx);
+        if let Some(p) = &pipes {
+            subscriptions.push(cx.observe(p, |this: &mut Self, _, cx| {
+                if let Some(key) = this.approval.clone()
+                    && !this.approvals(cx).contains(&key)
+                {
+                    this.approval = None;
+                    this.changes_open = false;
+                }
+                this.publish_count(cx);
+                cx.notify();
+            }));
+        }
+        let reports = agent_tools::inbox::load();
+        let this = Self {
             focus,
-            cur: 0,
-            picked: vec![0; ISSUES.len()],
-            done: vec![None; ISSUES.len()],
-            sending_back: false,
-            notes: ISSUES.iter().map(|i| i.default_notes.to_string()).collect(),
-            notes_input,
             reports,
             report: None,
+            approval: None,
             prs: Default::default(),
             inbox_version: 0,
+            changes_open: false,
+            changes_input,
+            pipes,
             auto_opened: false,
             _subscriptions: subscriptions,
-        }
+        };
+        this.publish_count(cx);
+        this
     }
 
-    // ── Derived state ───────────────────────────────────────────────────
-
-    fn issue(&self) -> &'static Issue {
-        &ISSUES[self.cur]
-    }
-
-    fn picked_index(&self) -> usize {
-        self.picked[self.cur]
-    }
-
-    fn picked_variant(&self) -> &'static Variant {
-        &self.issue().variants[self.picked_index()]
-    }
-
-    fn is_shipped(&self) -> bool {
-        self.done[self.cur] == Some(Done::Shipped)
-    }
-
-    /// Shipped or sent back: the issue can no longer be changed.
-    fn is_done(&self) -> bool {
-        self.done[self.cur].is_some()
-    }
-
-    fn waiting_issues(&self) -> usize {
-        self.done.iter().filter(|d| d.is_none()).count()
-    }
-
-    fn waiting_variants(&self) -> usize {
-        ISSUES
+    /// Issues whose mockup waits for the user's approval (newest first).
+    pub(crate) fn approvals(&self, cx: &App) -> Vec<String> {
+        let Some(p) = &self.pipes else { return Vec::new() };
+        let p = p.read(cx);
+        p.issues
             .iter()
-            .zip(&self.done)
-            .filter(|(_, d)| d.is_none())
-            .map(|(i, _)| i.variants.len())
-            .sum()
+            .filter(|i| {
+                !p.is_active(&i.key)
+                    && p.with_run(&i.key, |r| r.status == pipeline::RunStatus::WaitingApproval)
+                        == Some(true)
+            })
+            .map(|i| i.key.clone())
+            .collect()
     }
 
-    // ── Mutations (ported from the mockup logic) ────────────────────────
+    /// Queue order: approvals, then reports.
+    fn queue(&self, cx: &App) -> Vec<Entry> {
+        self.approvals(cx)
+            .into_iter()
+            .map(Entry::Approval)
+            .chain(self.visible_reports().map(|r| Entry::Report(r.id.clone())))
+            .collect()
+    }
 
-    fn open(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= ISSUES.len() {
-            return;
+    fn current(&self) -> Option<Entry> {
+        match (&self.approval, &self.report) {
+            (Some(k), _) => Some(Entry::Approval(k.clone())),
+            (None, Some(id)) => Some(Entry::Report(id.clone())),
+            _ => None,
         }
-        self.cur = index;
+    }
+
+    pub(crate) fn open_entry(&mut self, e: Entry, cx: &mut Context<Self>) {
+        match e {
+            Entry::Approval(k) => self.open_approval(k, cx),
+            Entry::Report(id) => self.open_report(id, cx),
+        }
+    }
+
+    pub(crate) fn open_approval(&mut self, key: String, cx: &mut Context<Self>) {
+        if self.approval.as_ref() != Some(&key) {
+            self.changes_open = false;
+            self.changes_input.update(cx, |i, cx| i.set_text("", cx));
+        }
         self.report = None;
-        self.close_send_back(window);
+        self.approval = Some(key);
         cx.notify();
     }
 
-    fn pick(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.report.is_none()
-            && !self.is_done() && index < self.issue().variants.len() {
-            self.picked[self.cur] = index;
-            cx.notify();
-        }
-    }
-
-    /// "Skip" / "Next issue": the next issue (wrapping) that is not done yet.
-    fn next_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let n = ISSUES.len();
-        if let Some(j) = (1..=n)
-            .map(|k| (self.cur + k) % n)
-            .find(|&j| self.done[j].is_none())
-        {
-            self.open(j, window, cx);
-        }
-    }
-
-    fn ship(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_done() {
-            return;
-        }
-        self.done[self.cur] = Some(Done::Shipped);
-        self.close_send_back(window);
-        self.publish_count(cx);
-        cx.notify();
-    }
-
-    fn start_send_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_done() || self.report.is_some() {
-            return;
-        }
-        self.sending_back = true;
-        let text = self.notes[self.cur].clone();
-        self.notes_input
-            .update(cx, |input, cx| input.set_text(text, cx));
-        window.focus(&self.notes_input.focus_handle(cx));
-        cx.notify();
-    }
-
-    fn confirm_send_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_done() {
-            return;
-        }
-        self.done[self.cur] = Some(Done::Back);
-        self.close_send_back(window);
-        self.publish_count(cx);
-        cx.notify();
-    }
-
-    fn cancel_send_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_send_back(window);
-        cx.notify();
-    }
-
-    /// Hide the notes panel and give keyboard focus back to the screen.
-    fn close_send_back(&mut self, window: &mut Window) {
-        self.sending_back = false;
-        window.focus(&self.focus);
-    }
-
-    fn on_notes_event(
-        &mut self,
-        input: &Entity<TextInput>,
-        event: &TextInputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            TextInputEvent::Changed => self.notes[self.cur] = input.read(cx).text().to_string(),
-            TextInputEvent::Submit => self.confirm_send_back(window, cx),
-            TextInputEvent::Cancel => self.cancel_send_back(window, cx),
-            _ => {}
-        }
-    }
-
-    // ── Keyboard actions ────────────────────────────────────────────────
-
-    /// First visit: open the newest report, if any (only while nothing was picked yet).
+    /// First visit: open the first entry, if any.
     fn auto_open(&mut self, cx: &mut Context<Self>) {
         if self.auto_opened {
             return;
         }
         self.auto_opened = true;
-        if self.report.is_none()
-            && self.cur == 0
-            && let Some(id) = self.first_report_id()
+        if self.current().is_none()
+            && let Some(e) = self.queue(cx).into_iter().next()
         {
-            self.open_report(id, cx);
+            self.open_entry(e, cx);
         }
     }
 
-    fn first_report_id(&self) -> Option<String> {
-        self.visible_reports().next().map(|r| r.id.clone())
-    }
-
-    /// Queue order: agent reports, then pipeline reviews. `Ok(id)` = report, `Err(ix)` = issue.
-    fn queue(&self) -> Vec<Result<String, usize>> {
-        self.visible_reports()
-            .map(|r| Ok(r.id.clone()))
-            .chain((0..ISSUES.len()).map(Err))
-            .collect()
-    }
-
-    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let q = self.queue();
-        let here = match &self.report {
-            Some(id) => q.iter().position(|e| e.as_ref() == Ok(id)),
-            None => q.iter().position(|e| *e == Err(self.cur)),
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let q = self.queue(cx);
+        if q.is_empty() {
+            return;
         }
-        .unwrap_or(0);
+        let here = self
+            .current()
+            .and_then(|c| q.iter().position(|e| *e == c))
+            .unwrap_or(0);
         let next = (here as isize + delta).clamp(0, q.len() as isize - 1) as usize;
-        match q[next].clone() {
-            Ok(id) => self.open_report(id, cx),
-            Err(i) => self.open(i, window, cx),
-        }
+        self.open_entry(q[next].clone(), cx);
     }
 
-    fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
-        self.step(1, window, cx);
+    fn move_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.step(1, cx);
     }
 
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        self.step(-1, window, cx);
+    fn move_up(&mut self, _: &MoveUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.step(-1, cx);
     }
 
-    fn pick1(&mut self, _: &Pick1, _: &mut Window, cx: &mut Context<Self>) {
-        self.pick(0, cx);
-    }
-
-    fn pick2(&mut self, _: &Pick2, _: &mut Window, cx: &mut Context<Self>) {
-        self.pick(1, cx);
-    }
-
-    fn pick3(&mut self, _: &Pick3, _: &mut Window, cx: &mut Context<Self>) {
-        self.pick(2, cx);
-    }
-
-    fn send_back(&mut self, _: &SendBack, window: &mut Window, cx: &mut Context<Self>) {
-        self.start_send_back(window, cx);
-    }
-
-    fn cancel(&mut self, _: &CancelSendBack, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sending_back {
-            self.cancel_send_back(window, cx);
+    fn on_changes_event(
+        &mut self,
+        _: &Entity<TextInput>,
+        event: &TextInputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TextInputEvent::Submit => self.send_changes(cx),
+            TextInputEvent::Cancel => {
+                self.changes_open = false;
+                window.focus(&self.focus);
+                cx.notify();
+            }
+            _ => {}
         }
     }
 }
@@ -353,16 +247,11 @@ impl Render for ReviewScreen {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::pick1))
-            .on_action(cx.listener(Self::pick2))
-            .on_action(cx.listener(Self::pick3))
-            .on_action(cx.listener(Self::send_back))
-            .on_action(cx.listener(Self::cancel))
             // Clicking anywhere (outside the notes field) gives the screen keyboard focus.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
-                    if !this.notes_input.read(cx).is_focused(window) {
+                    if !this.changes_input.read(cx).is_focused(window) {
                         window.focus(&this.focus);
                     }
                 }),

@@ -1,12 +1,12 @@
-//! Visual identity of an entry (`looks` / `kindOf` in the mockup) and small shared pieces.
+//! Visual identity of an entry (icon, tile and name colours) and small shared pieces.
 
 use gpui::{Div, FontWeight, Hsla, SharedString, div, prelude::*, px};
 use ui::icon;
 use ui::theme::*;
 
-use crate::data::{Entry, Kind};
+use crate::model::{Entry, Kind, StepRole};
 
-/// Icon + tile colors + name/kind colors. Agents created by another agent use the spawn palette.
+/// Icon + tile colors + name/kind colors. Tasks created by an agent use the spawn palette.
 #[derive(Clone, Copy)]
 pub struct Looks {
     pub icon: &'static str,
@@ -18,9 +18,22 @@ pub struct Looks {
 
 pub fn kind_looks(kind: Kind) -> Looks {
     let (icon, tile_bg, tile_fg) = match kind {
-        Kind::Orchestrator => ("router", ACCENT_SOFT, ACCENT_TEXT),
-        Kind::Pipeline => ("pipelines", INFO_SOFT, INFO_TEXT),
-        Kind::Agent => ("agent", SURFACE_HOVER, TEXT_SECONDARY),
+        Kind::Pipeline(_) => ("pipelines", INFO_SOFT, INFO_TEXT),
+        Kind::Step(_, StepRole::Lead) => ("router", ACCENT_SOFT, ACCENT_TEXT),
+        Kind::Step(_, StepRole::Decision) => ("filter", SURFACE_HOVER, TEXT_SECONDARY),
+        Kind::Step(_, StepRole::Agent) | Kind::Delegate(_) => {
+            ("agent", SURFACE_HOVER, TEXT_SECONDARY)
+        }
+        Kind::Chat(_) | Kind::Custom(_) => ("agent", SURFACE_HOVER, TEXT_SECONDARY),
+        Kind::Task(_) => {
+            return Looks {
+                icon: "spawn",
+                tile_bg: SPAWN_SOFT,
+                tile_fg: SPAWN_TEXT,
+                name_color: SPAWN_TEXT,
+                kind_color: SPAWN_TEXT,
+            };
+        }
     };
     Looks {
         icon,
@@ -32,20 +45,10 @@ pub fn kind_looks(kind: Kind) -> Looks {
 }
 
 pub fn looks(e: &Entry) -> Looks {
-    if e.created_by.is_some() {
-        Looks {
-            icon: "spawn",
-            tile_bg: SPAWN_SOFT,
-            tile_fg: SPAWN_TEXT,
-            name_color: SPAWN_TEXT,
-            kind_color: SPAWN_TEXT,
-        }
-    } else {
-        kind_looks(e.kind)
-    }
+    kind_looks(e.kind)
 }
 
-/// Rounded square with a centered icon (28/36px heads, 22px member rows).
+/// Rounded square with a centered icon (28/36px heads, 22px rows).
 pub fn tile(icon_name: &str, size: f32, radius: f32, icon_size: f32, bg: Hsla, fg: Hsla) -> Div {
     div()
         .size(px(size))
@@ -58,29 +61,50 @@ pub fn tile(icon_name: &str, size: f32, radius: f32, icon_size: f32, bg: Hsla, f
         .child(icon(icon_name, icon_size, fg))
 }
 
-/// 22px member tile (team rows, add list).
-pub fn small_tile(l: Looks) -> Div {
-    tile(l.icon, 22., RADIUS_MD, 12., l.tile_bg, l.tile_fg)
+/// Bold section heading inside the detail panel (`font-weight: 500`).
+pub fn heading(text: impl Into<SharedString>) -> Div {
+    div().font_weight(FontWeight::MEDIUM).child(text.into())
 }
 
-/// "Name <muted kind>" inline pair used in team rows and the add list.
-pub fn name_with_kind(name: &str, kind: &str) -> Div {
+/// Small outlined chip (cards, tools).
+pub fn chip(text: impl Into<SharedString>, mono: bool) -> Div {
     div()
         .flex()
-        .items_baseline()
-        .gap(px(4.))
-        .min_w_0()
-        .child(div().truncate().child(SharedString::from(name.to_string())))
-        .child(
-            div()
-                .flex_none()
-                .text_size(px(12.))
-                .text_color(TEXT_MUTED)
-                .child(SharedString::from(kind.to_string())),
-        )
+        .flex_none()
+        .items_center()
+        .h(px(20.))
+        .px(px(6.))
+        .rounded(px(RADIUS_SM))
+        .bg(SURFACE_RAISED)
+        .border_1()
+        .border_color(LINE_STRONG)
+        .text_size(px(11.))
+        .text_color(TEXT_SECONDARY)
+        .when(mono, |d| d.font_family(FONT_MONO))
+        .child(text.into())
 }
 
-/// Bold section heading inside the detail panel (`font-weight: 500`).
-pub fn heading(text: &'static str) -> Div {
-    div().font_weight(FontWeight::MEDIUM).child(text)
+/// One 16px-high line that ellipsizes instead of wrapping or hard-clipping: gpui measures
+/// nowrap text once, so the text sits in an absolutely positioned box over a sized cell.
+pub fn ellipsis_line(text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
+    div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .flex_none()
+        .h(px(16.))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .overflow_hidden()
+                // `line_clamp(1)` instead of `whitespace_nowrap()`: gpui caches the first
+                // (unconstrained) measurement of nowrap text, so it would never truncate.
+                .line_clamp(1)
+                .text_ellipsis()
+                .text_size(px(size))
+                .line_height(px(16.))
+                .text_color(color)
+                .child(text.into()),
+        )
 }

@@ -1,14 +1,14 @@
 //! Kind tabs and the scrollable card grid.
 
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, SharedString, canvas, div, prelude::*, px,
+    AnyElement, Context, FontWeight, IntoElement, canvas, div, prelude::*, px,
 };
 use ui::theme::*;
 use ui::{TabItem, Tabs, status_dot};
 
 use crate::AgentsScreen;
-use crate::data::{Entry, Filter, RunState, Use};
-use crate::looks::{looks, tile};
+use crate::looks::{chip, looks, tile};
+use crate::model::{Entry, Filter, State};
 
 /// `grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px`.
 const CARD_MIN: f32 = 250.;
@@ -16,18 +16,26 @@ const GRID_GAP: f32 = 12.;
 const GRID_PAD_X: f32 = SPACE_6;
 
 impl AgentsScreen {
+    /// Tabs with at least one entry (All is always shown).
+    fn visible_tabs(&self) -> Vec<(Filter, usize)> {
+        Filter::TABS
+            .iter()
+            .map(|&f| (f, self.list.iter().filter(|e| f.matches(e)).count()))
+            .filter(|&(f, n)| f == Filter::All || n > 0)
+            .collect()
+    }
+
     pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = Filter::TABS
+        let tabs = self.visible_tabs();
+        let items: Vec<TabItem> = tabs
             .iter()
-            .map(|f| {
-                let n = self.list.iter().filter(|e| f.matches(e)).count();
-                TabItem::new(f.label()).count(n.to_string())
-            })
+            .map(|(f, n)| TabItem::new(f.label()).count(n.to_string()))
             .collect();
-        let selected = Filter::TABS
+        let selected = tabs
             .iter()
-            .position(|f| *f == self.filter)
+            .position(|(f, _)| *f == self.filter)
             .unwrap_or(0);
+        let filters: Vec<Filter> = tabs.into_iter().map(|(f, _)| f).collect();
         let this = cx.entity().downgrade();
         div()
             .flex_none()
@@ -36,8 +44,9 @@ impl AgentsScreen {
             .border_color(LINE)
             .child(
                 Tabs::new("agents-tabs", items, selected).on_select(move |i, _, cx| {
-                    this.update(cx, |this, cx| this.set_filter(Filter::TABS[i], cx))
-                        .ok();
+                    if let Some(f) = filters.get(i).copied() {
+                        this.update(cx, |this, cx| this.set_filter(f, cx)).ok();
+                    }
                 }),
             )
     }
@@ -109,10 +118,10 @@ impl AgentsScreen {
     }
 
     fn render_card(&self, ix: usize, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
-        let on = e.id == self.sel;
-        let created = e.created_by.is_some();
+        let on = self.selected().is_some_and(|s| s.id == e.id);
+        let created = e.created();
         let l = looks(e);
-        let dot = if created && e.state == RunState::Running {
+        let dot = if created && e.state == State::Running {
             ui::Status::Spawn
         } else {
             e.state.dot()
@@ -124,7 +133,7 @@ impl AgentsScreen {
         } else {
             LINE
         };
-        let id = e.id;
+        let id = e.id.clone();
 
         let head = div()
             .flex()
@@ -143,48 +152,36 @@ impl AgentsScreen {
                             .truncate()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(l.name_color)
-                            .child(e.name),
+                            .child(e.name.clone()),
                     )
                     .child(
                         div()
                             .text_size(px(12.))
                             .line_height(px(16.))
                             .text_color(l.kind_color)
-                            .child(SharedString::from(self.kind_line(e))),
+                            .child(e.kind.label()),
                     ),
             )
             .child(status_dot(dot, false));
 
         let status = div()
             .flex()
-            .flex_wrap()
             .gap_x(px(10.))
-            .gap_y(px(4.))
             .text_size(px(12.))
             .text_color(TEXT_MUTED)
             .child(
                 div()
+                    .flex_none()
                     .text_color(e.state.color())
-                    .child(SharedString::from(e.status_text.clone())),
+                    .child(e.status.clone()),
             )
-            .child(e.meta);
+            .child(div().min_w_0().truncate().child(e.meta.clone()));
 
-        let chips = div().flex().flex_wrap().gap(px(4.)).children(
-            Use::ALL.iter().filter(|u| e.uses(**u)).map(|u| {
-                div()
-                    .h(px(20.))
-                    .px(px(6.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(RADIUS_SM))
-                    .bg(SURFACE_RAISED)
-                    .border_1()
-                    .border_color(LINE_STRONG)
-                    .text_size(px(11.))
-                    .text_color(TEXT_SECONDARY)
-                    .child(u.label())
-            }),
-        );
+        let chips = div()
+            .flex()
+            .gap(px(4.))
+            .overflow_hidden()
+            .children(e.chips.iter().map(|c| chip(c.clone(), false)));
 
         div()
             .id(("agents-card", ix))
@@ -204,13 +201,17 @@ impl AgentsScreen {
             .child(head)
             .child(
                 div()
+                    .h(px(36.))
+                    .overflow_hidden()
+                    .line_clamp(2)
+                    .text_ellipsis()
                     .text_size(px(12.))
                     .line_height(px(18.))
                     .text_color(TEXT_SECONDARY)
-                    .child(e.desc),
+                    .child(e.desc.clone()),
             )
             .child(status)
             .child(chips)
-            .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
+            .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)))
     }
 }

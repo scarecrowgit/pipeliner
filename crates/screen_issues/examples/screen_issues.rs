@@ -1,4 +1,4 @@
-//! Standalone preview: `cargo run -p screen_issues --example screen_issues`
+//! Standalone preview: `cargo run -p screen_issues --example screen_issues` (real pipeline data).
 
 use gpui::AppContext as _;
 

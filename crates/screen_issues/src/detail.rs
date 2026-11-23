@@ -1,87 +1,75 @@
-//! Right-hand issue detail panel: title, properties (status menu, runner), run
-//! controls, activity feed and the comment box.
+//! Right-hand issue detail panel: head, title and description, the issue's pipeline, run
+//! actions, then the run's sections: steps ([`crate::progress`]), review ([`crate::run`]),
+//! sub-agent tasks, checks, workdirs and the log ([`crate::work`]).
 
 use gpui::{
-    AnyElement, App, Context, FontWeight, Hsla, IntoElement, MouseDownEvent, SharedString,
-    StyledText, TextRun, Window, deferred, div, font, prelude::*, px,
+    AnyElement, Context, Div, FontWeight, IntoElement, SharedString, Window, div, prelude::*, px,
 };
-use ui::nav::{Screen, navigate};
+use pipeline::{Issue, Run, RunStatus};
 use ui::theme::*;
-use ui::{Button, ButtonVariant, Status, checkbox, icon, kbd, spawn_chip, status_dot};
+use ui::{Badge, Button, ButtonVariant, Status, Tone};
 
 use crate::IssuesScreen;
-use crate::comments::{self, Span};
-use crate::data::{
-    self, Activity, Actor, Column, Issue, RunState, Runner, RunnerId, RunnerKind, Trigger,
-    WARNING_LINE, Wake, WakeOutcome, person_name,
-};
-use crate::widgets::{Ellipsis, person_avatar, runner_tile, runner_tile_sized, small};
+use crate::look::{column_dot, column_of};
+use crate::menu::Menu;
+use crate::widgets::{mono, small};
 
-/// Width of the `dt` column in the properties grid.
-const DT_WIDTH: f32 = 96.;
+/// Width of the panel: wide enough for before/after renders side by side.
+pub(crate) const DETAIL_WIDTH: f32 = 560.;
 
-fn prop_row(name: &str, value: impl IntoElement) -> gpui::Div {
+/// Panel section with the standard padding and a bottom rule.
+pub(crate) fn section() -> Div {
     div()
         .flex()
-        .items_center()
-        .gap(px(12.))
-        .min_h(px(20.))
-        .child(
-            div()
-                .w(px(DT_WIDTH))
-                .flex_none()
-                .child(small(name.to_string(), TEXT_MUTED)),
-        )
-        .child(div().flex_1().min_w_0().child(value))
-}
-
-/// 28px bordered link-style button (used for "Review variants").
-fn warning_link(id: &str, text: &str) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(SharedString::from(id.to_string()))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .h(px(CONTROL_HEIGHT_SM))
-        .px(px(10.))
-        .rounded(px(RADIUS_MD))
-        .border_1()
-        .border_color(WARNING_LINE)
-        .bg(WARNING_SOFT)
-        .text_color(WARNING)
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer()
-        .hover(|s| s.opacity(0.9))
-        .child(text.to_string())
+        .flex_none()
+        .flex_col()
+        .gap(px(SPACE_3))
+        .px(px(SPACE_5))
+        .py(px(SPACE_4))
+        .border_b_1()
+        .border_color(LINE)
 }
 
 impl IssuesScreen {
-    pub(crate) fn render_detail(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(issue) = self.selected_issue() else {
-            return div().into_any_element();
-        };
-
-        div()
+    pub(crate) fn render_detail(
+        &self,
+        issue: &Issue,
+        run: Option<&Run>,
+        active: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut panel = div()
             .id("issue-detail")
-            .w(px(360.))
+            .w(px(DETAIL_WIDTH))
             .flex_none()
             .h_full()
             .flex()
             .flex_col()
+            .track_scroll(&self.detail_scroll)
             .overflow_y_scroll()
             .border_l_1()
             .border_color(LINE)
             .bg(BG_SIDEBAR)
             .child(self.render_detail_head(issue, cx))
-            .child(self.render_title(issue, window, cx))
-            .child(self.render_props(issue, cx))
-            .when(self.picker_open, |d| d.child(self.render_picker(cx)))
-            .when_some(issue.runner(), |d, runner| {
-                d.child(self.render_run_section(issue, runner, cx))
-            })
-            .child(self.render_activity(issue, window, cx))
-            .into_any_element()
+            .child(self.render_about(issue))
+            .child(self.render_pipeline_row(issue, run, active, cx))
+            .child(self.render_actions(issue, run, active, cx));
+        if let Some(run) = run {
+            panel = panel.child(self.render_progress(run, active, cx));
+            if !run.renders.is_empty() || run.status == RunStatus::WaitingApproval {
+                panel = panel.child(self.render_review(run, active, window, cx));
+            }
+            panel = panel.children(self.render_tasks(run));
+            if run.verified || !run.checks.trim().is_empty() {
+                panel = panel.child(self.render_checks(run));
+            }
+            if !run.workdirs.is_empty() {
+                panel = panel.child(self.render_workdirs(run));
+            }
+            panel = panel.child(self.render_log(run));
+        }
+        panel.into_any_element()
     }
 
     fn render_detail_head(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
@@ -90,20 +78,15 @@ impl IssuesScreen {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .px(px(20.))
-            .py(px(12.))
+            .px(px(SPACE_5))
+            .py(px(SPACE_3))
             .border_b_1()
             .border_color(LINE)
+            .child(mono(issue.key.clone(), TEXT_MUTED))
+            .child(Badge::new(issue.kind.clone()))
             .child(
-                div()
-                    .font_family(FONT_MONO)
-                    .text_size(px(12.))
-                    .text_color(TEXT_MUTED)
-                    .child(issue.key.clone()),
+                Badge::new(column_of(issue.status).label()).dot(column_dot(column_of(issue.status))),
             )
-            .when_some(issue.created_by.clone(), |d, by| {
-                d.child(spawn_chip(format!("created by {by}")))
-            })
             .child(div().flex_1())
             .child(
                 Button::new("close-detail", "")
@@ -114,914 +97,261 @@ impl IssuesScreen {
             )
     }
 
-    fn render_title(&self, issue: &Issue, window: &Window, cx: &App) -> impl IntoElement {
-        let focused = self.title_input.read(cx).is_focused(window);
-        div()
-            .flex_none()
-            .pt(px(16.))
-            .px(px(20.))
-            .pb(px(4.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .ml(px(-6.))
-                    .px(px(6.))
-                    .py(px(4.))
-                    .rounded(px(RADIUS_MD))
-                    .border_1()
-                    .border_color(if focused {
-                        LINE_STRONG
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .when(!focused, |d| d.hover(|s| s.border_color(LINE)))
-                    .text_size(px(TEXT_TITLE))
-                    .line_height(px(28.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(TEXT)
-                    .child(self.title_input.clone()),
-            )
-            .child(
-                div()
-                    .mt(px(6.))
-                    .text_color(TEXT_SECONDARY)
-                    .child(issue.desc.clone()),
-            )
-    }
-
-    fn render_props(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
-        let owner = issue.person.and_then(person_name).unwrap_or("No owner");
-        let initials = issue.person.unwrap_or("—");
-
+    fn render_about(&self, issue: &Issue) -> impl IntoElement {
+        let body = issue.body.trim();
         div()
             .flex()
             .flex_none()
             .flex_col()
             .gap(px(8.))
-            .pt(px(12.))
-            .px(px(20.))
-            .pb(px(16.))
-            .border_b_1()
-            .border_color(LINE)
-            .child(prop_row("Status", self.render_status_select(issue, cx)))
-            .child(prop_row(
-                "Priority",
-                small(issue.prio.label(), issue.prio.color()),
-            ))
-            .child(prop_row(
-                "Owner",
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_size(px(12.))
-                    .child(person_avatar(initials, 20., 9.))
-                    .child(owner),
-            ))
-            .child(prop_row("Runs with", self.render_runs_with(issue, cx)))
-    }
-
-    fn render_status_select(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
-        let current = issue.status;
-        let menu = self.status_menu_open.then(|| {
-            deferred(ui::motion::pop_in(
-                "status-menu-in",
-                ui::motion::Pop::Below,
-                div()
-                    .id("status-menu")
-                    .absolute()
-                    .top(px(32.))
-                    .left_0()
-                    .w(px(160.))
-                    .p(px(4.))
-                    .flex()
-                    .flex_col()
-                    .rounded(px(RADIUS_LG))
-                    .border_1()
-                    .border_color(LINE_STRONG)
-                    .bg(SURFACE_RAISED)
-                    .shadow(popover_shadow())
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                        this.dismiss_status_menu(ev.position, cx)
-                    }))
-                    .children(Column::ALL.into_iter().map(|c| {
-                        let on = c == current;
-                        div()
-                            .id(SharedString::from(format!("status-{}", c.name())))
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .h(px(28.))
-                            .px(px(8.))
-                            .rounded(px(RADIUS_SM))
-                            .text_size(px(12.))
-                            .text_color(TEXT)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(SURFACE_HOVER))
-                            .child(status_dot(c.dot(), true))
-                            .child(div().flex_1().child(c.name()))
-                            .when(on, |d| d.child(icon("check", 12., ACCENT_TEXT)))
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_status(c, cx)))
-                    })),
-            ))
-            .with_priority(1)
-        });
-
-        div()
-            .relative()
-            .flex()
+            .pt(px(SPACE_4))
+            .px(px(SPACE_5))
+            .pb(px(SPACE_3))
             .child(
                 div()
-                    .id("status-select")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(CONTROL_HEIGHT_SM))
-                    .px(px(8.))
-                    .rounded(px(RADIUS_MD))
-                    .border_1()
-                    .border_color(if self.status_menu_open {
-                        ACCENT_STRONG
-                    } else {
-                        LINE_STRONG
-                    })
-                    .bg(SURFACE_RAISED)
-                    .text_size(px(12.))
+                    .text_size(px(TEXT_TITLE))
+                    .line_height(px(28.))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(TEXT)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(SURFACE_HOVER))
-                    .child(current.name())
-                    .child(icon("chevron-down", 12., TEXT_MUTED))
-                    .on_click(cx.listener(|this, ev, _, cx| this.toggle_status_menu(ev, cx))),
+                    .child(issue.title.clone()),
             )
-            .children(menu)
+            .child(if body.is_empty() {
+                div().text_color(TEXT_MUTED).child("No description.")
+            } else {
+                div()
+                    .text_color(TEXT_SECONDARY)
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .children(body.lines().map(|l| {
+                        div()
+                            .min_h(px(LINE_BODY))
+                            .child(SharedString::from(l.to_string()))
+                    }))
+            })
     }
 
-    fn render_runs_with(&self, issue: &Issue, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(r) = issue.runner() {
-            return div()
+    /// The pipeline the issue runs through; a select while no run works on it.
+    fn render_pipeline_row(
+        &self,
+        issue: &Issue,
+        run: Option<&Run>,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (name, missing) = {
+            let p = self.pipes.read(cx);
+            (
+                p.pipeline_of(issue).map(|d| d.name.clone()),
+                p.pipeline(&issue.pipeline).is_none(),
+            )
+        };
+        let name = name.unwrap_or_else(|| "No pipeline".into());
+        let mut notes: Vec<String> = Vec::new();
+        if missing && !issue.pipeline.is_empty() {
+            notes.push(format!(
+                "Pipeline `{}` no longer exists; runs use {name}.",
+                issue.pipeline
+            ));
+        }
+        if let Some(r) = run
+            && r.pipeline != issue.pipeline
+            && !r.pipeline_name.is_empty()
+        {
+            notes.push(format!(
+                "The latest run used {}; the next run uses {name}.",
+                r.pipeline_name
+            ));
+        }
+        let value = if active {
+            div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .child(runner_tile(r.kind))
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_w_0()
-                        .items_baseline()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .flex_none()
-                                .whitespace_nowrap()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(r.name),
-                        )
-                        .child(small(r.kind.label(), TEXT_MUTED).flex_none()),
-                )
-                .child(
-                    Button::new("change-runner", "Change")
-                        .ghost()
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_picker(window, cx)),
-                        ),
-                )
-                .into_any_element();
-        }
-        div()
-            .flex()
-            .child(
-                div()
-                    .id("attach-runner")
-                    .flex()
-                    .min_w_0()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(6.))
-                    .min_h(px(CONTROL_HEIGHT_SM))
-                    .px(px(10.))
-                    .py(px(4.))
-                    .rounded(px(RADIUS_MD))
-                    .border_1()
-                    .border_dashed()
-                    .border_color(ACCENT_RING)
-                    .when(self.picker_open, |d| d.bg(ACCENT_GLOW))
-                    .text_color(ACCENT_TEXT)
-                    .text_size(px(12.))
-                    .line_height(px(16.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(ACCENT_GLOW))
-                    .child(icon("plus", 12., ACCENT_TEXT))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .text_center()
-                            .child("Attach agent, orchestrator or pipeline"),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_picker(window, cx))),
-            )
-            .into_any_element()
-    }
-
-    fn render_run_section(
-        &self,
-        issue: &Issue,
-        r: &'static Runner,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let steps: Vec<&str> = std::iter::once("Jira")
-            .chain(r.steps.iter().copied())
-            .collect();
-        let last = steps.len() - 1;
-        let waiting = issue
-            .run
-            .as_ref()
-            .is_some_and(|run| run.state == RunState::Waiting);
-
+                .h(px(CONTROL_HEIGHT))
+                .child(div().text_color(TEXT).child(SharedString::from(name)))
+                .child(small("Running; change it after the run.", TEXT_MUTED))
+        } else {
+            self.pipeline_select(Menu::Issue, Some(&issue.pipeline), cx)
+        };
         div()
             .flex()
             .flex_none()
             .flex_col()
-            .gap(px(10.))
-            .px(px(20.))
-            .py(px(16.))
-            .border_b_1()
-            .border_color(LINE)
-            // Route: Jira › Router › … › You
+            .gap(px(6.))
+            .px(px(SPACE_5))
+            .pb(px(SPACE_4))
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .gap_x(px(6.))
-                    .gap_y(px(4.))
-                    .font_family(FONT_MONO)
-                    .text_size(px(12.))
-                    .text_color(TEXT_MUTED)
-                    .children(steps.into_iter().enumerate().map(|(i, s)| {
+                    .gap(px(12.))
+                    .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .text_color(if i == last { WARNING } else { TEXT_MUTED })
-                                    .child(s),
-                            )
-                            .when(i < last, |d| {
-                                d.child(div().text_color(TEXT_DISABLED).child("›"))
-                            })
-                    })),
+                            .w(px(64.))
+                            .flex_none()
+                            .text_size(px(12.))
+                            .text_color(TEXT_MUTED)
+                            .child("Pipeline"),
+                    )
+                    .child(div().flex_1().min_w_0().child(value)),
             )
-            .when_some(issue.run.as_ref(), |d, run| {
+            .children(notes.into_iter().map(|n| {
+                div()
+                    .pl(px(76.))
+                    .child(small(n, TEXT_MUTED))
+            }))
+    }
+
+    /// Start / Cancel / Retry / Delete, the pull request link, and the run's error.
+    fn render_actions(
+        &self,
+        issue: &Issue,
+        run: Option<&Run>,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let status = run.map(|r| r.status);
+        let can_retry = !active && matches!(status, Some(RunStatus::Failed | RunStatus::Cancelled));
+        let can_start = !active
+            && !matches!(status, Some(RunStatus::WaitingApproval))
+            && (run.is_none() || can_retry);
+        let pr = run
+            .and_then(|r| r.pr_url.clone())
+            .or_else(|| issue.pr_url.clone());
+        let error = run
+            .filter(|r| r.status == RunStatus::Failed)
+            .and_then(|r| r.error.clone());
+        let key = issue.key.clone();
+
+        let buttons = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .when(can_start, |d| {
+                let b = Button::new(
+                    "issue-start",
+                    if run.is_none() {
+                        "Start pipeline"
+                    } else {
+                        "Start over"
+                    },
+                )
+                .icon("play")
+                .on_click(cx.listener(|this, _, _, cx| this.start(cx)));
+                d.child(if run.is_none() { b.primary() } else { b })
+            })
+            .when(can_retry, |d| {
                 d.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(RADIUS_LG))
-                        .bg(run.state.bg())
-                        .child(status_dot(run.state.dot(), true))
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(run.state.color())
-                                .child(run.text.clone()),
-                        )
-                        .when(run.state == RunState::Running, |d| {
-                            d.child(
-                                div()
-                                    .font_family(FONT_MONO)
-                                    .text_size(px(12.))
-                                    .text_color(TEXT_MUTED)
-                                    .child(format!("{}%", run.pct)),
-                            )
-                        }),
+                    Button::new("issue-retry", "Retry from here")
+                        .primary()
+                        .icon("replay")
+                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                 )
             })
-            .child(
+            .when_some(pr, |d, url| {
+                d.child(
+                    Button::new("issue-pr", "Open pull request")
+                        .icon("git-branch")
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                )
+            })
+            .child(div().flex_1())
+            .when(active, |d| {
+                d.child(
+                    Button::new("issue-cancel", "Cancel run")
+                        .variant(ButtonVariant::Danger)
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+                )
+            })
+            .when(!active && !self.confirm_delete, |d| {
+                d.child(
+                    Button::new("issue-delete", "Delete…")
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.ask_delete(true, cx))),
+                )
+            });
+
+        let confirm = (!active && self.confirm_delete).then(|| {
+            ui::motion::reveal(
+                "issue-delete-confirm",
                 div()
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(RADIUS_LG))
+                    .border_1()
+                    .border_color(LINE_STRONG)
+                    .bg(DANGER_SOFT)
+                    .child(div().flex_1().min_w_0().text_color(TEXT_SECONDARY).child(
+                        SharedString::from(format!(
+                            "Delete {key}? The issue leaves the board; branches and the PR stay."
+                        )),
+                    ))
                     .child(
-                        div()
-                            .mb(px(4.))
-                            .text_size(px(12.))
-                            .line_height(px(18.))
-                            .text_color(TEXT_MUTED)
-                            .child("Start when"),
+                        Button::new("issue-delete-keep", "Keep")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.ask_delete(false, cx))),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_x(px(16.))
-                            .gap_y(px(4.))
-                            .children(Trigger::ALL.into_iter().zip(issue.triggers).map(
-                                |(t, on)| {
-                                    div()
-                                        .id(SharedString::from(format!("trigger-{}", t.label())))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .min_h(px(28.))
-                                        .text_size(px(12.))
-                                        .cursor_pointer()
-                                        .child(checkbox(
-                                            SharedString::from(format!(
-                                                "trigger-box-{}",
-                                                t.label()
-                                            )),
-                                            on,
-                                        ))
-                                        .child(t.label())
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.toggle_trigger(t, cx)
-                                        }))
-                                },
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .when(issue.startable(), |d| {
-                        d.child(
-                            Button::new("start-run", "Start now")
-                                .small()
-                                .icon("play")
-                                .on_click(cx.listener(|this, _, _, cx| this.start_run(cx))),
-                        )
-                    })
-                    .when(r.kind == RunnerKind::Pipeline, |d| {
-                        d.child(
-                            Button::new("open-pipeline", "Open pipeline")
-                                .small()
-                                .on_click(|_, _, cx| navigate(Screen::PipelineEditor, cx)),
-                        )
-                    })
-                    .when(r.kind != RunnerKind::Pipeline, |d| {
-                        d.child(
-                            Button::new("open-run", "Open run")
-                                .small()
-                                .on_click(|_, _, cx| navigate(Screen::Chat, cx)),
-                        )
-                    })
-                    .when(waiting, |d| {
-                        d.child(
-                            warning_link("review-variants", "Review variants")
-                                .on_click(|_, _, cx| navigate(Screen::Inbox, cx)),
-                        )
-                    })
-                    .child(
-                        Button::new("detach", "Detach")
+                        Button::new("issue-delete-yes", "Delete issue")
                             .small()
                             .variant(ButtonVariant::Danger)
-                            .on_click(cx.listener(|this, _, _, cx| this.detach(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.delete(cx))),
                     ),
             )
-    }
+        });
 
-    fn render_activity(
-        &self,
-        issue: &Issue,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let empty = self.comment_input.read(cx).text().trim().is_empty();
-        let focused = self.comment_input.read(cx).is_focused(window);
-        let comment_count = issue.activity.iter().filter(|a| a.comment).count();
-        let counts = format!(
-            "{} · {} {}",
-            issue.activity.len(),
-            comment_count,
-            if comment_count == 1 {
-                "comment"
-            } else {
-                "comments"
-            }
-        );
         div()
             .flex()
             .flex_none()
             .flex_col()
-            .gap(px(12.))
-            .px(px(20.))
-            .py(px(16.))
-            .child(
-                div()
-                    .flex()
-                    .items_baseline()
-                    .gap(px(6.))
-                    .child(div().font_weight(FontWeight::MEDIUM).child("Activity"))
-                    .child(small(counts, TEXT_MUTED)),
-            )
-            .children(
-                issue
-                    .activity
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, a)| self.activity_item(ix, a, cx)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .mt(px(4.))
-                    .child(small(
-                        "Comment · @mention an agent or pipeline to wake it up",
-                        TEXT_MUTED,
-                    ))
-                    .child(
-                        div()
-                            .relative()
-                            .children(self.render_mention_list(issue, cx))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_start()
-                                    .min_h(px(58.))
-                                    .px(px(10.))
-                                    .py(px(8.))
-                                    .rounded(px(RADIUS_LG))
-                                    .border_1()
-                                    .border_color(if focused { ACCENT_STRONG } else { LINE_STRONG })
-                                    .when(focused, |d| d.shadow(selected_glow()))
-                                    .bg(SURFACE_RAISED)
-                                    .text_color(TEXT)
-                                    .child(self.comment_input.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_size(px(12.))
-                                    .text_color(TEXT_MUTED)
-                                    .child("Mentions wake the agent when you post"),
-                            )
-                            .child(kbd("↵"))
-                            .child(
-                                Button::new("post-comment", "Comment")
-                                    .small()
-                                    .disabled(empty)
-                                    .on_click(cx.listener(|this, _, _, cx| this.post_comment(cx))),
-                            ),
-                    ),
-            )
-    }
-
-    /// The @mention autocomplete, above the comment box (nothing when closed).
-    fn render_mention_list(&self, issue: &Issue, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.mention_open(cx) {
-            return None;
-        }
-        let (_, query) = self.mention_token(cx)?;
-        let rows = self.mention_rows(cx);
-        let selected = self.mention_ix.min(rows.len().saturating_sub(1));
-        let header = if rows.is_empty() {
-            format!("No agent, orchestrator or pipeline matches “{query}”")
-        } else if query.is_empty() {
-            format!(
-                "Agents, orchestrators and pipelines · {}",
-                data::RUNNERS.len()
-            )
-        } else {
-            format!(
-                "Matching “{query}” · {} of {}",
-                rows.len(),
-                data::RUNNERS.len()
-            )
-        };
-
-        let list = div()
-            .id("mention-list")
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom_full()
-            .flex()
-            .flex_col()
-            .p(px(4.))
-            .rounded(px(RADIUS_XL))
-            .border_1()
-            .border_color(LINE_STRONG)
-            .bg(SURFACE)
-            .shadow(popover_shadow())
-            .occlude()
-            .child(
-                div()
-                    .px(px(8.))
-                    .pt(px(6.))
-                    .pb(px(4.))
-                    .text_size(px(12.))
-                    .text_color(TEXT_MUTED)
-                    .child(header),
-            )
-            .children(rows.into_iter().enumerate().map(|(ix, (id, matched))| {
-                self.mention_row(issue, ix, id, matched, ix == selected, cx)
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_x(px(10.))
-                    .gap_y(px(4.))
-                    .mt(px(4.))
-                    .px(px(8.))
-                    .pt(px(6.))
-                    .pb(px(4.))
-                    .border_t_1()
-                    .border_color(LINE_SUBTLE)
-                    .text_size(px(12.))
-                    .text_color(TEXT_MUTED)
-                    .child(hint(vec![kbd("↑"), kbd("↓")], "move"))
-                    .child(hint(vec![kbd("↵")], "insert"))
-                    .child(hint(vec![kbd("esc")], "close")),
-            );
-
-        Some(
-            deferred(ui::motion::pop_in(
-                "mention-list-in",
-                ui::motion::Pop::Above,
-                list,
-            ))
-            .with_priority(1)
-            .into_any_element(),
-        )
-    }
-
-    fn mention_row(
-        &self,
-        issue: &Issue,
-        ix: usize,
-        id: RunnerId,
-        matched: std::ops::Range<usize>,
-        highlighted: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let r = data::runner(id);
-        let offline = self.offline.contains(&id);
-        let on_issue = comments::on_issue(issue, id);
-        let sub = if offline {
-            format!(
-                "{} · runtime laptop offline · won't wake until it's back",
-                r.kind.label()
-            )
-        } else if on_issue {
-            format!(
-                "{} · on this issue now · gets your comment as input",
-                r.kind.label()
-            )
-        } else {
-            format!("{} · starts a new run on {}", r.kind.label(), issue.key)
-        };
-        let (status, status_color): (SharedString, Hsla) = if offline {
-            ("offline".into(), DANGER)
-        } else if on_issue && issue.is_running() {
-            ("running".into(), INFO)
-        } else if r.load.contains("running") {
-            (r.load.into(), INFO)
-        } else if r.load.contains("blocked") {
-            (r.load.into(), WARNING)
-        } else {
-            (r.load.into(), TEXT_MUTED)
-        };
-
-        let name_parts = [
-            (r.name[..matched.start].to_string(), TEXT),
-            (r.name[matched.clone()].to_string(), ACCENT_TEXT),
-            (r.name[matched.end..].to_string(), TEXT),
-        ];
-
-        div()
-            .id(SharedString::from(format!("mention-{}", r.id)))
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .min_h(px(44.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(RADIUS_MD))
-            .cursor_pointer()
-            .when(highlighted, |d| d.bg(SURFACE_HOVER))
-            .hover(|s| s.bg(SURFACE_HOVER))
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered && this.mention_ix != ix {
-                    this.mention_ix = ix;
-                    cx.notify();
-                }
-            }))
-            .on_click(cx.listener(move |this, _, window, cx| this.insert_mention(ix, window, cx)))
-            .child(runner_tile_sized(r.kind, 24.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(colored_text(&name_parts, FontWeight::MEDIUM))
-                    .child(
-                        div()
-                            .ellipsis()
-                            .text_size(px(12.))
-                            .line_height(px(16.))
-                            .text_color(TEXT_MUTED)
-                            .child(sub),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .text_size(px(12.))
-                    .text_color(status_color)
-                    .child(status),
-            )
-            .into_any_element()
-    }
-
-    fn activity_item(&self, ix: usize, a: &Activity, cx: &mut Context<Self>) -> AnyElement {
-        let person = a.actor == Actor::Person;
-        let tile_bg: Hsla = match a.actor {
-            Actor::Pipeline => INFO_SOFT,
-            Actor::Agent if a.spawn => SPAWN_SOFT,
-            Actor::Agent => ACCENT_SOFT,
-            Actor::Person => SURFACE_HOVER,
-        };
-        let who: SharedString = if person {
-            person_name(&a.who)
-                .map(SharedString::from)
-                .unwrap_or_else(|| a.who.clone())
-        } else {
-            a.who.clone()
-        };
-        let tile = if person {
-            person_avatar(&a.who, 22., 9.)
-        } else {
-            div()
-                .size(px(22.))
-                .flex_none()
-                .rounded(px(RADIUS_MD))
-                .bg(tile_bg)
-        };
-
-        let meta = if let Some(by) = &a.woken_by {
-            colored_text(
-                &[
-                    (format!("{} · woken by ", a.when), TEXT_MUTED),
-                    ("@mention".to_string(), TEXT_SECONDARY),
-                    (format!(" from {by}"), TEXT_MUTED),
-                ],
-                FontWeight::NORMAL,
-            )
-        } else if a.comment {
-            colored_text(
-                &[(format!("{} · comment", a.when), TEXT_MUTED)],
-                FontWeight::NORMAL,
-            )
-        } else {
-            colored_text(&[(a.when.to_string(), TEXT_MUTED)], FontWeight::NORMAL)
-        };
-        let header = div()
-            .flex()
-            .gap(px(4.))
-            .text_size(px(12.))
-            .child(
-                div()
-                    .flex_none()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(if a.spawn { SPAWN_TEXT } else { TEXT })
-                    .child(who),
-            )
-            .child(div().min_w_0().child(meta));
-
-        let body = rich_text(
-            &a.text,
-            if a.spawn_note {
-                SPAWN_TEXT
-            } else {
-                TEXT_SECONDARY
-            },
-        );
-
-        let content = if a.comment {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .flex_1()
-                .min_w_0()
-                .child(header)
-                .child(
+            .gap(px(SPACE_3))
+            .px(px(SPACE_5))
+            .pb(px(SPACE_4))
+            .border_b_1()
+            .border_color(LINE)
+            .child(buttons)
+            .children(confirm)
+            .when_some(self.action_error.clone(), |d, e| d.child(small(e, DANGER)))
+            .when_some(error, |d, e| {
+                d.child(
                     div()
-                        .px(px(10.))
-                        .py(px(8.))
+                        .w_full()
+                        .px(px(12.))
+                        .py(px(10.))
                         .rounded(px(RADIUS_LG))
                         .border_1()
-                        .border_color(LINE)
-                        .bg(SURFACE)
-                        .text_color(TEXT_SECONDARY)
-                        .child(body),
-                )
-                .children(
-                    a.wakes
-                        .iter()
-                        .enumerate()
-                        .map(|(wi, w)| self.receipt(ix, wi, w, cx)),
-                )
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(header)
-                .child(
-                    div()
-                        .text_color(if a.spawn_note {
-                            SPAWN_TEXT
-                        } else {
-                            TEXT_SECONDARY
-                        })
-                        .when(a.blocker, |d| {
-                            d.px(px(10.))
-                                .py(px(8.))
-                                .rounded(px(RADIUS_LG))
-                                .bg(WARNING_SOFT)
-                                .border_1()
-                                .border_color(WARNING_LINE)
-                        })
-                        .child(body),
-                )
-        };
-
-        div()
-            .flex()
-            .gap(px(10.))
-            .child(tile)
-            .child(content)
-            .into_any_element()
-    }
-
-    /// What a mention did: woken (with a link to the run) or not woken (with Retry).
-    fn receipt(
-        &self,
-        activity_ix: usize,
-        wake_ix: usize,
-        w: &Wake,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let r = data::runner(w.runner);
-        let (dot, text) = match &w.outcome {
-            WakeOutcome::Woken { run } => (
-                Status::Running,
-                colored_text(
-                    &[
-                        (format!("{} woken", r.name), INFO),
-                        (
-                            format!(" · run {run} on this issue · comment passed as input"),
-                            TEXT_MUTED,
+                        .border_color(DANGER_SOFT)
+                        .bg(DANGER_SOFT)
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(DANGER)
+                                .child("Run failed"),
+                        )
+                        .child(
+                            div()
+                                .mt(px(4.))
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_MONO))
+                                .text_color(TEXT_SECONDARY)
+                                .child(SharedString::from(e)),
                         ),
-                    ],
-                    FontWeight::NORMAL,
-                ),
-            ),
-            WakeOutcome::NotWoken { reason } => (
-                Status::Error,
-                colored_text(
-                    &[
-                        (format!("{} not woken", r.name), DANGER),
-                        (format!(" · {reason}"), TEXT_MUTED),
-                    ],
-                    FontWeight::NORMAL,
-                ),
-            ),
-        };
-        let id = format!("receipt-{activity_ix}-{wake_ix}");
-        let action = match &w.outcome {
-            WakeOutcome::Woken { .. } => {
-                let screen = if r.kind == RunnerKind::Pipeline {
-                    Screen::PipelineEditor
-                } else {
-                    Screen::Chat
-                };
-                link_button(format!("{id}-open"), "Open run")
-                    .on_click(move |_, _, cx| navigate(screen, cx))
-            }
-            WakeOutcome::NotWoken { .. } => link_button(format!("{id}-retry"), "Retry now")
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.retry_wake(activity_ix, wake_ix, cx);
-                })),
-        };
-
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_x(px(8.))
-            .gap_y(px(6.))
-            .text_size(px(12.))
-            .line_height(px(16.))
-            .text_color(TEXT_MUTED)
-            .child(status_dot(dot, true))
-            .child(div().min_w_0().child(text))
-            .child(action)
-            .into_any_element()
-    }
-}
-
-/// `kbd` keys followed by a label.
-fn hint(keys: Vec<gpui::Div>, label: &'static str) -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(4.))
-        .children(keys)
-        .child(label)
-}
-
-/// Text-style button in a receipt line ("Open run", "Retry now").
-fn link_button(id: String, text: &'static str) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(SharedString::from(id))
-        .px(px(4.))
-        .rounded(px(RADIUS_SM))
-        .text_color(TEXT_SECONDARY)
-        .cursor_pointer()
-        .hover(|s| s.bg(SURFACE_HOVER))
-        .child(text)
-}
-
-fn text_run(
-    len: usize,
-    family: &str,
-    weight: FontWeight,
-    color: Hsla,
-    bg: Option<Hsla>,
-) -> TextRun {
-    let mut f = font(family.to_string());
-    f.weight = weight;
-    TextRun {
-        len,
-        font: f,
-        color,
-        background_color: bg,
-        underline: None,
-        strikethrough: None,
-    }
-}
-
-/// One text made of colored pieces (empty pieces are dropped).
-fn colored_text(parts: &[(String, Hsla)], weight: FontWeight) -> StyledText {
-    let parts: Vec<_> = parts.iter().filter(|(s, _)| !s.is_empty()).collect();
-    let text: String = parts.iter().map(|(s, _)| s.as_str()).collect();
-    let runs = parts
-        .iter()
-        .map(|(s, color)| text_run(s.len(), FONT_SANS, weight, *color, None))
-        .collect();
-    StyledText::new(text).with_runs(runs)
-}
-
-/// Activity / comment text: `@mentions` as accent chips, `code` in mono, rest in `base`.
-fn rich_text(text: &str, base: Hsla) -> StyledText {
-    let mut out = String::new();
-    let mut runs = Vec::new();
-    for span in comments::mention_spans(text) {
-        let (range, run): (_, fn(usize, Hsla) -> TextRun) = match span {
-            Span::Text(r) => (r, |len, base| {
-                text_run(len, FONT_SANS, FontWeight::NORMAL, base, None)
-            }),
-            Span::Mention(r, _) => (r, |len, _| {
-                text_run(
-                    len,
-                    FONT_SANS,
-                    FontWeight::MEDIUM,
-                    ACCENT_TEXT,
-                    Some(ACCENT_SOFT),
                 )
-            }),
-            Span::Code(r) => (r, |len, _| {
-                text_run(len, FONT_MONO, FontWeight::NORMAL, TEXT, None)
-            }),
-        };
-        out.push_str(&text[range.clone()]);
-        runs.push(run(range.len(), base));
+            })
     }
-    StyledText::new(out).with_runs(runs)
+
+}
+
+/// Tone of the "Verified" badge.
+pub(crate) fn verified_badge(verified: bool) -> Badge {
+    if verified {
+        Badge::new("Verified").tone(Tone::Success).dot(Status::Live)
+    } else {
+        Badge::new("Not verified").dot(Status::Draft)
+    }
 }

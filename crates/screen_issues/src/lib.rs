@@ -1,27 +1,42 @@
-//! Issue board screen: header, Board/List views with runner filters, and the
-//! issue detail panel (status menu, runner picker, activity + comments).
+//! Issue board screen: issues (see the `pipeline` crate) as a board or a list, the "New
+//! issue" dialog and the issue detail panel. Each issue runs through one of the configured
+//! pipelines; the panel shows its run step by step, whatever the steps are.
+//!
+//! Modules: [`look`] how pipeline state reads, [`header`] title bar + view tabs, [`board`] and
+//! [`list`] the two views, [`dialog`] "New issue", [`menu`] the pipeline select, [`detail`]
+//! the panel frame, [`progress`] its step list (decisions, notes), [`run`] the review section
+//! (renders, approval) and the render viewer, [`work`] sub-agent tasks, checks, workdirs and
+//! the log.
 
 mod board;
-mod comments;
-mod data;
 mod detail;
+mod dialog;
 mod header;
 mod list;
-mod picker;
+mod look;
+mod menu;
+mod progress;
+mod run;
 mod widgets;
+mod work;
+
+use std::collections::HashSet;
+use std::time::Duration;
 
 use gpui::{
-    App, ClickEvent, Context, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Pixels,
-    Point, Render, SharedString, Subscription, Window, actions, div, prelude::*,
+    App, Context, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Render, ScrollHandle,
+    SharedString, Subscription, Task, Window, actions, div, prelude::*,
 };
+use pipeline::{Issue, IssueStatus, Pipelines, Run};
 use ui::nav::Screen;
 use ui::{TextInput, TextInputEvent};
-
-use data::{Activity, Column, Filter, Issue, Run, RunState, RunnerId, Trigger};
 
 actions!(screen_issues, [CloseDetail]);
 
 const KEY_CONTEXT: &str = "IssuesScreen";
+
+/// Log lines shown in the detail panel (newest at the bottom).
+pub(crate) const LOG_LINES: usize = 200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
@@ -29,112 +44,122 @@ enum View {
     List,
 }
 
+/// One issue as the board and list draw it (copied out of the service per render).
+#[derive(Clone)]
+pub(crate) struct Card {
+    pub key: SharedString,
+    pub title: SharedString,
+    pub kind: SharedString,
+    pub status: IssueStatus,
+    pub line: look::Line,
+    /// Run time so far (`4m`), when there is a run.
+    pub elapsed: Option<SharedString>,
+    /// Stage progress of a run that is working now.
+    pub progress: Option<f32>,
+}
+
+/// "New issue" dialog state.
+pub(crate) struct NewIssue {
+    pub open: bool,
+    pub title: Entity<TextInput>,
+    pub body: Entity<TextInput>,
+    /// The description box hosts the input (else it shows the wrapped text).
+    pub body_editing: bool,
+    pub kind: usize,
+    /// Pipeline id; `None` = the default pipeline.
+    pub pipeline: Option<String>,
+    pub run_now: bool,
+    pub error: Option<SharedString>,
+}
+
 pub struct IssuesScreen {
     focus_handle: FocusHandle,
-    issues: Vec<Issue>,
+    pipes: Entity<Pipelines>,
     /// Selected issue key (detail panel open when `Some`).
     selected: Option<SharedString>,
     view: View,
-    filter: Filter,
-    picker_open: bool,
-    status_menu_open: bool,
-    /// Where the mouse press that dismissed the status menu (outside click) happened,
-    /// so the same press landing on the select does not reopen it.
-    status_menu_dismissed_at: Option<Point<Pixels>>,
-    /// Key of the card being dragged (dimmed while a drag is active).
-    dragging: Option<SharedString>,
-    next_key: u32,
-    title_input: Entity<TextInput>,
-    pick_input: Entity<TextInput>,
-    comment_input: Entity<TextInput>,
-    /// Highlighted row of the @mention list.
-    mention_ix: usize,
-    /// Esc closed the @mention list for the current query.
-    mention_dismissed: bool,
-    /// Runners whose (mock) runtime is offline.
-    offline: Vec<RunnerId>,
+    new: NewIssue,
+    /// "Request changes…" revealed under the approval buttons.
+    changes_open: bool,
+    changes_input: Entity<TextInput>,
+    /// "Delete?" confirm revealed in the detail actions.
+    confirm_delete: bool,
+    /// Set when an action on the service failed (shown in the detail panel).
+    action_error: Option<SharedString>,
+    log_scroll: ScrollHandle,
+    /// The detail panel's scroll (back to the top when another issue is selected).
+    detail_scroll: ScrollHandle,
+    /// (issue, log length) last scrolled to, so new lines scroll the log to the bottom.
+    log_seen: Option<(SharedString, usize)>,
+    /// Render viewer: (issue, render index).
+    viewer: Option<(SharedString, usize)>,
+    /// The open pipeline select, if any.
+    menu: Option<menu::Menu>,
+    /// Steps whose full notes are shown (else the first lines).
+    notes_open: HashSet<String>,
     _subscriptions: Vec<Subscription>,
+    /// Re-renders once in a while so elapsed times move while runs work.
+    _ticker: Task<()>,
 }
 
 impl IssuesScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([KeyBinding::new("escape", CloseDetail, Some(KEY_CONTEXT))]);
 
-        let title_input = cx.new(|cx| TextInput::new("Title", cx));
-        let pick_input = cx.new(|cx| TextInput::new("Orchestrator, agent or pipeline", cx));
-        let comment_input =
-            cx.new(|cx| TextInput::new("@Fixer try again with the retry budget from ADR-12", cx));
+        // The app shell creates the service; standalone previews get their own.
+        let pipes = pipeline::global(cx).unwrap_or_else(|| pipeline::init(cx));
+
+        let title = cx.new(|cx| TextInput::new("Short summary, e.g. Add an export button", cx));
+        let body = cx.new(|cx| TextInput::new("What should change, and why", cx));
+        let changes_input = cx.new(|cx| TextInput::new("What should change?", cx));
 
         let mut subscriptions = vec![
+            cx.observe(&pipes, |this, _, cx| {
+                this.follow_log(cx);
+                cx.notify();
+            }),
             cx.subscribe_in(
-                &title_input,
+                &title,
                 window,
-                |this, input, ev: &TextInputEvent, window, cx| match ev {
+                |this, _, ev: &TextInputEvent, window, cx| match ev {
                     TextInputEvent::Changed => {
-                        let text: SharedString = input.read(cx).text().to_string().into();
-                        if let Some(issue) = this.selected_issue_mut() {
-                            issue.title = text;
-                        }
+                        this.new.error = None;
                         cx.notify();
                     }
-                    TextInputEvent::Submit | TextInputEvent::Cancel => this.focus_self(window),
+                    TextInputEvent::Submit | TextInputEvent::Tab => this.edit_body(window, cx),
+                    TextInputEvent::Cancel => this.close_new(window, cx),
                     _ => {}
                 },
             ),
             cx.subscribe_in(
-                &pick_input,
+                &body,
                 window,
                 |this, _, ev: &TextInputEvent, window, cx| match ev {
                     TextInputEvent::Changed => cx.notify(),
-                    TextInputEvent::Submit => {
-                        if let Some(id) = this.picker_matches(cx).first().copied() {
-                            this.attach_runner(id, window, cx);
-                        }
-                    }
-                    TextInputEvent::Cancel => {
-                        this.close_picker(cx);
-                        this.focus_self(window);
+                    TextInputEvent::Submit => this.create(window, cx),
+                    TextInputEvent::Cancel => this.close_new(window, cx),
+                    TextInputEvent::Blur => {
+                        this.new.body_editing = false;
+                        cx.notify();
                     }
                     _ => {}
                 },
             ),
             cx.subscribe_in(
-                &comment_input,
+                &changes_input,
                 window,
                 |this, _, ev: &TextInputEvent, window, cx| match ev {
-                    TextInputEvent::Changed => {
-                        this.mention_ix = 0;
-                        this.mention_dismissed = false;
+                    TextInputEvent::Changed => cx.notify(),
+                    TextInputEvent::Submit => this.send_changes(cx),
+                    TextInputEvent::Cancel => {
+                        this.changes_open = false;
+                        this.focus_self(window);
                         cx.notify();
                     }
-                    TextInputEvent::Up => this.move_mention(-1, cx),
-                    TextInputEvent::Down => this.move_mention(1, cx),
-                    TextInputEvent::Submit | TextInputEvent::Tab => {
-                        if this.mention_open(cx) && !this.mention_rows(cx).is_empty() {
-                            this.insert_mention(this.mention_ix, window, cx);
-                        } else if *ev == TextInputEvent::Submit {
-                            this.post_comment(cx);
-                        }
-                    }
-                    TextInputEvent::Cancel => {
-                        if this.mention_open(cx) {
-                            this.mention_dismissed = true;
-                            cx.notify();
-                        } else {
-                            this.focus_self(window);
-                        }
-                    }
-                    TextInputEvent::Blur => {}
+                    _ => {}
                 },
             ),
         ];
-
-        let issues = data::seed();
-        let selected: SharedString = "PAY-1440".into();
-        if let Some(issue) = issues.iter().find(|i| i.key == selected) {
-            let title = issue.title.clone();
-            title_input.update(cx, |input, cx| input.set_text(title, cx));
-        }
 
         // The app shell builds every screen up-front: only take focus when shown, and
         // re-take it each time navigation lands here so Escape works without a click.
@@ -144,79 +169,159 @@ impl IssuesScreen {
             cx,
             |this: &mut Self, window, _| this.focus_self(window),
         ));
+        // Other screens open an issue with `ui::nav::open_issue`.
+        if let Some(nav) = ui::nav::nav_entity(cx) {
+            subscriptions.push(cx.observe_in(&nav, window, |this: &mut Self, _, window, cx| {
+                if let Some(key) = ui::nav::take_issue_focus(cx)
+                    && this.pipes.read(cx).issue(&key).is_some()
+                {
+                    this.select(key, window, cx);
+                }
+            }));
+        }
         let focus_handle = cx.focus_handle();
-        if ui::nav::nav_entity(cx).is_none() || ui::nav::current(cx) == Screen::Issues {
+        let shown = ui::nav::nav_entity(cx).is_none() || ui::nav::current(cx) == Screen::Issues;
+        if shown {
             window.focus(&focus_handle);
         }
 
-        Self {
+        let ticker = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(15))
+                    .await;
+                let ok = this.update(cx, |this, cx| {
+                    let p = this.pipes.read(cx);
+                    if p.issues.iter().any(|i| p.is_active(&i.key)) {
+                        cx.notify();
+                    }
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Test hooks: `HARNESS_ISSUE=<KEY>` opens an issue (`HARNESS_ISSUE_SCROLL=bottom`
+        // scrolls its panel down, `HARNESS_ISSUE_RENDER=<n>` opens render n large), `HARNESS_ISSUES_DIALOG=new` opens the "New issue" dialog,
+        // `HARNESS_ISSUES_VIEW=list` starts in the list view.
+        let selected = std::env::var("HARNESS_ISSUE")
+            .ok()
+            .filter(|k| pipes.read(cx).issue(k).is_some())
+            .map(SharedString::from);
+        let dialog = std::env::var("HARNESS_ISSUES_DIALOG").is_ok_and(|v| v == "new");
+
+        let mut this = Self {
             focus_handle,
-            issues,
-            selected: Some(selected),
-            view: View::Board,
-            filter: Filter::All,
-            picker_open: true,
-            status_menu_open: false,
-            status_menu_dismissed_at: None,
-            dragging: None,
-            next_key: 1443,
-            title_input,
-            pick_input,
-            comment_input,
-            mention_ix: 0,
-            mention_dismissed: false,
-            offline: comments::initially_offline(),
+            pipes,
+            selected,
+            view: if std::env::var("HARNESS_ISSUES_VIEW").is_ok_and(|v| v == "list") {
+                View::List
+            } else {
+                View::Board
+            },
+            new: NewIssue {
+                open: false,
+                title,
+                body,
+                body_editing: false,
+                kind: 0,
+                pipeline: None,
+                run_now: true,
+                error: None,
+            },
+            changes_open: false,
+            changes_input,
+            confirm_delete: false,
+            action_error: None,
+            log_scroll: ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
+            log_seen: None,
+            viewer: None,
+            menu: None,
+            notes_open: HashSet::new(),
             _subscriptions: subscriptions,
+            _ticker: ticker,
+        };
+        this.follow_log(cx);
+        if let Ok(ix) = std::env::var("HARNESS_ISSUE_RENDER").map(|v| v.parse().unwrap_or(0)) {
+            this.viewer = this.selected.clone().map(|k| (k, ix));
         }
+        if std::env::var("HARNESS_ISSUE_SCROLL").is_ok_and(|v| v == "bottom") {
+            this.detail_scroll.scroll_to_bottom();
+        }
+        if dialog {
+            this.open_new(window, cx);
+        }
+        // `HARNESS_ISSUES_MENU=new|issue` opens the dialog's / the panel's pipeline select.
+        this.menu = match std::env::var("HARNESS_ISSUES_MENU").as_deref() {
+            Ok("new") if dialog => Some(menu::Menu::NewIssue),
+            Ok("issue") if this.selected.is_some() => Some(menu::Menu::Issue),
+            _ => None,
+        };
+        // Test hook: `HARNESS_NEW_ISSUE="Title::Description"` creates an issue and runs the
+        // pipeline on it, through the same call as the dialog's "Create and run".
+        if let Ok(spec) = std::env::var("HARNESS_NEW_ISSUE") {
+            let (title, body) = spec.split_once("::").unwrap_or((spec.as_str(), ""));
+            let (title, body) = (title.to_string(), body.to_string());
+            let pipes = this.pipes.clone();
+            cx.defer(move |cx| {
+                let key = pipes.update(cx, |p, cx| p.create_issue(&title, &body, "Feature", None, true, cx));
+                if let Ok(key) = key {
+                    ui::nav::open_issue(key, cx);
+                }
+            });
+        }
+        this
     }
 
     // ── Queries ─────────────────────────────────────────────────────────
 
-    fn selected_issue(&self) -> Option<&Issue> {
-        let key = self.selected.as_ref()?;
-        self.issues.iter().find(|i| &i.key == key)
-    }
-
-    fn selected_issue_mut(&mut self) -> Option<&mut Issue> {
-        let key = self.selected.clone()?;
-        self.issue_mut(&key)
-    }
-
-    fn issue_mut(&mut self, key: &str) -> Option<&mut Issue> {
-        self.issues.iter_mut().find(|i| i.key.as_ref() == key)
-    }
-
-    fn visible(&self) -> impl Iterator<Item = &Issue> {
-        self.issues.iter().filter(|i| self.filter.matches(i))
-    }
-
-    fn open_count(&self) -> usize {
-        self.issues
+    /// Board/list rows from the service, newest first.
+    fn cards(&self, cx: &App) -> Vec<Card> {
+        let p = self.pipes.read(cx);
+        let now = ui::time::now_secs();
+        p.issues
             .iter()
-            .filter(|i| i.status != Column::Done)
-            .count()
-    }
-
-    fn filter_count(&self, filter: Filter) -> usize {
-        self.issues.iter().filter(|i| filter.matches(i)).count()
-    }
-
-    /// Runner ids matching the picker query, in display (group) order.
-    fn picker_matches(&self, cx: &App) -> Vec<RunnerId> {
-        let q = self.pick_input.read(cx).text().to_lowercase();
-        picker::GROUPS
-            .iter()
-            .flat_map(|(kind, _)| {
-                data::RUNNERS
-                    .iter()
-                    .enumerate()
-                    .filter(move |(_, r)| r.kind == *kind)
+            .map(|i| {
+                let active = p.is_active(&i.key);
+                let (line, elapsed, progress) = p
+                    .with_run(&i.key, |r| {
+                        (
+                            look::status_line(i, Some(r), active),
+                            Some(look::duration_short(look::run_elapsed(r, active, now)).into()),
+                            active.then(|| look::run_fraction(r)),
+                        )
+                    })
+                    .unwrap_or_else(|| (look::status_line(i, None, false), None, None));
+                Card {
+                    key: i.key.clone().into(),
+                    title: i.title.clone().into(),
+                    kind: i.kind.clone().into(),
+                    status: look::column_of(i.status),
+                    line,
+                    elapsed,
+                    progress,
+                }
             })
-            .filter(|(_, r)| {
-                q.is_empty() || format!("{} {}", r.name, r.desc).to_lowercase().contains(&q)
-            })
-            .map(|(id, _)| id)
             .collect()
+    }
+
+    /// The selected issue, its latest run (copied) and whether a worker runs it.
+    fn selection(&self, cx: &App) -> Option<(Issue, Option<Run>, bool)> {
+        let key = self.selected.as_ref()?;
+        let p = self.pipes.read(cx);
+        let issue = p.issue(key)?.clone();
+        let run = p.with_run(key, Run::clone);
+        Some((issue, run, p.is_active(key)))
+    }
+
+    fn open_count(&self, cx: &App) -> usize {
+        let p = self.pipes.read(cx);
+        p.issues
+            .iter()
+            .filter(|i| i.status != IssueStatus::Done)
+            .count()
     }
 
     // ── Focus ───────────────────────────────────────────────────────────
@@ -228,277 +333,159 @@ impl IssuesScreen {
     // ── Selection ───────────────────────────────────────────────────────
 
     fn select(&mut self, key: SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(issue) = self.issues.iter().find(|i| i.key == key) else {
-            return;
-        };
-        // Reselecting the same unattached issue keeps the picker as it was.
-        let keep_picker = issue.runner.is_none() && self.selected.as_ref() == Some(&key);
-        let title = issue.title.clone();
-        self.picker_open = keep_picker && self.picker_open;
-        self.status_menu_open = false;
-        self.selected = Some(key);
-        self.reset_picker_query(cx);
-        self.title_input
-            .update(cx, |input, cx| input.set_text(title, cx));
-        self.focus_self(window);
-        cx.notify();
-    }
-
-    fn close_detail(&mut self, _: &CloseDetail, _: &mut Window, cx: &mut Context<Self>) {
-        if self.status_menu_open {
-            self.status_menu_open = false;
-        } else {
-            self.selected = None;
-            self.picker_open = false;
+        if self.selected.as_ref() != Some(&key) {
+            self.changes_open = false;
+            self.confirm_delete = false;
+            self.action_error = None;
+            self.changes_input.update(cx, |i, cx| i.set_text("", cx));
+            self.detail_scroll.set_offset(gpui::Point::default());
+            self.notes_open.clear();
+            self.menu = None;
         }
+        self.selected = Some(key);
+        self.follow_log(cx);
+        self.focus_self(window);
         cx.notify();
     }
 
     fn close_selection(&mut self, cx: &mut Context<Self>) {
         self.selected = None;
-        self.picker_open = false;
-        self.status_menu_open = false;
+        self.changes_open = false;
+        self.confirm_delete = false;
+        self.viewer = None;
+        self.menu = None;
         cx.notify();
     }
 
-    // ── Board actions ───────────────────────────────────────────────────
+    /// Escape closes the top-most thing: viewer, dialog, change request, then the panel.
+    fn close_detail(&mut self, _: &CloseDetail, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.is_some() {
+            self.menu = None;
+        } else if self.viewer.is_some() {
+            self.viewer = None;
+        } else if self.new.open {
+            self.close_new(window, cx);
+        } else if self.changes_open {
+            self.changes_open = false;
+        } else if self.confirm_delete {
+            self.confirm_delete = false;
+        } else {
+            self.selected = None;
+        }
+        cx.notify();
+    }
+
+    /// Scroll the log to the bottom when the selected run got new lines.
+    fn follow_log(&mut self, cx: &App) {
+        let Some(key) = self.selected.clone() else {
+            self.log_seen = None;
+            return;
+        };
+        let len = self
+            .pipes
+            .read(cx)
+            .with_run(&key, |r| r.log.len())
+            .unwrap_or(0);
+        if self.log_seen.as_ref() != Some(&(key.clone(), len)) {
+            self.log_seen = Some((key, len));
+            self.log_scroll.scroll_to_bottom();
+        }
+    }
 
     fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.view = view;
         cx.notify();
     }
 
-    fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
-        self.filter = filter;
-        cx.notify();
-    }
+    // ── Pipeline commands ───────────────────────────────────────────────
 
-    fn add_issue(&mut self, status: Column, window: &mut Window, cx: &mut Context<Self>) {
-        let key = format!("PAY-{}", self.next_key);
-        self.next_key += 1;
-        let issue = Issue::untitled(key, status);
-        let key = issue.key.clone();
-        let title = issue.title.clone();
-        self.issues.push(issue);
-        self.selected = Some(key);
-        self.picker_open = true;
-        self.status_menu_open = false;
-        self.reset_picker_query(cx);
-        // Focus the title with everything selected so typing renames it.
-        self.title_input.update(cx, |input, cx| {
-            input.set_text(title, cx);
-            input.select_all_text(cx);
-        });
-        window.focus(&self.title_input.focus_handle(cx));
-        cx.notify();
-    }
-
-    /// Card dropped on a column (the mockup's `col.drop`).
-    fn drop_on(
+    /// Run `f` on the service for the selected issue.
+    fn command(
         &mut self,
-        key: &SharedString,
-        column: Column,
-        window: &mut Window,
         cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Pipelines, &str, &mut Context<Pipelines>),
     ) {
-        self.dragging = None;
-        if let Some(issue) = self.issue_mut(key) {
-            issue.status = column;
-            if let Some(r) = issue.runner()
-                && column == Column::Progress
-                && issue.startable()
-            {
-                issue.run = Some(Run::running(format!("{} picked it up", r.name), 4));
-            }
-        }
-        self.select(key.clone(), window, cx);
-    }
-
-    // ── Detail actions ──────────────────────────────────────────────────
-
-    fn set_status(&mut self, status: Column, cx: &mut Context<Self>) {
-        if let Some(issue) = self.selected_issue_mut() {
-            issue.status = status;
-        }
-        self.status_menu_open = false;
-        cx.notify();
-    }
-
-    fn toggle_status_menu(&mut self, ev: &ClickEvent, cx: &mut Context<Self>) {
-        let down = match ev {
-            ClickEvent::Mouse(m) => Some(m.down.position),
-            ClickEvent::Keyboard(_) => None,
+        let Some(key) = self.selected.clone() else {
+            return;
         };
-        let dismissed_by_this_press =
-            down.is_some() && self.status_menu_dismissed_at.take() == down;
-        if !dismissed_by_this_press {
-            self.status_menu_open = !self.status_menu_open;
+        self.action_error = None;
+        self.confirm_delete = false;
+        self.pipes.update(cx, |p, cx| f(p, &key, cx));
+        cx.notify();
+    }
+
+    fn start(&mut self, cx: &mut Context<Self>) {
+        self.command(cx, |p, key, cx| p.start(key, cx));
+    }
+
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.command(cx, |p, key, cx| p.cancel(key, cx));
+    }
+
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        self.command(cx, |p, key, cx| p.retry(key, cx));
+    }
+
+    fn approve(&mut self, cx: &mut Context<Self>) {
+        self.changes_open = false;
+        self.command(cx, |p, key, cx| p.approve(key, cx));
+    }
+
+    fn toggle_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.changes_open = !self.changes_open;
+        if self.changes_open {
+            window.focus(&self.changes_input.focus_handle(cx));
         }
         cx.notify();
     }
 
-    fn dismiss_status_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        if self.status_menu_open {
-            self.status_menu_open = false;
-            self.status_menu_dismissed_at = Some(position);
-            cx.notify();
+    fn send_changes(&mut self, cx: &mut Context<Self>) {
+        let notes = self.changes_input.read(cx).text().trim().to_string();
+        if notes.is_empty() {
+            return;
         }
+        self.changes_open = false;
+        self.changes_input.update(cx, |i, cx| i.set_text("", cx));
+        self.command(cx, |p, key, cx| p.request_changes(key, &notes, cx));
     }
 
-    fn toggle_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker_open = !self.picker_open;
-        self.reset_picker_query(cx);
-        if self.picker_open {
-            window.focus(&self.pick_input.focus_handle(cx));
+    fn ask_delete(&mut self, confirm: bool, cx: &mut Context<Self>) {
+        self.confirm_delete = confirm;
+        cx.notify();
+    }
+
+    fn delete(&mut self, cx: &mut Context<Self>) {
+        self.command(cx, |p, key, cx| p.delete_issue(key, cx));
+        let gone = self
+            .selected
+            .as_ref()
+            .is_some_and(|k| self.pipes.read(cx).issue(k).is_none());
+        if gone {
+            self.close_selection(cx);
         } else {
-            self.focus_self(window);
+            self.action_error = Some("The issue is still running; cancel it first.".into());
+        }
+    }
+
+    fn set_issue_pipeline(&mut self, id: String, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.command(cx, move |p, key, cx| p.set_issue_pipeline(key, &id, cx));
+    }
+
+    fn toggle_notes(&mut self, step: String, cx: &mut Context<Self>) {
+        if !self.notes_open.remove(&step) {
+            self.notes_open.insert(step);
         }
         cx.notify();
     }
 
-    fn close_picker(&mut self, cx: &mut Context<Self>) {
-        self.picker_open = false;
-        self.reset_picker_query(cx);
+    fn open_viewer(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.viewer = self.selected.clone().map(|k| (k, ix));
         cx.notify();
     }
 
-    fn reset_picker_query(&mut self, cx: &mut Context<Self>) {
-        self.pick_input
-            .update(cx, |input, cx| input.set_text("", cx));
-    }
-
-    fn attach_runner(&mut self, id: RunnerId, window: &mut Window, cx: &mut Context<Self>) {
-        let r = data::runner(id);
-        if let Some(issue) = self.selected_issue_mut() {
-            issue.runner = Some(id);
-            if issue.startable() {
-                let text = if issue.status == Column::Backlog {
-                    "starts when moved to Todo"
-                } else {
-                    "starts on assign · runtime cloud"
-                };
-                issue.run = Some(Run::new(RunState::Queued, text));
-            }
-            issue.activity.push(Activity::person(
-                "ME",
-                "now",
-                format!("Attached {} {}.", r.kind.label().to_lowercase(), r.name),
-            ));
-            if issue.status == Column::Backlog {
-                issue.status = Column::Todo;
-            }
-        }
-        self.close_picker(cx);
-        self.focus_self(window);
-    }
-
-    fn toggle_trigger(&mut self, trigger: Trigger, cx: &mut Context<Self>) {
-        if let Some(issue) = self.selected_issue_mut() {
-            let ix = Trigger::ALL.iter().position(|t| *t == trigger).unwrap_or(0);
-            issue.triggers[ix] = !issue.triggers[ix];
-        }
-        cx.notify();
-    }
-
-    fn start_run(&mut self, cx: &mut Context<Self>) {
-        if let Some(issue) = self.selected_issue_mut()
-            && let Some(r) = issue.runner()
-        {
-            issue.status = Column::Progress;
-            issue.run = Some(Run::running(format!("{} picked it up", r.name), 4));
-        }
-        cx.notify();
-    }
-
-    fn detach(&mut self, cx: &mut Context<Self>) {
-        if let Some(issue) = self.selected_issue_mut()
-            && let Some(r) = issue.runner()
-        {
-            issue.runner = None;
-            issue.run = None;
-            issue.activity.push(Activity::person(
-                "ME",
-                "now",
-                format!("Detached {}.", r.name),
-            ));
-        }
-        cx.notify();
-    }
-
-    // ── Comments ────────────────────────────────────────────────────────
-
-    /// The `@token` being typed in the comment input, if any.
-    fn mention_token(&self, cx: &App) -> Option<(usize, String)> {
-        comments::mention_query(self.comment_input.read(cx).text())
-            .map(|(at, token)| (at, token.to_string()))
-    }
-
-    /// Whether the @mention list is showing (also with no matches: empty state).
-    fn mention_open(&self, cx: &App) -> bool {
-        !self.mention_dismissed && self.mention_token(cx).is_some()
-    }
-
-    /// Rows of the @mention list.
-    fn mention_rows(&self, cx: &App) -> Vec<(RunnerId, std::ops::Range<usize>)> {
-        self.mention_token(cx)
-            .map(|(_, q)| comments::mention_matches(&q))
-            .unwrap_or_default()
-    }
-
-    fn move_mention(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if !self.mention_open(cx) {
-            return;
-        }
-        let n = self.mention_rows(cx).len();
-        if n > 0 {
-            self.mention_ix = (self.mention_ix as isize + delta).rem_euclid(n as isize) as usize;
-        }
-        cx.notify();
-    }
-
-    /// Replace the `@token` with `@{Name} ` and put the cursor after it.
-    fn insert_mention(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((at, _)) = self.mention_token(cx) else {
-            return;
-        };
-        let Some((id, _)) = self.mention_rows(cx).get(row).cloned() else {
-            return;
-        };
-        let head = self.comment_input.read(cx).text()[..at].to_string();
-        let text = format!("{head}@{} ", data::runner(id).name);
-        self.comment_input
-            .update(cx, |input, cx| input.set_text(text, cx));
-        self.mention_ix = 0;
-        self.mention_dismissed = false;
-        window.focus(&self.comment_input.focus_handle(cx));
-        cx.notify();
-    }
-
-    fn post_comment(&mut self, cx: &mut Context<Self>) {
-        let text = self.comment_input.read(cx).text().trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let offline = self.offline.clone();
-        let Some(issue) = self.selected_issue_mut() else {
-            return;
-        };
-        comments::post(issue, &offline, &text);
-
-        self.mention_ix = 0;
-        self.mention_dismissed = false;
-        self.comment_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-    }
-
-    /// "Retry now" on a receipt: the runtime reconnects and the trigger toggle is ignored.
-    fn retry_wake(&mut self, activity_ix: usize, wake_ix: usize, cx: &mut Context<Self>) {
-        let mut offline = std::mem::take(&mut self.offline);
-        if let Some(issue) = self.selected_issue_mut() {
-            comments::wake(issue, activity_ix, wake_ix, &mut offline, true);
-        }
-        self.offline = offline;
+    fn close_viewer(&mut self, cx: &mut Context<Self>) {
+        self.viewer = None;
         cx.notify();
     }
 }
@@ -511,25 +498,33 @@ impl Focusable for IssuesScreen {
 
 impl Render for IssuesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let main = match self.view {
-            View::Board => self.render_board(cx).into_any_element(),
-            View::List => self.render_list(cx).into_any_element(),
+        let cards = self.cards(cx);
+        let main = if cards.is_empty() {
+            self.render_empty(cx).into_any_element()
+        } else {
+            match self.view {
+                View::Board => self.render_board(&cards, cx).into_any_element(),
+                View::List => self.render_list(&cards, cx).into_any_element(),
+            }
         };
-        let detail = self
-            .selected_issue()
-            .is_some()
-            .then(|| self.render_detail(window, cx));
+        let detail = self.selection(cx).map(|(issue, run, active)| {
+            self.render_detail(&issue, run.as_ref(), active, window, cx)
+        });
+        let viewer = self.render_viewer(window, cx);
+        let dialog = self.render_new(window, cx);
+        let menu_backdrop = self.render_menu_backdrop(cx);
 
         div()
             .id("issues-screen")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::close_detail))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
             .overflow_hidden()
-            .child(self.render_header(cx))
+            .child(self.render_header(&cards, cx))
             .child(self.render_toolbar(cx))
             .child(
                 div()
@@ -539,5 +534,8 @@ impl Render for IssuesScreen {
                     .child(div().flex_1().min_w_0().h_full().child(main))
                     .children(detail),
             )
+            .children(viewer)
+            .children(dialog)
+            .children(menu_backdrop)
     }
 }

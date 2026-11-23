@@ -28,7 +28,7 @@ mod widgets;
 mod workdir;
 mod history;
 mod history_index;
-pub mod inbox;
+pub use agent_tools::inbox;
 
 pub use history::ChatHistory;
 

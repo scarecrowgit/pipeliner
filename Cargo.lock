@@ -2429,6 +2429,7 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "pipeline",
  "screen_agents",
  "screen_chat",
  "screen_editor",
@@ -3884,6 +3885,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
 
 [[package]]
+name = "pipeline"
+version = "0.1.0"
+dependencies = [
+ "agent_tools",
+ "anyhow",
+ "gpui",
+ "llm",
+ "serde",
+ "serde_json",
+ "smol",
+ "toml 0.8.23",
+ "ui",
+]
+
+[[package]]
 name = "piper"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4742,7 +4758,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "screen_agents"
 version = "0.1.0"
 dependencies = [
+ "agent_tools",
  "gpui",
+ "pipeline",
  "ui",
 ]
 
@@ -4765,6 +4783,7 @@ name = "screen_editor"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "pipeline",
  "ui",
 ]
 
@@ -4772,7 +4791,9 @@ dependencies = [
 name = "screen_home"
 version = "0.1.0"
 dependencies = [
+ "agent_tools",
  "gpui",
+ "pipeline",
  "ui",
 ]
 
@@ -4781,6 +4802,7 @@ name = "screen_issues"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "pipeline",
  "ui",
 ]
 
@@ -4788,7 +4810,9 @@ dependencies = [
 name = "screen_review"
 version = "0.1.0"
 dependencies = [
+ "agent_tools",
  "gpui",
+ "pipeline",
  "screen_chat",
  "ui",
 ]
@@ -5021,6 +5045,7 @@ name = "sidebar"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "pipeline",
  "ui",
 ]
 

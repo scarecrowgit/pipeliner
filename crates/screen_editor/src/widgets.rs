@@ -44,24 +44,6 @@ pub fn strong(text: impl Into<SharedString>) -> gpui::Div {
     div().font_weight(FontWeight::MEDIUM).child(text.into())
 }
 
-/// 24px chip (`files`, `tools`): mono by default.
-pub fn chip(text: impl Into<SharedString>, mono: bool) -> gpui::Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .h(px(24.))
-        .px(px(8.))
-        .rounded(px(RADIUS_MD))
-        .border_1()
-        .border_color(LINE_STRONG)
-        .bg(SURFACE_RAISED)
-        .text_size(px(12.))
-        .text_color(TEXT_SECONDARY)
-        .when(mono, |d| d.font_family(FONT_MONO))
-        .child(text.into())
-}
-
 pub fn chip_row() -> gpui::Div {
     div().flex().flex_wrap().items_center().gap(px(6.))
 }
@@ -72,9 +54,11 @@ pub fn kv(label: impl Into<SharedString>, value: impl IntoElement, mono: bool) -
         .flex()
         .justify_between()
         .gap(px(12.))
-        .child(div().text_color(TEXT_MUTED).child(label.into()))
+        .child(div().flex_none().text_color(TEXT_MUTED).child(label.into()))
         .child(
             div()
+                .min_w_0()
+                .truncate()
                 .when(mono, |d| d.font_family(FONT_MONO).text_size(px(12.)))
                 .child(value),
         )
@@ -88,24 +72,6 @@ pub fn two_cols(a: impl IntoElement, b: impl IntoElement) -> gpui::Div {
         .gap(px(12.))
         .child(div().flex_1().min_w_0().child(a))
         .child(div().flex_1().min_w_0().child(b))
-}
-
-/// Native-looking radio (accent ring + dot when checked).
-pub fn radio(checked: bool) -> gpui::Div {
-    div()
-        .size(px(16.))
-        .flex_none()
-        .rounded_full()
-        .border_1()
-        .border_color(if checked { ACCENT_STRONG } else { LINE_STRONG })
-        .bg(SURFACE_RAISED)
-        .flex()
-        .items_center()
-        .justify_center()
-        .when(checked, |d| {
-            d.border_2()
-                .child(div().size(px(6.)).rounded_full().bg(ACCENT_STRONG))
-        })
 }
 
 /// Link styled as a secondary button (`.pl-linkbtn`).
@@ -128,14 +94,4 @@ pub fn link_button(id: impl Into<ElementId>, height: f32) -> gpui::Stateful<gpui
         .when(height < 40., |d| d.text_size(px(12.)))
         .cursor_pointer()
         .hover(|s| s.bg(SURFACE_HOVER))
-}
-
-/// Diff line in "Changes in v15".
-pub fn diff_add(text: impl Into<SharedString>) -> gpui::Div {
-    div()
-        .px(px(8.))
-        .rounded(px(RADIUS_SM))
-        .bg(DIFF_ADD_BG)
-        .text_color(DIFF_ADD_TEXT)
-        .child(text.into())
 }

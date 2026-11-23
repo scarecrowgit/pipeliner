@@ -24,6 +24,7 @@ screen_chat = { path = "crates/screen_chat" }
 screen_issues = { path = "crates/screen_issues" }
 screen_agents = { path = "crates/screen_agents" }
 screen_home = { path = "crates/screen_home" }
+pipeline = { path = "crates/pipeline" }
 
 [profile.dev]
 opt-level = 1

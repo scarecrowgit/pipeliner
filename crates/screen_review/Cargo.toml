@@ -7,3 +7,5 @@ edition = "2024"
 gpui.workspace = true
 ui.workspace = true
 screen_chat = { path = "../screen_chat" }
+agent_tools = { path = "../agent_tools" }
+pipeline = { path = "../pipeline" }

@@ -43,4 +43,3 @@ pub const NAV: &[NavEntry] = &[
     },
 ];
 
-pub const WORKSPACE: &str = "Acme · Payments";

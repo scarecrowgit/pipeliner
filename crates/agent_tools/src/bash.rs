@@ -90,12 +90,14 @@ fn signal_group(pgid: u32, signal: &str) {
 pub(crate) fn run(
     root: &Path,
     command: &str,
+    env: &[(String, String)],
     timeout: Duration,
     cancel: &AtomicBool,
 ) -> Result<BashResult, String> {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

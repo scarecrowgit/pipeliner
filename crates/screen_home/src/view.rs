@@ -8,9 +8,13 @@ use ui::nav::{self, Screen};
 use ui::theme::*;
 use ui::{Badge, Button, Stat, Status, Tone, icon, progress, status_dot};
 
-use crate::data::{Kind, KpiKind, LEGEND, Range, looks};
-use crate::rows::{LiveRow, NeedRow, RowState};
+use crate::data::{LEGEND, Range, count_label, looks, money};
+use crate::rows::{LiveRow, NeedRow, RowState, age};
+use crate::stats::Kpis;
 use crate::{HomeScreen, flex_item, open};
+
+/// Rows shown in "Needs you"; the rest are counted in the footer.
+const NEEDS_SHOWN: usize = 6;
 
 /// Fixed "Working now" columns after the two flexible ones: runtime, elapsed, cost, status.
 const COL_RUNTIME: f32 = 90.;
@@ -52,8 +56,12 @@ pub(crate) fn ellipsis(text: impl Into<SharedString>, line: f32) -> gpui::Div {
         .child(text.into())
 }
 
-/// Footer link of a card ("All agents & pipelines · 14 →").
-fn footer_link(id: &'static str, text: &'static str, target: Screen) -> impl IntoElement {
+/// Footer link of a card ("All issues · 3 →").
+fn footer_link(
+    id: &'static str,
+    text: impl Into<SharedString>,
+    target: Screen,
+) -> impl IntoElement {
     div()
         .id(id)
         .px(px(14.))
@@ -64,13 +72,43 @@ fn footer_link(id: &'static str, text: &'static str, target: Screen) -> impl Int
         .cursor_pointer()
         .hover(|s| s.text_color(TEXT_SECONDARY))
         .on_click(move |_, _, cx| nav::navigate(target, cx))
-        .child(text)
+        .child(text.into())
+}
+
+/// Centered muted note of an empty card ("Nothing needs you").
+pub(crate) fn empty_state(title: &'static str, hint: &'static str) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(4.))
+        .px(px(14.))
+        .py(px(28.))
+        .child(
+            div()
+                .text_color(TEXT_SECONDARY)
+                .font_weight(FontWeight::MEDIUM)
+                .child(title),
+        )
+        .child(muted(hint).text_center())
 }
 
 impl HomeScreen {
     // ── Header ──────────────────────────────────────────────────────────
 
-    pub(crate) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_header(
+        &self,
+        now: u64,
+        offset: i64,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let date = ui::time::long_date(now, offset);
+        let subtitle = if self.workspace.is_empty() {
+            date
+        } else {
+            format!("{date} · {}", self.workspace)
+        };
         let segments = Range::ALL.iter().map(|&range| {
             let on = self.range == range;
             div()
@@ -103,7 +141,7 @@ impl HomeScreen {
             .border_b_1()
             .border_color(LINE)
             .child(heading("Home"))
-            .child(muted("Sunday, 22 November · Acme · Payments"))
+            .child(muted(subtitle))
             .child(div().flex_1())
             .child(
                 div()
@@ -125,19 +163,46 @@ impl HomeScreen {
 
     // ── KPI strip ───────────────────────────────────────────────────────
 
-    pub(crate) fn render_kpis(&self, working: usize, waiting: usize) -> impl IntoElement {
-        let items = self.range.kpis().iter().enumerate().map(|(i, k)| {
-            let value: SharedString = match k.kind {
-                KpiKind::WorkingNow => working.to_string().into(),
-                KpiKind::WaitingForYou => waiting.to_string().into(),
-                KpiKind::Other => k.value.into(),
-            };
-            let stat = Stat::new(k.label, value).sub(k.sub).large();
-            let stat = if k.kind == KpiKind::WaitingForYou {
-                stat.tone(Tone::Warning)
+    pub(crate) fn render_kpis(&self, k: &Kpis, now: u64) -> impl IntoElement {
+        let working_sub = match (k.working_runs, k.working_chats) {
+            (0, 0) => "nothing running".to_string(),
+            (runs, 0) => count_label(runs, "pipeline", "pipelines"),
+            (0, chats) => count_label(chats, "chat", "chats"),
+            (runs, chats) => format!(
+                "{} · {}",
+                count_label(runs, "pipeline", "pipelines"),
+                count_label(chats, "chat", "chats")
+            ),
+        };
+        let waiting_sub = match k.oldest_wait {
+            Some(t) if k.waiting > 0 => format!("oldest {}", age(t, now)),
+            _ if k.waiting > 0 => "waiting".to_string(),
+            _ => "all clear".to_string(),
+        };
+        let runs_sub = match k.done_pct() {
+            Some(p) => format!("{p}% finished"),
+            None if k.runs > 0 => "none finished yet".to_string(),
+            None => "no runs".to_string(),
+        };
+
+        let stats = [
+            Stat::new("Working now", k.working().to_string()).sub(working_sub),
+            Stat::new("Waiting for you", k.waiting.to_string())
+                .sub(waiting_sub)
+                .tone(if k.waiting > 0 {
+                    Tone::Warning
+                } else {
+                    Tone::Neutral
+                }),
+            Stat::new("Runs", k.runs.to_string()).sub(runs_sub),
+            Stat::new("Spend", money(k.spend())).sub(self.range.sentence()),
+            Stat::new("Shipped", k.shipped.to_string()).sub(if k.shipped == 1 {
+                "pull request"
             } else {
-                stat
-            };
+                "pull requests"
+            }),
+        ];
+        let items = stats.into_iter().enumerate().map(|(i, stat)| {
             flex_item(1., 160.)
                 .px(px(20.))
                 .border_l_1()
@@ -146,7 +211,7 @@ impl HomeScreen {
                 } else {
                     LINE
                 })
-                .child(stat)
+                .child(stat.large())
         });
         div()
             .flex()
@@ -165,10 +230,11 @@ impl HomeScreen {
 
 // ── Working now ─────────────────────────────────────────────────────────
 
-pub(crate) fn working_now(live: &[LiveRow]) -> impl IntoElement {
-    let legend = LEGEND.iter().map(|&(kind, label)| {
+pub(crate) fn working_now(live: &[LiveRow], issues: usize) -> impl IntoElement {
+    let legend = LEGEND.iter().map(|&(kind, one, many)| {
         let l = looks(kind);
         let n = live.iter().filter(|r| r.kind == kind).count();
+        let label = if n == 1 { one } else { many };
         div()
             .flex()
             .items_center()
@@ -217,31 +283,41 @@ pub(crate) fn working_now(live: &[LiveRow]) -> impl IntoElement {
         .border_color(LINE)
         .rounded(px(RADIUS_XL))
         .child(head)
+        .when(live.is_empty(), |d| {
+            d.child(empty_state(
+                "Nothing is running",
+                "Start a pipeline on the issue board or open a chat.",
+            ))
+        })
+        .when(!live.is_empty(), |d| {
+            d.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w(px(620.))
+                    .children(live.iter().enumerate().map(|(i, row)| live_row(i, row))),
+            )
+        })
         .child(
             div()
-                .flex()
-                .flex_col()
-                .min_w(px(620.))
-                .children(live.iter().enumerate().map(|(i, row)| live_row(i, row))),
+                .mt_auto()
+                .border_t_1()
+                .border_color(LINE)
+                .child(footer_link(
+                    "home-all-issues",
+                    format!("All issues · {issues} →"),
+                    Screen::Issues,
+                )),
         )
-        .child(div().border_t_1().border_color(LINE).child(footer_link(
-            "home-all-agents",
-            "All agents & pipelines · 14 →",
-            Screen::Agents,
-        )))
 }
 
 fn live_row(index: usize, row: &LiveRow) -> impl IntoElement {
     let l = looks(row.kind);
-    let made = row.kind == Kind::Made;
     let tile = div()
         .size(px(24.))
         .flex_none()
         .rounded(px(RADIUS_MD))
         .bg(l.bg)
-        .border_1()
-        .when(made, |d| d.border_dashed().border_color(SPAWN_LINE))
-        .when(!made, |d| d.border_color(gpui::transparent_black()))
         .flex()
         .items_center()
         .justify_center()
@@ -287,7 +363,7 @@ fn live_row(index: usize, row: &LiveRow) -> impl IntoElement {
                         .child(
                             ellipsis(row.name.clone(), 20.)
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(if made { SPAWN_TEXT } else { TEXT }),
+                                .text_color(TEXT),
                         )
                         .child(
                             ellipsis(row.sub.clone(), 16.)
@@ -318,19 +394,10 @@ fn live_row(index: usize, row: &LiveRow) -> impl IntoElement {
 
 /// Status column: dot + text, and a progress bar while running with known progress.
 fn status_cell(row: &LiveRow) -> impl IntoElement {
-    let (dot, text, color, pct): (Status, SharedString, Hsla, Option<u8>) = match &row.state {
+    let (dot, text, color, fraction): (Status, SharedString, Hsla, Option<f32>) = match &row.state {
         RowState::Waiting(text) => (Status::Waiting, text.clone(), WARNING, None),
-        RowState::Running(pct) => {
-            let dot = if row.kind == Kind::Made {
-                Status::Spawn
-            } else {
-                Status::Running
-            };
-            let text = match pct {
-                Some(p) => format!("running · {p}%").into(),
-                None => "running".into(),
-            };
-            (dot, text, TEXT_SECONDARY, *pct)
+        RowState::Running(text, fraction) => {
+            (Status::Running, text.clone(), TEXT_SECONDARY, *fraction)
         }
     };
     div()
@@ -349,7 +416,7 @@ fn status_cell(row: &LiveRow) -> impl IntoElement {
                 .child(div().mt(px(7.)).child(status_dot(dot, true)))
                 .child(div().w(px(COL_STATUS - 12.)).child(text)),
         )
-        .when_some(pct, |d, p| d.child(progress(f32::from(p) / 100., ACCENT)))
+        .when_some(fraction, |d, f| d.child(progress(f, ACCENT)))
 }
 
 // ── Needs you ───────────────────────────────────────────────────────────
@@ -375,10 +442,25 @@ pub(crate) fn needs_you(needs: &[NeedRow]) -> impl IntoElement {
                 .child(heading("Needs you"))
                 .child(Badge::new(needs.len().to_string()).tone(Tone::Count)),
         )
-        .children(needs.iter().enumerate().map(|(i, n)| need_row(i, n)))
+        .when(needs.is_empty(), |d| {
+            d.child(empty_state(
+                "Nothing needs you",
+                "Approvals, questions and reports show up here.",
+            ))
+        })
+        .children(
+            needs
+                .iter()
+                .take(NEEDS_SHOWN)
+                .enumerate()
+                .map(|(i, n)| need_row(i, n)),
+        )
         .child(footer_link(
             "home-open-inbox",
-            "Open inbox →",
+            match needs.len().saturating_sub(NEEDS_SHOWN) {
+                0 => "Open inbox →".to_string(),
+                more => format!("{more} more · Open inbox →"),
+            },
             Screen::Inbox,
         ))
 }
@@ -438,11 +520,12 @@ fn need_row(index: usize, need: &NeedRow) -> impl IntoElement {
 
 /// `who · <mono ref> · age` as one wrapping text with a monospace run.
 fn meta_line(need: &NeedRow) -> StyledText {
-    let parts = [
-        (format!("{} · ", need.who), FONT_SANS),
-        (need.reference.to_string(), FONT_MONO),
-        (format!(" · {}", need.age), FONT_SANS),
-    ];
+    let mut parts = vec![(format!("{} · ", need.who), FONT_SANS)];
+    if !need.reference.is_empty() {
+        parts.push((need.reference.to_string(), FONT_MONO));
+        parts.push((" · ".to_string(), FONT_SANS));
+    }
+    parts.push((need.age.to_string(), FONT_SANS));
     let text: String = parts.iter().map(|(s, _)| s.as_str()).collect();
     let runs = parts
         .iter()

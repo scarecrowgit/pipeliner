@@ -1,22 +1,34 @@
-//! Page header (breadcrumb, open count, actions) and the view tabs + runner filter chips.
+//! Page header (breadcrumb, open / waiting counts, "New issue") and the view tabs with the
+//! steps of the selected issue's pipeline (else the default one).
 
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px};
+use pipeline::IssueStatus;
 use ui::theme::*;
-use ui::{Badge, Button, TabItem, Tabs, icon};
+use ui::{Badge, Button, Status, TabItem, Tabs, Tone, icon};
 
-use crate::data::{Column, Filter};
-use crate::{IssuesScreen, View};
+use crate::{Card, IssuesScreen, View};
 
 impl IssuesScreen {
-    pub(crate) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_header(&self, cards: &[Card], cx: &mut Context<Self>) -> impl IntoElement {
+        let repo: SharedString = self.pipes.read(cx).workspace_name().into();
+        let waiting = cards
+            .iter()
+            .filter(|c| c.status == IssueStatus::Approval)
+            .count();
+        let failed = cards
+            .iter()
+            .filter(|c| c.status == IssueStatus::Failed)
+            .count();
+
         div()
             .flex()
             .flex_none()
+            .flex_wrap()
             .items_center()
             .gap(px(12.))
             .min_h(px(HEADER_HEIGHT))
-            .px(px(24.))
-            .py(px(8.))
+            .px(px(SPACE_6))
+            .py(px(SPACE_2))
             .border_b_1()
             .border_color(LINE)
             .child(
@@ -24,26 +36,33 @@ impl IssuesScreen {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .text_size(px(14.))
+                    .text_size(px(TEXT_HEADING))
                     .font_weight(FontWeight::MEDIUM)
-                    .child(div().text_color(TEXT_MUTED).child("Payments"))
+                    .child(div().text_color(TEXT_MUTED).child(repo))
                     .child(icon("chevron-right", 12., TEXT_DISABLED))
                     .child("Issues"),
             )
-            .child(Badge::new(format!("{} open", self.open_count())))
+            .child(Badge::new(format!("{} open", self.open_count(cx))))
+            .when(waiting > 0, |d| {
+                d.child(
+                    Badge::new(format!("{waiting} need you"))
+                        .tone(Tone::Warning)
+                        .dot(Status::Waiting),
+                )
+            })
+            .when(failed > 0, |d| {
+                d.child(
+                    Badge::new(format!("{failed} failed"))
+                        .tone(Tone::Danger)
+                        .dot(Status::Error),
+                )
+            })
             .child(div().flex_1())
-            .child(
-                Button::new("autopilots", "Autopilots · 2")
-                    .ghost()
-                    .icon("replay"),
-            )
             .child(
                 Button::new("new-issue", "New issue")
                     .primary()
                     .icon("plus")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.add_issue(Column::Backlog, window, cx)
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.open_new(window, cx))),
             )
     }
 
@@ -62,6 +81,52 @@ impl IssuesScreen {
             weak.update(cx, |this, cx| this.set_view(view, cx)).ok();
         });
 
+        // "Show the path": the steps of the pipeline in view.
+        let (name, steps) = {
+            let p = self.pipes.read(cx);
+            let def = self
+                .selected
+                .as_ref()
+                .and_then(|k| p.issue(k))
+                .and_then(|i| p.pipeline_of(i))
+                .or(p.default_pipeline());
+            match def {
+                Some(d) => (
+                    d.name.clone(),
+                    d.steps.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+                ),
+                None => (String::new(), Vec::new()),
+            }
+        };
+        let path = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(6.))
+            .py(px(6.))
+            .font_family(FONT_MONO)
+            .text_size(px(TEXT_MONO_SM))
+            .text_color(TEXT_MUTED)
+            .when(!name.is_empty(), |d| {
+                d.child(
+                    div()
+                        .font_family(FONT_SANS)
+                        .text_size(px(12.))
+                        .text_color(TEXT_SECONDARY)
+                        .child(SharedString::from(format!("{name}:"))),
+                )
+            })
+            .children(steps.into_iter().enumerate().map(|(i, step)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .when(i > 0, |d| {
+                        d.child(div().text_color(TEXT_DISABLED).child("›"))
+                    })
+                    .child(SharedString::from(step))
+            }));
+
         div()
             .flex()
             .flex_none()
@@ -69,58 +134,11 @@ impl IssuesScreen {
             .items_center()
             .gap_x(px(16.))
             .gap_y(px(8.))
-            .pl(px(24.))
-            .pr(px(24.))
+            .px(px(SPACE_6))
             .border_b_1()
             .border_color(LINE)
             .child(tabs)
             .child(div().flex_1())
-            .child(
-                div().flex().flex_wrap().gap(px(4.)).py(px(6.)).children(
-                    Filter::ALL
-                        .into_iter()
-                        .map(|f| self.render_filter_chip(f, cx))
-                        .collect::<Vec<_>>(),
-                ),
-            )
-    }
-
-    fn render_filter_chip(
-        &self,
-        filter: Filter,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let on = self.filter == filter;
-        div()
-            .id(SharedString::from(format!("filter-{}", filter.label())))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .h(px(CONTROL_HEIGHT_SM))
-            .px(px(10.))
-            .rounded(px(RADIUS_MD))
-            .border_1()
-            .border_color(if on {
-                LINE_STRONG
-            } else {
-                gpui::transparent_black()
-            })
-            .bg(if on {
-                SURFACE_HOVER
-            } else {
-                gpui::transparent_black()
-            })
-            .text_color(if on { TEXT } else { TEXT_SECONDARY })
-            .text_size(px(12.))
-            .whitespace_nowrap()
-            .cursor_pointer()
-            .when(!on, |d| d.hover(|s| s.bg(SURFACE_RAISED)))
-            .child(filter.label())
-            .child(
-                div()
-                    .text_color(TEXT_MUTED)
-                    .child(SharedString::from(self.filter_count(filter).to_string())),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| this.set_filter(filter, cx)))
+            .child(path)
     }
 }

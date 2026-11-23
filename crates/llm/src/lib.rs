@@ -12,6 +12,7 @@
 
 mod anthropic;
 pub mod config;
+pub mod pricing;
 mod http;
 mod openai;
 mod sse;

@@ -58,14 +58,14 @@ impl ReviewScreen {
         cx.notify();
     }
 
-    /// Sidebar badge: unread reports plus pipeline reviews still waiting.
+    /// Sidebar badge: mockups to approve plus unread reports.
     pub(crate) fn publish_count(&self, cx: &mut Context<Self>) {
-        let n = inbox::unread(&self.reports) + self.waiting_issues();
+        let n = inbox::unread(&self.reports) + self.approvals(cx).len();
         cx.defer(move |cx| nav::set_inbox_count(n, cx));
     }
 
     pub(crate) fn open_report(&mut self, id: String, cx: &mut Context<Self>) {
-        self.sending_back = false;
+        self.approval = None;
         let unread = self
             .reports
             .iter()
@@ -288,7 +288,9 @@ impl ReviewScreen {
                     .text_color(TEXT_MUTED)
                     .child(r.agent.clone())
                     .child(div().text_color(TEXT_DISABLED).child("›"))
-                    .child(
+                    // Pipeline reports have no chat: plain label (the issue).
+                    .when(r.chat_id.is_empty(), |d| d.child(r.chat_title.clone()))
+                    .when(!r.chat_id.is_empty(), |d| d.child(
                         div()
                             .id("report-chat-link")
                             .text_color(ACCENT_TEXT)
@@ -302,7 +304,7 @@ impl ReviewScreen {
                             } else {
                                 r.chat_title.clone()
                             }),
-                    )
+                    ))
                     .child(div().text_color(TEXT_DISABLED).child("›"))
                     .child(div().text_color(WARNING).child("You"))
                     .child(div().text_color(TEXT_DISABLED).child("·"))
@@ -414,13 +416,15 @@ impl ReviewScreen {
             .pt(px(SPACE_4))
             .border_t_1()
             .border_color(LINE)
-            .child(
-                Button::new("report-open-chat", "Open chat")
-                    .icon("message")
-                    .on_click(move |_, _, cx| {
-                        nav::request_chat(nav::ChatRequest::Open(chat.clone().into()), cx)
-                    }),
-            )
+            .when(!chat.is_empty(), |d| {
+                d.child(
+                    Button::new("report-open-chat", "Open chat")
+                        .icon("message")
+                        .on_click(move |_, _, cx| {
+                            nav::request_chat(nav::ChatRequest::Open(chat.clone().into()), cx)
+                        }),
+                )
+            })
             .child(
                 Button::new("report-unread", if read { "Mark unread" } else { "Mark read" })
                     .ghost()

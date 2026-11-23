@@ -20,6 +20,32 @@ export (to `~/Downloads`) and delete. Pins and archive live in `~/.local/share/h
 The button next to the workspace name (or `Ctrl+\`) switches the sidebar between wide and icon-only; the choice is saved in `~/.local/share/harness/sidebar`.
 Home shows the dashboard (mock pipeline data; running and waiting chats are real).
 
+## Pipelines
+
+Pipelines are configurable (`crates/pipeline`): any number of them, each a TOML file in
+`~/.config/harness/pipelines/<id>.toml`, edited on the Pipelines screen (New pipeline — blank,
+copy or from a template; Add step; Workdirs). A pipeline has **workdirs** you define (folder,
+a fresh git worktree per run or the folder as is, base branch, branch prefix, setup command,
+env) and **steps** run top to bottom:
+
+| Step | Does |
+| --- | --- |
+| Agent | a model works in a workdir (read only / read and run / full tools, skills, instructions); with sub-agents it orchestrates them via `delegate` |
+| Decision | a model answers a yes/no question; "no" jumps to a later step or the end |
+| Render | renders the changed HTML files of a workdir (before / after PNGs, headless Firefox) |
+| Approval | waits for you (board or Inbox): approve, or request changes to go back to a step |
+| Command | runs a shell command (tests, builds) |
+| Merge | merges the run's branch of a worktree into its base |
+| Pull request | commits, pushes, opens a (draft) PR and posts it to the Inbox |
+| Report | posts a run summary to the Inbox |
+
+The built-in "Mockup → GPUI build" pipeline: Triage (Haiku decision) → Mockup (designer agent
+with ui-ux-pro-max) → Render → Your approval → Merge mockup → Build (Opus orchestrator with Sonnet
+coders, verifies per `AGENTS.md`) → Pull request. Issues pick a pipeline when created; runs keep the
+pipeline version they started with. Data: `~/.local/share/harness/` (`issues.json`, `runs/`).
+Headless runner: `PIPELINE=<id> cargo run -p pipeline --example run_issue -- new "Title" "Body"`,
+`… approve HAR-1`, `… changes HAR-1 "notes"`, `… retry HAR-1`.
+
 ## Inbox
 
 Agents hand their finished work to the Inbox: the chat agent has a `report_to_inbox` tool
@@ -30,15 +56,6 @@ agent made none. Reports live in `~/.local/share/harness/inbox.json` and appear 
 screen under "From agents" (above the mock pipeline reviews): live PR status from `gh pr view`
 (state, checks, review, diff size, branches), other links, the summary, Open chat / Open pull
 request / Mark unread / Archive. The sidebar badge counts unread reports plus waiting reviews.
-
-## Issues
-
-The issue detail panel has an Activity feed with comments. Typing `@` in the comment box opens an
-autocomplete of agents, orchestrators and pipelines (↑ ↓ move, ↵ / Tab insert, Esc close). Posting a
-comment wakes every mentioned runner: it starts a run on the issue (comment passed as input) and a
-receipt under the comment says "woken · run N" with Open run. A runner that can't be woken (its
-runtime is offline, or "On @mention" is off for the issue) gets a "not woken" receipt with
-Retry now, which reconnects it and wakes it anyway. Runtimes and runs are mock data.
 
 ## Motion
 

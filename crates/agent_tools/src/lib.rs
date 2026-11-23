@@ -21,6 +21,7 @@ mod tools;
 #[cfg(test)]
 mod tests;
 
+pub mod inbox;
 pub mod agents;
 pub mod skills;
 pub mod workdir;
@@ -34,6 +35,8 @@ use tools::error;
 
 pub struct Workspace {
     pub root: PathBuf,
+    /// Extra environment for `bash` (e.g. a shared `CARGO_TARGET_DIR` for pipeline worktrees).
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +85,16 @@ pub struct ToolOutput {
 
 impl Workspace {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            env: Vec::new(),
+        }
+    }
+
+    /// Same workspace, with `env` set for every `bash` command.
+    pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
     }
 
     /// Specs for all tools, to put in `llm::ChatRequest::tools`.
@@ -196,7 +208,7 @@ impl Workspace {
             Err(e) => return error(e),
         };
         let root = paths::canonical_root(&self.root);
-        let res = match bash::run(&root, command, Duration::from_secs(timeout), cancel) {
+        let res = match bash::run(&root, command, &self.env, Duration::from_secs(timeout), cancel) {
             Ok(r) => r,
             Err(e) => return error(format!("bash: {e}")),
         };
