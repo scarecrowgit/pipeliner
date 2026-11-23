@@ -21,3 +21,10 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "harness-dev"
+path = "src/bin/harness_dev.rs"
+
+[[example]]
+name = "driver_demo"
