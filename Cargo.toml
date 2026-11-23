@@ -78,3 +78,6 @@ strip = "debuginfo"
 # dropped on Linux. vendor/xattr is that release with the constant mapped to ENODATA.
 [patch.crates-io]
 xattr = { path = "vendor/xattr" }
+# gpui 0.2.2 with one change: `DispatchEventResult` is public, so `Window::dispatch_event` can
+# be called from the dev driver (crates/ui/src/dev.rs) to send real pointer and key events.
+gpui = { path = "vendor/gpui" }
