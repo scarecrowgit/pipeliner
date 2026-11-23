@@ -126,28 +126,37 @@ pub(super) async fn run(
     Ok(())
 }
 
-/// Force a frame and return after it was drawn. The frame callback runs just before the
-/// draw; the task it spawns can only run once the platform's frame callback, draw included,
-/// has returned. The frame's probes are published even when there are none.
+/// Force a frame and return after it was drawn.
+///
+/// The window may draw on either of two paths: in the platform's frame callback (just after
+/// the `on_next_frame` callbacks run), or, when gpui is built with `test-support` (as for
+/// the `ui` examples, through its dev-dependency), synchronously at the end of the effect
+/// flush that follows `refresh()`. So collection starts here, before either, and ends in a
+/// task spawned from the frame callback, which runs after both. The frame's probes are
+/// published even when there are none.
 pub(super) async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<(), String> {
+    let id = window.window_id().as_u64();
     let done = Rc::new(Cell::new(false));
     let flag = done.clone();
-    cx.update_window(window, move |_, w, _| {
+    probe::begin_frame(id);
+    let hooked = cx.update_window(window, move |_, w, _| {
         w.refresh();
-        w.on_next_frame(move |w, cx| {
-            let id = w.window_handle().window_id().as_u64();
-            probe::begin_frame(id);
+        w.on_next_frame(move |_, cx| {
             cx.spawn(async move |_| {
                 probe::end_frame(id);
                 flag.set(true);
             })
             .detach();
         });
-    })
-    .map_err(|e| format!("window gone: {e}"))?;
+    });
+    if let Err(e) = hooked {
+        probe::end_frame(id);
+        return Err(format!("window gone: {e}"));
+    }
     let deadline = Instant::now() + FRAME_TIMEOUT;
     while !done.get() {
         if Instant::now() > deadline {
+            probe::end_frame(id);
             return Err("the window painted no frame within 2 s (is it visible?)".into());
         }
         cx.background_executor().timer(Duration::from_millis(4)).await;

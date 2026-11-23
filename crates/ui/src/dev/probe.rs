@@ -207,8 +207,8 @@ fn record(window: u64, probe: ProbeRecord, cx: &mut App) {
     }
 }
 
-/// Start collecting a frame the driver forced (called just before its draw), so a frame
-/// without probes is published too, as an empty list.
+/// Start collecting the frame the driver is about to force, so a frame without probes is
+/// published too, as an empty list. Every draw until [`end_frame`] adds to the same list.
 pub(super) fn begin_frame(window: u64) {
     STORE.with_borrow_mut(|store| {
         store.open.insert(window);

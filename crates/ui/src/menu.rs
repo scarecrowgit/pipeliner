@@ -264,7 +264,9 @@ impl RenderOnce for Menu {
                         let activate = activate.clone();
                         item.on_click = Some(Rc::new(move |_, w, cx| activate(i, w, cx)));
                     }
-                    item.into_any_element()
+                    // A dev-driver probe named after the row's id, so scripts can click it.
+                    let name = item.id.to_string();
+                    crate::dev::Probe::probe(item, name).into_any_element()
                 }
                 Entry::Label(l) => l.into_any_element(),
                 Entry::Separator => PopSeparator.into_any_element(),
