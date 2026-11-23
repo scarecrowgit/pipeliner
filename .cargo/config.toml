@@ -1,0 +1,3 @@
+# mold comes from shell.nix; linking ~10 example binaries with it is several times faster.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

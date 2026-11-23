@@ -2,29 +2,67 @@
 resolver = "3"
 members = ["crates/*"]
 
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+
+# Every third-party version lives here; crates say `dep.workspace = true`.
 [workspace.dependencies]
 gpui = "0.2.2"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+rusqlite = { version = "0.37", features = ["bundled"] }
+async-channel = "2"
+ureq = { version = "3", features = ["json"] }
+base64 = "0.22"
+sha2 = "0.10"
+regex = "1"
+ignore = "0.4"
+globset = "0.4"
+similar = "2"
+libc = "0.2"
+pulldown-cmark = { version = "0.13", default-features = false }
+unicode-segmentation = "1"
+rust-embed = "8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
+
+# Domain layer (no gpui)
+base = { path = "crates/base" }
+model = { path = "crates/model" }
+store = { path = "crates/store" }
+llm = { path = "crates/llm" }
+mcp = { path = "crates/mcp" }
+tools = { path = "crates/tools" }
+vcs = { path = "crates/vcs" }
+catalog = { path = "crates/catalog" }
+agent = { path = "crates/agent" }
+issues = { path = "crates/issues" }
+pipeline = { path = "crates/pipeline" }
+engine = { path = "crates/engine" }
+
+# UI layer
 ui = { path = "crates/ui" }
-
-[package]
-name = "harness"
-version = "0.1.0"
-edition = "2024"
-description = "Harness — agent pipeline editor demo (GPUI)"
-license = "MIT"
-
-[dependencies]
-gpui.workspace = true
-ui.workspace = true
-sidebar = { path = "crates/sidebar" }
-screen_editor = { path = "crates/screen_editor" }
-screen_review = { path = "crates/screen_review" }
+ui_rich = { path = "crates/ui_rich" }
+hub = { path = "crates/hub" }
+shell = { path = "crates/shell" }
+palette = { path = "crates/palette" }
+screen_home = { path = "crates/screen_home" }
 screen_chat = { path = "crates/screen_chat" }
+screen_inbox = { path = "crates/screen_inbox" }
 screen_issues = { path = "crates/screen_issues" }
 screen_agents = { path = "crates/screen_agents" }
-screen_home = { path = "crates/screen_home" }
-pipeline = { path = "crates/pipeline" }
+screen_editor = { path = "crates/screen_editor" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
 
 [profile.dev]
 opt-level = 1
@@ -33,10 +71,10 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 
+[profile.release]
+strip = "debuginfo"
+
 # xattr 0.2.3 (pulled in by gpui_http_client) references libc::ENOATTR, which newer libc
 # dropped on Linux. vendor/xattr is that release with the constant mapped to ENODATA.
 [patch.crates-io]
 xattr = { path = "vendor/xattr" }
-
-[profile.release]
-strip = "debuginfo"

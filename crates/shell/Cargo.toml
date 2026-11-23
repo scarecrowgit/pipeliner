@@ -1,0 +1,21 @@
+[package]
+name = "shell"
+description = "App shell: sidebar, rail, content frame, header, overlay host, project and spend popovers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+base.workspace = true
+model.workspace = true
+ui.workspace = true
+ui_rich.workspace = true
+hub.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

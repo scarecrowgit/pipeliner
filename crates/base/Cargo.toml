@@ -1,0 +1,15 @@
+[package]
+name = "base"
+description = "Paths, ids, clock, formatting, cancellation, the process runner and the frontmatter parser."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

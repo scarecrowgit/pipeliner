@@ -1,0 +1,22 @@
+[package]
+name = "tools"
+description = "The Tool trait and registry, sandboxed file tools, bash, todo, tool search, permission rules."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base.workspace = true
+model.workspace = true
+regex.workspace = true
+ignore.workspace = true
+similar.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

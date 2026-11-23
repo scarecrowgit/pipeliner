@@ -1,0 +1,20 @@
+[package]
+name = "hub"
+description = "The GPUI bridge: event pump, per-domain model entities, the router, commands, fixtures."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+base.workspace = true
+model.workspace = true
+engine.workspace = true
+async-channel.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

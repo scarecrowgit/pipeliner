@@ -1,0 +1,21 @@
+[package]
+name = "store"
+description = "SQLite storage: migrations, repositories, blobs, full-text search, the spend ledger, v1 import."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base.workspace = true
+model.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

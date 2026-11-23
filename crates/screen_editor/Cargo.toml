@@ -1,9 +1,21 @@
 [package]
 name = "screen_editor"
-version = "0.1.0"
-edition = "2024"
+description = "The editor screen."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 gpui.workspace = true
+base.workspace = true
+model.workspace = true
 ui.workspace = true
-pipeline = { path = "../pipeline" }
+ui_rich.workspace = true
+hub.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -1,11 +1,18 @@
 [package]
 name = "ui"
-version = "0.1.0"
-edition = "2024"
+description = "Graphite tokens, typography, components, the single-line input, overlay hosts and motion."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 gpui.workspace = true
+rust-embed.workspace = true
+unicode-segmentation.workspace = true
 anyhow.workspace = true
-rust-embed = "8"
-unicode-segmentation = "1"
-libc = "0.2"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

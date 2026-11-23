@@ -1,0 +1,18 @@
+[package]
+name = "vcs"
+description = "Git facts, worktrees, branches, clone, diffs, merges and pull requests through gh."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

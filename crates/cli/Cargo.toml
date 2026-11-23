@@ -1,0 +1,20 @@
+[package]
+name = "cli"
+description = "harness-cli: drive chats, issues, runs and imports without the GUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "harness-cli"
+path = "src/main.rs"
+
+[dependencies]
+base.workspace = true
+model.workspace = true
+engine.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "ui_rich"
+description = "Text area, markdown, diff view, composer, charts and canvas primitives."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+ui.workspace = true
+base.workspace = true
+pulldown-cmark.workspace = true
+unicode-segmentation.workspace = true
+similar.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

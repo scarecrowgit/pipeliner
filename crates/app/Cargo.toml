@@ -1,0 +1,29 @@
+[package]
+name = "app"
+description = "The harness desktop app: wires the engine, the hub, the shell and the screens."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+base.workspace = true
+engine.workspace = true
+hub.workspace = true
+ui.workspace = true
+shell.workspace = true
+palette.workspace = true
+screen_home.workspace = true
+screen_chat.workspace = true
+screen_inbox.workspace = true
+screen_issues.workspace = true
+screen_agents.workspace = true
+screen_editor.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true
