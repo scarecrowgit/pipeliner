@@ -7,6 +7,8 @@ use agent_tools::ToolDisplay;
 use llm::{ContentBlock, Message, Role, StopReason, StreamEvent, Usage};
 use serde_json::{Value, json};
 
+use ui::images::ImageAttachment;
+
 use crate::data::Mode;
 use crate::workdir::WorkMode;
 use crate::markdown;
@@ -46,6 +48,8 @@ pub struct Attachment {
 pub struct UserMsg {
     pub text: String,
     pub attachments: Vec<Attachment>,
+    /// Attached images (sent as image blocks after the text).
+    pub images: Vec<ImageAttachment>,
 }
 
 pub struct ShellRun {
@@ -371,7 +375,17 @@ pub fn build_history(items: &[Item]) -> Vec<Message> {
     for item in items {
         match item {
             Item::User(u) => {
-                let mut blocks = vec![ContentBlock::Text(u.text.clone())];
+                // An image-only message has no text block (providers reject empty text).
+                let mut blocks = Vec::new();
+                if !u.text.is_empty() || u.images.is_empty() {
+                    blocks.push(ContentBlock::Text(u.text.clone()));
+                }
+                for img in &u.images {
+                    blocks.push(ContentBlock::Image {
+                        media_type: img.mime_type().to_string(),
+                        data: llm::encode_base64(&img.image.bytes),
+                    });
+                }
                 for a in &u.attachments {
                     if let Some(c) = &a.content {
                         blocks.push(ContentBlock::Text(encode_file(&a.path, c)));
@@ -441,7 +455,7 @@ pub fn items_from_history(messages: &[Message], model: &str) -> Vec<Item> {
                             tc.open = false;
                             turn.blocks.push(TurnBlock::Tool(tc));
                         }
-                        ContentBlock::ToolResult { .. } => {}
+                        ContentBlock::ToolResult { .. } | ContentBlock::Image { .. } => {}
                     }
                 }
                 items.push(Item::Turn(turn));
@@ -505,8 +519,27 @@ pub fn items_from_history(messages: &[Message], model: &str) -> Vec<Item> {
                                 items.push(Item::User(UserMsg {
                                     text: t.clone(),
                                     attachments: Vec::new(),
+                                    images: Vec::new(),
                                 }));
                                 current_user = true;
+                            }
+                        }
+                        ContentBlock::Image { media_type, data } => {
+                            match items.last_mut() {
+                                Some(Item::User(u)) if current_user => {
+                                    let n = u.images.len() + 1;
+                                    u.images.extend(decode_image(media_type, data, n));
+                                }
+                                _ => {
+                                    items.push(Item::User(UserMsg {
+                                        text: String::new(),
+                                        attachments: Vec::new(),
+                                        images: decode_image(media_type, data, 1)
+                                            .into_iter()
+                                            .collect(),
+                                    }));
+                                    current_user = true;
+                                }
                             }
                         }
                         ContentBlock::ToolUse { .. } => {}
@@ -518,9 +551,38 @@ pub fn items_from_history(messages: &[Message], model: &str) -> Vec<Item> {
     items
 }
 
+fn image_name(img: &ImageAttachment, n: usize) -> gpui::SharedString {
+    let ext = match img.mime_type() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        _ => "img",
+    };
+    format!("image-{n}.{ext}").into()
+}
+
+/// A saved image block back into an attachment (the name is not stored: `image-N.ext`).
+fn decode_image(media_type: &str, data: &str, n: usize) -> Option<ImageAttachment> {
+    let format = gpui::ImageFormat::from_mime_type(media_type)?;
+    let bytes = llm::decode_base64(data)?;
+    let mut a = ImageAttachment {
+        name: Default::default(),
+        bytes: bytes.len() as u64,
+        image: std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)),
+    };
+    a.name = image_name(&a, n);
+    Some(a)
+}
+
 /// Header title: the first user message, first line, truncated.
 pub fn title(items: &[Item]) -> Option<String> {
     items.iter().find_map(|i| match i {
+        Item::User(u) if u.text.trim().is_empty() && !u.images.is_empty() => {
+            Some("Image".to_string())
+        }
         Item::User(u) => Some(truncate(u.text.lines().next().unwrap_or("").trim(), 60)),
         _ => None,
     })
@@ -804,6 +866,7 @@ mod tests {
         Item::User(UserMsg {
             text: text.into(),
             attachments: Vec::new(),
+            images: Vec::new(),
         })
     }
 
@@ -954,6 +1017,7 @@ mod tests {
                     error: Some("not found".into()),
                 },
             ],
+            images: Vec::new(),
         })];
         let h = build_history(&items);
         assert_eq!(h[0].content.len(), 2);
@@ -964,6 +1028,80 @@ mod tests {
             decode_file(f),
             Some(("src/a.rs".into(), "1: fn a() {}".into()))
         );
+    }
+
+    fn image(name: &str, format: gpui::ImageFormat, bytes: &[u8]) -> ImageAttachment {
+        ImageAttachment {
+            name: name.to_string().into(),
+            bytes: bytes.len() as u64,
+            image: std::sync::Arc::new(gpui::Image::from_bytes(format, bytes.to_vec())),
+        }
+    }
+
+    #[test]
+    fn images_become_blocks_after_text() {
+        let items = vec![Item::User(UserMsg {
+            text: "look".into(),
+            attachments: Vec::new(),
+            images: vec![
+                image("a.png", gpui::ImageFormat::Png, b"ABC"),
+                image("b.jpg", gpui::ImageFormat::Jpeg, b"ABCD"),
+            ],
+        })];
+        let h = build_history(&items);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].content.len(), 3);
+        assert!(matches!(&h[0].content[0], ContentBlock::Text(t) if t == "look"));
+        assert!(matches!(&h[0].content[1],
+            ContentBlock::Image { media_type, data } if media_type == "image/png" && data == "QUJD"));
+        assert!(matches!(&h[0].content[2],
+            ContentBlock::Image { media_type, .. } if media_type == "image/jpeg"));
+    }
+
+    #[test]
+    fn image_only_message_has_no_text_block() {
+        let items = vec![Item::User(UserMsg {
+            text: String::new(),
+            attachments: Vec::new(),
+            images: vec![image("a.png", gpui::ImageFormat::Png, b"ABC")],
+        })];
+        let h = build_history(&items);
+        assert_eq!(h[0].content.len(), 1);
+        assert!(matches!(&h[0].content[0], ContentBlock::Image { .. }));
+        // Restored: one user item with the image and no text.
+        let back = items_from_history(&h, "m");
+        let [Item::User(u)] = back.as_slice() else { panic!() };
+        assert_eq!((u.text.as_str(), u.images.len()), ("", 1));
+    }
+
+    #[test]
+    fn images_round_trip() {
+        let items = vec![
+            Item::User(UserMsg {
+                text: "look".into(),
+                attachments: Vec::new(),
+                images: vec![
+                    image("a.png", gpui::ImageFormat::Png, b"ABC"),
+                    image("b.webp", gpui::ImageFormat::Webp, b"xyz12"),
+                ],
+            }),
+            Item::User(UserMsg {
+                text: "again".into(),
+                attachments: Vec::new(),
+                images: Vec::new(),
+            }),
+        ];
+        // Same-role messages merge: the second text lands in the same message.
+        let back = items_from_history(&build_history(&items), "m");
+        let [Item::User(u), Item::User(v)] = back.as_slice() else { panic!() };
+        assert_eq!(u.text, "look");
+        assert_eq!(u.images.len(), 2);
+        assert_eq!(u.images[0].mime_type(), "image/png");
+        assert_eq!(u.images[0].image.bytes, b"ABC");
+        assert_eq!(u.images[1].mime_type(), "image/webp");
+        assert_eq!(u.images[1].name.as_ref(), "image-2.webp");
+        assert_eq!(v.text, "again");
+        assert!(v.images.is_empty());
     }
 
     #[test]
@@ -990,6 +1128,7 @@ mod tests {
                     lines: 1,
                     error: None,
                 }],
+                images: Vec::new(),
             }),
             Item::Turn(t),
             Item::Shell(ShellRun {

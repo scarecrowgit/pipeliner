@@ -128,6 +128,10 @@ fn block_json(block: &ContentBlock) -> Option<Value> {
     Some(match block {
         ContentBlock::Text(text) if text.is_empty() => return None,
         ContentBlock::Text(text) => json!({ "type": "text", "text": text }),
+        ContentBlock::Image { media_type, data } => json!({
+            "type": "image",
+            "source": { "type": "base64", "media_type": media_type, "data": data },
+        }),
         ContentBlock::ToolUse { id, name, input } => {
             let input = if input.is_object() {
                 input.clone()
@@ -537,6 +541,34 @@ mod tests {
         assert_eq!(
             events.last(),
             Some(&StreamEvent::Stop(StopReason::MaxTokens))
+        );
+    }
+
+    #[test]
+    fn request_body_images() {
+        let request = ChatRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::Image {
+                        media_type: "image/jpeg".into(),
+                        data: crate::encode_base64(b"ABC"),
+                    },
+                    ContentBlock::Text("what is this?".into()),
+                ],
+            }],
+            tools: vec![],
+            max_tokens: 10,
+            temperature: None,
+        };
+        assert_eq!(
+            request_body(&request)["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"}},
+                {"type": "text", "text": "what is this?"},
+            ]}])
         );
     }
 

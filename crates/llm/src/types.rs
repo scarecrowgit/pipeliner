@@ -11,6 +11,8 @@ pub enum Role {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text(String),
+    /// An image attached to a user message. `data` is base64 (standard alphabet, no data-URL prefix).
+    Image { media_type: String, data: String },
     /// A tool call made by the assistant.
     ToolUse {
         id: String,
@@ -105,4 +107,16 @@ pub enum StreamEvent {
     /// Cumulative usage for this turn so far (may arrive more than once; last wins).
     Usage(Usage),
     Stop(StopReason),
+}
+
+/// Standard base64 (with padding) — for [`ContentBlock::Image::data`].
+pub fn encode_base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Inverse of [`encode_base64`]; `None` if `data` is not valid base64.
+pub fn decode_base64(data: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(data).ok()
 }

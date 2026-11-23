@@ -6,6 +6,8 @@
 
 use std::ops::Range;
 
+use ui::images::ImageAttachment;
+
 use crate::data::{
     self, Activity, Actor, Column, Issue, RUNNERS, Run, RunState, RunnerId, RunnerKind, Trigger,
     Wake, WakeOutcome, person_name,
@@ -193,8 +195,9 @@ fn commenter(a: &Activity) -> String {
 
 /// Post `text` as a comment by "ME": wakes every mentioned runner, or, with no mentions,
 /// resumes a blocked run.
-pub fn post(issue: &mut Issue, offline: &[RunnerId], text: &str) {
-    let comment = Activity::comment("ME", "now", text.to_string());
+pub fn post(issue: &mut Issue, offline: &[RunnerId], text: &str, images: Vec<ImageAttachment>) {
+    let mut comment = Activity::comment("ME", "now", text.to_string());
+    comment.images = images;
     let by = commenter(&comment);
     issue.activity.push(comment);
     let comment_ix = issue.activity.len() - 1;
@@ -360,7 +363,7 @@ mod tests {
     #[test]
     fn mention_wakes_and_counts_runs() {
         let mut issue = pay_1427();
-        post(&mut issue, &initially_offline(), "@Fixer go on");
+        post(&mut issue, &initially_offline(), "@Fixer go on", Vec::new());
         let comment = issue.activity.iter().rev().nth(1).expect("comment");
         assert!(comment.comment);
         assert_eq!(
@@ -381,7 +384,7 @@ mod tests {
     fn offline_runner_is_not_woken_and_retry_wakes_it() {
         let mut issue = pay_1427();
         let mut offline = initially_offline();
-        post(&mut issue, &offline, "@Codex variant please");
+        post(&mut issue, &offline, "@Codex variant please", Vec::new());
         let ix = issue.activity.len() - 1;
         assert_eq!(issue.runs, 2);
         assert!(matches!(
@@ -406,7 +409,7 @@ mod tests {
         let mut issue = pay_1427();
         issue.triggers[2] = false;
         let mut offline = Vec::new();
-        post(&mut issue, &offline, "@Fixer and @Reproducer");
+        post(&mut issue, &offline, "@Fixer and @Reproducer", Vec::new());
         let ix = issue.activity.len() - 1;
         assert_eq!(issue.activity[ix].wakes.len(), 2);
         assert!(
@@ -428,7 +431,7 @@ mod tests {
             .into_iter()
             .find(|i| i.key == "PAY-1435")
             .expect("PAY-1435");
-        post(&mut issue, &[], "Datadog and Sentry only");
+        post(&mut issue, &[], "Datadog and Sentry only", Vec::new());
         assert_eq!(issue.run.as_ref().map(|r| r.pct), Some(35));
         assert_eq!(issue.runs, 1);
     }

@@ -2,14 +2,16 @@
 //! controls, activity feed and the comment box.
 
 use gpui::{
-    AnyElement, App, Context, FontWeight, Hsla, IntoElement, MouseDownEvent, SharedString,
-    StyledText, TextRun, Window, deferred, div, font, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, IntoElement, MouseDownEvent, SharedString, StyledText,
+    TextRun, Window, deferred, div, font, prelude::*, px,
 };
+use ui::images;
 use ui::nav::{Screen, navigate};
 use ui::theme::*;
 use ui::{Button, ButtonVariant, Status, checkbox, icon, kbd, spawn_chip, status_dot};
 
 use crate::IssuesScreen;
+use crate::attach::{Target, can_post};
 use crate::comments::{self, Span};
 use crate::data::{
     self, Activity, Actor, Column, Issue, RunState, Runner, RunnerId, RunnerKind, Trigger,
@@ -114,7 +116,12 @@ impl IssuesScreen {
             )
     }
 
-    fn render_title(&self, issue: &Issue, window: &Window, cx: &App) -> impl IntoElement {
+    fn render_title(
+        &self,
+        issue: &Issue,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let focused = self.title_input.read(cx).is_focused(window);
         div()
             .flex_none()
@@ -144,9 +151,20 @@ impl IssuesScreen {
             )
             .child(
                 div()
-                    .mt(px(6.))
-                    .text_color(TEXT_SECONDARY)
-                    .child(issue.desc.clone()),
+                    .id("issue-desc")
+                    .drag_over::<gpui::ExternalPaths>(|s, _, _, _| s.bg(ACCENT_GLOW))
+                    .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                        if let Some(key) = this.selected.clone() {
+                            this.add_paths(Target::Desc(key), paths.paths().to_vec(), cx);
+                        }
+                    }))
+                    .child(
+                        div()
+                            .mt(px(6.))
+                            .text_color(TEXT_SECONDARY)
+                            .child(issue.desc.clone()),
+                    )
+                    .child(self.desc_images(issue, cx)),
             )
     }
 
@@ -496,7 +514,11 @@ impl IssuesScreen {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let empty = self.comment_input.read(cx).text().trim().is_empty();
+        let can_post = can_post(
+            self.comment_input.read(cx).text().trim().is_empty(),
+            self.comment_images.len(),
+            self.comment_loading(),
+        );
         let focused = self.comment_input.read(cx).is_focused(window);
         let comment_count = issue.activity.iter().filter(|a| a.comment).count();
         let counts = format!(
@@ -548,28 +570,58 @@ impl IssuesScreen {
                             .children(self.render_mention_list(issue, cx))
                             .child(
                                 div()
+                                    .id("comment-box")
                                     .flex()
-                                    .items_start()
-                                    .min_h(px(58.))
-                                    .px(px(10.))
-                                    .py(px(8.))
+                                    .flex_col()
                                     .rounded(px(RADIUS_LG))
                                     .border_1()
                                     .border_color(if focused { ACCENT_STRONG } else { LINE_STRONG })
                                     .when(focused, |d| d.shadow(selected_glow()))
                                     .bg(SURFACE_RAISED)
                                     .text_color(TEXT)
-                                    .child(self.comment_input.clone()),
+                                    .drag_over::<gpui::ExternalPaths>(|s, _, _, _| {
+                                        s.border_color(ACCENT).bg(ACCENT_GLOW)
+                                    })
+                                    .on_drop(cx.listener(
+                                        |this, paths: &gpui::ExternalPaths, _, cx| {
+                                            this.add_paths(
+                                                Target::Comment,
+                                                paths.paths().to_vec(),
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_start()
+                                            .min_h(px(40.))
+                                            .px(px(10.))
+                                            .py(px(8.))
+                                            .child(self.comment_input.clone()),
+                                    )
+                                    .children(self.comment_pending_row(cx)),
                             ),
                     )
+                    .children(self.comment_error_line())
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap(px(8.))
                             .child(
+                                images::attach_button(
+                                    "attach-comment-image",
+                                    "Attach images · or paste Ctrl+V, drop onto the comment",
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| this.pick_images(Target::Comment, cx),
+                                )),
+                            )
+                            .child(
                                 div()
                                     .flex_1()
+                                    .min_w_0()
                                     .text_size(px(12.))
                                     .text_color(TEXT_MUTED)
                                     .child("Mentions wake the agent when you post"),
@@ -578,7 +630,7 @@ impl IssuesScreen {
                             .child(
                                 Button::new("post-comment", "Comment")
                                     .small()
-                                    .disabled(empty)
+                                    .disabled(!can_post)
                                     .on_click(cx.listener(|this, _, _, cx| this.post_comment(cx))),
                             ),
                     ),
@@ -820,6 +872,16 @@ impl IssuesScreen {
             },
         );
 
+        let image_row = (!a.images.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.))
+                .children(a.images.iter().enumerate().map(|(n, image)| {
+                    images::image_card(("comment-card", (ix * 100 + n) as u64), image, 160., 90.)
+                }))
+        });
+
         let content = if a.comment {
             div()
                 .flex()
@@ -828,17 +890,20 @@ impl IssuesScreen {
                 .flex_1()
                 .min_w_0()
                 .child(header)
-                .child(
-                    div()
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(RADIUS_LG))
-                        .border_1()
-                        .border_color(LINE)
-                        .bg(SURFACE)
-                        .text_color(TEXT_SECONDARY)
-                        .child(body),
-                )
+                .when(!a.text.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(RADIUS_LG))
+                            .border_1()
+                            .border_color(LINE)
+                            .bg(SURFACE)
+                            .text_color(TEXT_SECONDARY)
+                            .child(body),
+                    )
+                })
+                .children(image_row)
                 .children(
                     a.wakes
                         .iter()
@@ -869,6 +934,7 @@ impl IssuesScreen {
                         })
                         .child(body),
                 )
+                .children(image_row.map(|row| row.mt(px(6.))))
         };
 
         div()

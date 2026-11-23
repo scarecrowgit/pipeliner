@@ -3,6 +3,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod images;
 pub mod motion;
 pub mod nav;
 pub mod selectable;

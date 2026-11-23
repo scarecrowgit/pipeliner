@@ -1,6 +1,7 @@
 //! Issue board screen: header, Board/List views with runner filters, and the
 //! issue detail panel (status menu, runner picker, activity + comments).
 
+mod attach;
 mod board;
 mod comments;
 mod data;
@@ -14,9 +15,11 @@ use gpui::{
     App, ClickEvent, Context, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Pixels,
     Point, Render, SharedString, Subscription, Window, actions, div, prelude::*,
 };
+use ui::images::ImageAttachment;
 use ui::nav::Screen;
 use ui::{TextInput, TextInputEvent};
 
+use attach::Loading;
 use data::{Activity, Column, Filter, Issue, Run, RunState, RunnerId, Trigger};
 
 actions!(screen_issues, [CloseDetail]);
@@ -47,6 +50,14 @@ pub struct IssuesScreen {
     title_input: Entity<TextInput>,
     pick_input: Entity<TextInput>,
     comment_input: Entity<TextInput>,
+    /// Images waiting to be posted with the next comment (per screen, not per issue).
+    comment_images: Vec<(u64, ImageAttachment)>,
+    /// Images still being read (comment and description).
+    loading: Vec<Loading>,
+    comment_error: Option<String>,
+    desc_error: Option<String>,
+    image_seq: u64,
+    paste_seq: usize,
     /// Highlighted row of the @mention list.
     mention_ix: usize,
     /// Esc closed the @mention list for the current query.
@@ -124,6 +135,7 @@ impl IssuesScreen {
                             this.focus_self(window);
                         }
                     }
+                    TextInputEvent::PastedImages(images) => this.add_pasted(images.clone(), cx),
                     TextInputEvent::Blur => {}
                 },
             ),
@@ -163,6 +175,12 @@ impl IssuesScreen {
             title_input,
             pick_input,
             comment_input,
+            comment_images: Vec::new(),
+            loading: Vec::new(),
+            comment_error: None,
+            desc_error: None,
+            image_seq: 0,
+            paste_seq: 0,
             mention_ix: 0,
             mention_dismissed: false,
             offline: comments::initially_offline(),
@@ -234,6 +252,9 @@ impl IssuesScreen {
         // Reselecting the same unattached issue keeps the picker as it was.
         let keep_picker = issue.runner.is_none() && self.selected.as_ref() == Some(&key);
         let title = issue.title.clone();
+        if self.selected.as_ref() != Some(&key) {
+            self.reset_pending();
+        }
         self.picker_open = keep_picker && self.picker_open;
         self.status_menu_open = false;
         self.selected = Some(key);
@@ -280,6 +301,7 @@ impl IssuesScreen {
         let key = issue.key.clone();
         let title = issue.title.clone();
         self.issues.push(issue);
+        self.reset_pending();
         self.selected = Some(key);
         self.picker_open = true;
         self.status_menu_open = false;
@@ -476,14 +498,26 @@ impl IssuesScreen {
 
     fn post_comment(&mut self, cx: &mut Context<Self>) {
         let text = self.comment_input.read(cx).text().trim().to_string();
-        if text.is_empty() {
+        if !attach::can_post(
+            text.is_empty(),
+            self.comment_images.len(),
+            self.comment_loading(),
+        ) {
             return;
         }
+        if self.selected_issue().is_none() {
+            return;
+        }
+        let images: Vec<ImageAttachment> = std::mem::take(&mut self.comment_images)
+            .into_iter()
+            .map(|(_, image)| image)
+            .collect();
+        self.comment_error = None;
         let offline = self.offline.clone();
         let Some(issue) = self.selected_issue_mut() else {
             return;
         };
-        comments::post(issue, &offline, &text);
+        comments::post(issue, &offline, &text, images);
 
         self.mention_ix = 0;
         self.mention_dismissed = false;

@@ -3,6 +3,7 @@
 
 use gpui::{Hsla, SharedString};
 use ui::Status;
+use ui::images::ImageAttachment;
 use ui::theme::*;
 
 /// Border of warning boxes (`#4a3f17` in the mockup; not a Graphite token).
@@ -347,6 +348,8 @@ pub struct Activity {
     pub spawn_note: bool,
     /// Question blocking the run (warning box).
     pub blocker: bool,
+    /// Images attached to the comment.
+    pub images: Vec<ImageAttachment>,
     /// A person's comment (rendered in a bubble).
     pub comment: bool,
     /// What the comment's mentions did, one receipt per mentioned runner.
@@ -385,6 +388,7 @@ impl Activity {
             spawn: false,
             spawn_note: false,
             blocker: false,
+            images: Vec::new(),
             comment: false,
             wakes: Vec::new(),
             woken_by: None,
@@ -454,6 +458,8 @@ pub struct Issue {
     /// Agent that filed this issue.
     pub created_by: Option<SharedString>,
     pub desc: SharedString,
+    /// Images attached to the description.
+    pub images: Vec<ImageAttachment>,
     pub activity: Vec<Activity>,
     /// "Start when" toggles, indexed like [`Trigger::ALL`].
     pub triggers: [bool; 3],
@@ -487,6 +493,7 @@ impl Issue {
             run,
             created_by: None,
             desc: SharedString::from(desc.to_string()),
+            images: Vec::new(),
             activity,
             triggers: [true; 3],
         }
