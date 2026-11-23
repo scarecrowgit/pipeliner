@@ -308,3 +308,14 @@ fn signal_group(pgid: i32, signal: i32) -> bool {
 fn group_alive(pgid: i32) -> bool {
     signal_group(pgid, 0)
 }
+
+/// Asks every process of a group to stop (SIGTERM). `pgid` is the pid of a child started with
+/// `process_group(0)`; values of 1 or below are ignored. Returns whether the signal was sent.
+pub fn terminate_group(pgid: i32) -> bool {
+    pgid > 1 && signal_group(pgid, libc::SIGTERM)
+}
+
+/// Kills every process of a group (SIGKILL). Same rules as [`terminate_group`].
+pub fn kill_group(pgid: i32) -> bool {
+    pgid > 1 && signal_group(pgid, libc::SIGKILL)
+}
