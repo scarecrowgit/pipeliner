@@ -121,6 +121,8 @@ impl ReviewScreen {
         let unread = screen_chat::inbox::unread(&reports) + ISSUES.len();
         cx.defer(move |cx| ui::nav::set_inbox_count(unread, cx));
 
+        ui::time::refresh_ages(cx).detach();
+
         Self {
             focus,
             cur: 0,
