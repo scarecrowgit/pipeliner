@@ -1,5 +1,6 @@
-//! App sidebar: the full 232px navigation column, or the 56px icon rail on the
-//! pipeline editor. Port of `reference/app_sidebar_v4.html`.
+//! App sidebar: the wide 232px navigation column, or the 56px icon-only mode. The user
+//! switches with the toggle button (or Ctrl+\); the choice lives in [`ui::nav`] and is
+//! saved between launches. Port of `reference/app_sidebar_v4.html`.
 //!
 //! The nav part is static; the "Chats" part (pinned, recent, "All chats · N") comes from
 //! the Chat screen through [`ui::nav`]. "Search chats" and "All chats" open the history
@@ -42,7 +43,7 @@ impl Sidebar {
             .flex_col()
             .gap(px(2.))
             .p(px(SPACE_3))
-            .child(workspace_row())
+            .child(workspace_row(window, cx))
             .child(chat_actions(window, cx));
 
         let (sessions, current, total) = nav::nav_entity(cx)
@@ -162,87 +163,139 @@ impl Sidebar {
         )
     }
 
-    // ── Compact rail ────────────────────────────────────────────────────
+    // ── Icon-only mode ──────────────────────────────────────────────────
 
     fn render_compact(screen: Screen, window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
-        let logo = div()
-            .id("sidebar-rail-logo")
-            .size(px(32.))
-            .mb(px(8.))
+        let header = div()
             .flex()
+            .flex_col()
             .flex_none()
             .items_center()
-            .justify_center()
-            .rounded(px(RADIUS_LG))
-            .bg(ACCENT_SOFT)
-            .child(icon("pipelines", 16., ACCENT_TEXT))
-            .tooltip(tooltip(data::WORKSPACE));
+            .gap(px(8.))
+            .pt(px(4.))
+            .pb(px(12.))
+            .child(
+                workspace_mark()
+                    .id("sidebar-workspace-mark")
+                    .tooltip(tooltip(data::WORKSPACE)),
+            )
+            .child(toggle_button(true, window, cx));
 
-        let inbox = inbox_count(cx);
-        let new_chat = {
-            let el = div()
+        let new_chat = motion::hover_fade(
+            div()
                 .id("sidebar-rail-new")
-                .relative()
-                .size(px(40.))
+                .size(px(36.))
                 .flex()
                 .flex_none()
                 .items_center()
                 .justify_center()
                 .rounded(px(RADIUS_LG))
-                .cursor_pointer();
-            motion::hover_fade(
-                el,
-                "sidebar-rail-new",
-                Look::bg(ACCENT_STRONG),
-                Look::bg(ACCENT_STRONG_HOVER),
-                window,
-                cx,
-            )
-            .child(icon("plus", 16., ON_ACCENT))
-            .tooltip(tooltip("New chat · ⌘N"))
-            .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx))
-        };
-        let open_chat = rail_button("sidebar-rail-open", false, window, cx)
-            .child(row_icon("message", 16., TEXT_MUTED))
-            .tooltip(tooltip("Open a chat · ⌘K"))
-            .on_click(|_, _, cx| nav::set_history_open(true, cx));
-        let mut nav_buttons = vec![new_chat, open_chat];
-        for entry in NAV {
-            let active = screen == entry.screen;
-            let target = entry.screen;
-            let count = if entry.screen == Screen::Inbox { inbox } else { entry.count };
-            nav_buttons.push(rail_button(("sidebar-rail-nav", entry.screen as usize), active, window, cx)
-                .child(row_icon(
-                    entry.icon,
-                    16.,
-                    if active { TEXT } else { TEXT_MUTED },
-                ))
-                .when_some(count, |button, count| button.child(rail_count(count)))
-                .tooltip(tooltip(entry.aria))
-                .on_click(move |_, _, cx| nav::navigate(target, cx)));
-        }
-        let chats = rail_button("sidebar-rail-chats", screen == Screen::Chat, window, cx)
-            .child(row_icon("search", 16., TEXT_MUTED))
-            .tooltip(tooltip("Chats"))
-            .on_click(|_, _, cx| nav::set_history_open(true, cx));
+                .cursor_pointer(),
+            "sidebar-rail-new",
+            Look::bg(ACCENT_STRONG),
+            Look::bg(ACCENT_STRONG_HOVER),
+            window,
+            cx,
+        )
+        .child(icon("plus", 14., ON_ACCENT))
+        .tooltip(tooltip("New chat  ⌘N"))
+        .on_click(|_, _, cx| nav::request_chat(nav::ChatRequest::New, cx));
+        let open_chat = motion::hover_fade(
+            div()
+                .id("sidebar-rail-open")
+                .size(px(36.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(px(RADIUS_LG))
+                .border_1()
+                .cursor_pointer(),
+            "sidebar-rail-open",
+            Look::bg(SURFACE_RAISED).border(LINE_STRONG),
+            Look::bg(SURFACE_HOVER).border(LINE_STRONG),
+            window,
+            cx,
+        )
+        .child(icon("search", 14., TEXT))
+        .tooltip(tooltip("Open a chat…  ⌘K"))
+        .on_click(|_, _, cx| nav::set_history_open(true, cx));
+        let actions = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .items_center()
+            .gap(px(6.))
+            .pb(px(12.))
+            .child(new_chat)
+            .child(open_chat);
 
-        div()
+        let in_chat = screen == Screen::Chat;
+        let waiting = nav::nav_entity(cx).map_or(0, |n| {
+            n.read(cx)
+                .chat_sessions
+                .iter()
+                .filter(|s| s.status == ChatStatus::Waiting)
+                .count()
+        });
+        let inbox = inbox_count(cx);
+
+        let mut column = div()
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(4.))
-            .py(px(SPACE_3))
-            .px(px(SPACE_2))
-            .child(logo)
-            .children(nav_buttons)
-            .child(chats)
+            .gap(px(2.))
+            .p(px(SPACE_3))
+            .child(header)
+            .child(actions);
+        for entry in NAV {
+            let active = screen == entry.screen;
+            let target = entry.screen;
+            let is_inbox = entry.screen == Screen::Inbox;
+            let count = if is_inbox { inbox } else { entry.count };
+            let tip = match count {
+                Some(n) if is_inbox => format!("Inbox · {n}"),
+                _ => entry.aria.to_string(),
+            };
+            column = column.child(
+                icon_button(("sidebar-rail-nav", entry.screen as usize), active, window, cx)
+                    .child(row_icon(
+                        entry.icon,
+                        16.,
+                        if active { TEXT } else { TEXT_SECONDARY },
+                    ))
+                    .when_some(count, |button, count| button.child(rail_count(count)))
+                    .tooltip(tooltip(tip))
+                    .on_click(move |_, _, cx| nav::navigate(target, cx)),
+            );
+            // "Chats" sits under Inbox: it opens the chat picker; current on the Chat screen.
+            if is_inbox {
+                let tip = if waiting > 0 {
+                    format!("Chats · {waiting} waiting")
+                } else {
+                    "Chats".to_string()
+                };
+                column = column.child(
+                    icon_button("sidebar-rail-chats", in_chat, window, cx)
+                        .child(row_icon(
+                            "message",
+                            16.,
+                            if in_chat { TEXT } else { TEXT_SECONDARY },
+                        ))
+                        .when(waiting > 0, |button| button.child(waiting_dot()))
+                        .tooltip(tooltip(tip))
+                        .on_click(|_, _, cx| nav::set_history_open(true, cx)),
+                );
+            }
+        }
+        column
     }
 }
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let screen = nav::current(cx);
-        let compact = screen == Screen::PipelineEditor;
+        let compact = nav::sidebar_collapsed(cx);
         let width = if compact {
             SIDEBAR_COMPACT_WIDTH
         } else {
@@ -343,8 +396,8 @@ fn nav_item(
     motion::hover_fade(el, id, rest, hover, window, cx)
 }
 
-/// 40×40 `.sb-rail` button of the compact rail.
-fn rail_button(
+/// 32×32 `.sb-icon` button of the icon-only mode: hover raises, current is selected.
+fn icon_button(
     id: impl Into<ElementId>,
     current: bool,
     window: &mut Window,
@@ -355,42 +408,105 @@ fn rail_button(
         .id(id.clone())
         .group(ROW_GROUP)
         .relative()
-        .size(px(40.))
+        .size(px(32.))
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
-        .rounded(px(RADIUS_LG))
+        .rounded(px(RADIUS_MD))
         .cursor_pointer();
-    let (rest, hover) = if current {
-        let l = Look::bg(SURFACE_HOVER);
-        (l, l)
-    } else {
-        (Look::bg(gpui::transparent_black()), Look::bg(SURFACE_RAISED))
-    };
+    let (rest, hover) = row_looks(current, TEXT_SECONDARY);
     motion::hover_fade(el, id, rest, hover, window, cx)
 }
 
+/// 2px `BG_SIDEBAR` ring around a badge, so it reads as cut out of its button.
+fn badge_ring() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: BG_SIDEBAR,
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+    }]
+}
+
+/// Inbox count on the corner of an icon button.
 fn rail_count(count: u32) -> gpui::Div {
     div()
         .absolute()
-        .top(px(4.))
-        .right(px(4.))
-        .min_w(px(14.))
-        .h(px(14.))
-        .px(px(3.))
+        .top(px(-2.))
+        .right(px(-4.))
+        .min_w(px(16.))
+        .h(px(16.))
+        .px(px(4.))
         .flex()
         .justify_center()
         .rounded_full()
         .bg(ACCENT_STRONG)
+        .shadow(badge_ring())
         .text_color(ON_ACCENT)
-        .text_size(px(9.))
-        .line_height(px(14.))
+        .text_size(px(10.))
+        .line_height(px(16.))
         .font_weight(FontWeight::SEMIBOLD)
         .child(SharedString::from(count.to_string()))
 }
 
-fn workspace_row() -> gpui::Div {
+/// "Chats waiting" dot on the corner of an icon button.
+fn waiting_dot() -> gpui::Div {
+    div()
+        .absolute()
+        .top(px(4.))
+        .right(px(4.))
+        .size(px(6.))
+        .rounded_full()
+        .bg(WARNING)
+        .shadow(badge_ring())
+}
+
+/// 28×28 `.sb-toggle`: switches between wide and icon-only mode.
+fn toggle_button(collapsed: bool, window: &mut Window, cx: &mut gpui::App) -> Stateful<gpui::Div> {
+    const GROUP: &str = "sidebar-toggle";
+    let (name, tip) = if collapsed {
+        ("panel-left-open", "Expand sidebar  ⌘\\")
+    } else {
+        ("panel-left-close", "Collapse sidebar  ⌘\\")
+    };
+    let el = div()
+        .id("sidebar-toggle")
+        .group(GROUP)
+        .size(px(28.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS_MD))
+        .cursor_pointer();
+    motion::hover_fade(
+        el,
+        "sidebar-toggle",
+        Look::bg(gpui::transparent_black()),
+        Look::bg(SURFACE_RAISED),
+        window,
+        cx,
+    )
+    .child(icon(name, 16., TEXT_MUTED).group_hover(GROUP, |style| style.text_color(TEXT)))
+    .tooltip(tooltip(tip))
+    .on_click(|_, _, cx| nav::toggle_sidebar(cx))
+}
+
+/// 24×24 workspace mark.
+fn workspace_mark() -> gpui::Div {
+    div()
+        .size(px(24.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS_MD))
+        .bg(ACCENT_SOFT)
+        .child(icon("pipelines", 14., ACCENT_TEXT))
+}
+
+fn workspace_row(window: &mut Window, cx: &mut gpui::App) -> gpui::Div {
     div()
         .flex()
         .flex_none()
@@ -399,17 +515,7 @@ fn workspace_row() -> gpui::Div {
         .pt(px(4.))
         .px(px(8.))
         .pb(px(12.))
-        .child(
-            div()
-                .size(px(24.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded(px(RADIUS_MD))
-                .bg(ACCENT_SOFT)
-                .child(icon("pipelines", 14., ACCENT_TEXT)),
-        )
+        .child(workspace_mark())
         .child(
             div()
                 .flex_1()
@@ -418,6 +524,7 @@ fn workspace_row() -> gpui::Div {
                 .font_weight(FontWeight::MEDIUM)
                 .child(data::WORKSPACE),
         )
+        .child(toggle_button(false, window, cx))
 }
 
 /// "New chat ⌘N" (primary) and "Open a chat… ⌘K" at the top of the sidebar.
