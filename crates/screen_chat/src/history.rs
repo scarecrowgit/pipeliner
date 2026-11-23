@@ -117,6 +117,7 @@ impl ChatHistory {
         if std::env::var("HARNESS_CHAT_HISTORY").is_ok_and(|v| v == "1") {
             cx.defer(|cx| nav::set_history_open(true, cx));
         }
+        ui::time::refresh_ages_when(cx, |this: &Self| this.open).detach();
         Self {
             open: false,
             query,

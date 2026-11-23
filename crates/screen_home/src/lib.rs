@@ -10,7 +10,6 @@ mod rows;
 mod tooltip;
 mod view;
 
-use std::time::Duration;
 
 use gpui::{
     App, Context, IntoElement, Render, SharedString, Subscription, Window, div, prelude::*, px,
@@ -20,9 +19,6 @@ use ui::theme::*;
 
 use data::{Range, Target};
 use rows::{LiveRow, NeedRow};
-
-/// How often relative ages ("12m") of real chats are refreshed.
-const AGE_REFRESH: Duration = Duration::from_secs(30);
 
 pub struct HomeScreen {
     range: Range,
@@ -48,20 +44,7 @@ impl HomeScreen {
             }));
         }
         // Keep the ages of real chats current.
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(AGE_REFRESH).await;
-                let alive = this.update(cx, |this, cx| {
-                    if !this.chats.is_empty() {
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
-                    return;
-                }
-            }
-        })
-        .detach();
+        ui::time::refresh_ages_when(cx, |this: &Self| !this.chats.is_empty()).detach();
 
         Self {
             range: Range::default(),

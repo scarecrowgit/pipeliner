@@ -31,6 +31,7 @@ impl Sidebar {
         if let Some(nav) = nav::nav_entity(cx) {
             cx.observe(&nav, |_, _, cx| cx.notify()).detach();
         }
+        ui::time::refresh_ages(cx).detach();
         Self {}
     }
 
