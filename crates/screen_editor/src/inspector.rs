@@ -42,16 +42,16 @@ impl PipelineEditorScreen {
                 Kind::Action => self.ins_action(n, cx),
             },
         };
-        let mut panel = div()
-            .w(px(INSPECTOR_W))
-            .flex_none()
+        // Inner column keeps its natural height so the outer panel scrolls.
+        let mut content = div()
             .flex()
             .flex_col()
-            .bg(BG_SIDEBAR)
+            .flex_none()
+            .w_full()
             .child(self.ins_header(node.as_ref()))
             .children(body);
         if node.is_some() {
-            panel = panel.child(
+            content = content.child(
                 div().px(px(20.)).py(px(16.)).child(
                     Button::new("remove-node", "Remove node")
                         .variant(ButtonVariant::Danger)
@@ -63,7 +63,7 @@ impl PipelineEditorScreen {
         if self.open_menu.is_some() {
             // Click-away backdrop below the open dropdown.
             let vp = window.viewport_size();
-            panel = panel.child(
+            content = content.child(
                 deferred(
                     anchored().position(point(px(0.), px(0.))).child(
                         div()
@@ -83,7 +83,14 @@ impl PipelineEditorScreen {
                 .with_priority(1),
             );
         }
-        panel
+        div()
+            .id("inspector-scroll")
+            .w(px(INSPECTOR_W))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .bg(BG_SIDEBAR)
+            .child(content)
     }
 
     fn ins_header(&self, node: Option<&Node>) -> impl IntoElement + use<> {
