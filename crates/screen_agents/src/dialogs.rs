@@ -21,6 +21,14 @@ const RENAME_DIALOG: &str = "agents-rename-dialog";
 const IMPORT_DIALOG: &str = "agents-import-dialog";
 const EXPORT_DIALOG: &str = "agents-export-dialog";
 const TEMPLATE_DIALOG: &str = "agents-template-dialog";
+/// Most characters of a name in a dialog's title or button: the kit's title and buttons do
+/// not shrink, so a long name is cut here (the type-to-confirm field still wants it whole).
+pub(crate) const DIALOG_NAME_CHARS: usize = 40;
+
+/// `name` cut to [`DIALOG_NAME_CHARS`] for a dialog's title or button.
+pub(crate) fn short_name(name: &str) -> String {
+    base::fmt::truncate_chars(name, DIALOG_NAME_CHARS)
+}
 
 /// The inputs of the open dialog.
 pub(crate) enum Form {
@@ -145,7 +153,7 @@ impl AgentsView {
             .agent
             .as_ref()
             .map_or(0, |a| a.team.iter().filter(|m| m.scheme() == "pipeline").count());
-        let mut toast = Toast::new(format!("{} archived", runnable.name));
+        let mut toast = Toast::new(format!("{} archived", short_name(&runnable.name)));
         if runnable.kind == RunnableKind::Orchestrator && orphans > 0 {
             let pipelines = base::fmt::plural(orphans as u64, "pipeline", "pipelines");
             toast = toast.detail(format!("{pipelines} {} no owner now", if orphans == 1 { "has" } else { "have" }));
@@ -166,7 +174,7 @@ impl AgentsView {
     pub(crate) fn restore(&mut self, reference: &RunnableRef, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.catalog.read(cx).runnable(reference).map(|r| r.name.clone()).unwrap_or_default();
         hub::commands(cx).set_runnable_archived(reference, false, cx);
-        ui::overlays(window, cx).toast(Toast::new(format!("{name} restored")), cx);
+        ui::overlays(window, cx).toast(Toast::new(format!("{} restored", short_name(&name))), cx);
     }
 
     // ------------------------------------------------------------ rename
@@ -181,6 +189,7 @@ impl AgentsView {
             move |_, cx| {
                 let Some(Form::Rename { input, .. }) = view.read(cx).form.as_ref() else { return div().into_any_element() };
                 let save = view.clone();
+                let empty = input.read(cx).text().trim().is_empty();
                 Dialog::new(RENAME_DIALOG, "Rename")
                     .width(440.)
                     .child(text_field("agents-rename-input", input).probe("agents-rename-input"))
@@ -189,9 +198,14 @@ impl AgentsView {
                         Button::new("agents-rename-save", "Rename")
                             .primary()
                             .kbd("⌘↵")
+                            .disabled(empty)
                             .on_click(move |_, window, cx| save.update(cx, |this, cx| this.commit_rename(window, cx)))
                             .probe("agents-rename-save"),
                     )
+                    .on_confirm({
+                        let view = view.clone();
+                        move |window, cx| view.update(cx, |this, cx| this.commit_rename(window, cx))
+                    })
                     .into_any_element()
             },
             window,
@@ -201,12 +215,14 @@ impl AgentsView {
     }
 
     fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(Form::Rename { reference, input }) = self.form.take() else { return };
+        // An empty name is no name: the dialog stays open (its button is disabled meanwhile).
+        let Some(Form::Rename { input, .. }) = self.form.as_ref() else { return };
         let name = input.read(cx).text().trim().to_string();
-        ui::overlays(window, cx).close(RENAME_DIALOG, window, cx);
         if name.is_empty() {
             return;
         }
+        let Some(Form::Rename { reference, .. }) = self.form.take() else { return };
+        ui::overlays(window, cx).close(RENAME_DIALOG, window, cx);
         let task = hub::commands(cx).rename_runnable(&reference, &name, cx);
         cx.spawn(async move |this, cx| {
             if let Some(renamed) = task.await {
@@ -246,6 +262,10 @@ impl AgentsView {
                             .on_click(move |_, window, cx| go.update(cx, |this, cx| this.commit_import(window, cx)))
                             .probe("agents-import-confirm"),
                     )
+                    .on_confirm({
+                        let view = view.clone();
+                        move |window, cx| view.update(cx, |this, cx| this.commit_import(window, cx))
+                    })
                     .into_any_element()
             },
             window,
@@ -279,7 +299,7 @@ impl AgentsView {
         let (input, sub) = self.form_input(&start, "~/Downloads", EXPORT_DIALOG, |this, window, cx| this.commit_export(window, cx), window, cx);
         self.set_form(Form::Export { reference: reference.clone(), input: input.clone() }, vec![sub]);
         let view = cx.entity();
-        let title = format!("Export {name} as YAML");
+        let title = format!("Export {} as YAML", short_name(&name));
         ui::overlays(window, cx).open_dialog(
             EXPORT_DIALOG,
             move |_, cx| {
@@ -296,6 +316,10 @@ impl AgentsView {
                             .on_click(move |_, window, cx| go.update(cx, |this, cx| this.commit_export(window, cx)))
                             .probe("agents-export-confirm"),
                     )
+                    .on_confirm({
+                        let view = view.clone();
+                        move |window, cx| view.update(cx, |this, cx| this.commit_export(window, cx))
+                    })
                     .into_any_element()
             },
             window,
@@ -420,7 +444,7 @@ fn hit(ix: usize, icon_name: IconName, what: impl Into<SharedString>, detail: im
         .px(px(SPACE_3))
         .when(ix > 0, |d| d.border_t_1().border_color(LINE_SUBTLE))
         .child(Tile::new(icon_name))
-        .child(div().flex_none().type_style(BODY_STRONG).child(what.into()))
+        .child(crate::list::fit(what.into()).type_style(BODY_STRONG))
         .child(div().flex_1().min_w_0().type_style(LABEL).text_color(color).child(truncate(detail.into())))
         .into_any_element()
 }
@@ -477,7 +501,8 @@ fn delete_dialog(view: &Entity<AgentsView>, cx: &App) -> AnyElement {
     let (archive, confirm) = (view.clone(), view.clone());
     let archive_ref = reference.clone();
 
-    Dialog::new(DELETE_DIALOG, format!("Delete {name}?"))
+    let short = short_name(name);
+    Dialog::new(DELETE_DIALOG, format!("Delete {short}?"))
         .width(560.)
         .subtitle(sub)
         .child(div().w(px(520.)).text_color(TEXT_SECONDARY).child(format!(
@@ -520,7 +545,7 @@ fn delete_dialog(view: &Entity<AgentsView>, cx: &App) -> AnyElement {
         .note(row().gap(px(SPACE_1_5)).text_color(DANGER).child(icon(IconName::Alert, 14., DANGER)).child("This can’t be undone"))
         .cancel_button()
         .action(
-            Button::new("agents-delete-confirm", format!("Delete {name}"))
+            Button::new("agents-delete-confirm", format!("Delete {short}"))
                 .danger()
                 .icon(IconName::Trash)
                 .disabled(!armed)

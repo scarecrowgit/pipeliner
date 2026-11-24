@@ -2,13 +2,14 @@
 //! what the draft changed since the live version, where it is used from, and "Open in editor",
 //! which leaves for `Route::Editor`.
 
-use gpui::{AnyElement, Context, IntoElement, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::api::{GraphChange, NodeKind, PipelineId, Runnable, Target, VersionState};
 use hub::model::RunnableRef;
 use ui::dev::Probe;
 use ui::prelude::*;
 
-use crate::detail::{TEXT_W, lives_in, section};
+use crate::detail::{TEXT_W, lives_in, section, select_or_open};
+use crate::list::fit;
 use crate::rows;
 use crate::view::{AgentsView, open_editor};
 
@@ -62,7 +63,7 @@ impl AgentsView {
         }
         facts = facts
             .row("Activity", div().child(rows::runs_today(activity.as_ref())))
-            .row("Lives in", div().min_w_0().child(truncate(lives_in(runnable, cx))));
+            .row("Lives in", div().min_w_0().child(truncate_middle(lives_in(runnable, cx), BODY.line)));
         let head = self.panel_head(runnable, buttons, facts, window, cx);
 
         let changes = self.changes_section(&id, live, cx);
@@ -92,7 +93,7 @@ impl AgentsView {
                         .min_h(px(28.))
                         .gap(px(SPACE_2))
                         .child(div().w(px(12.)).flex_none().font_family(FONT_MONO).text_color(color).child(sign))
-                        .child(div().flex_none().type_style(BODY_STRONG).child(name))
+                        .child(fit(name).type_style(BODY_STRONG))
                         .child(div().flex_1().min_w_0().type_style(LABEL).text_color(TEXT_SECONDARY).child(truncate(what)))
                 }))
                 .into_any_element(),
@@ -128,11 +129,11 @@ impl AgentsView {
                 .gap(px(SPACE_2))
                 .when(reference.is_some(), |d| d.cursor_pointer())
                 .child(Tile::new(IconName::Agent))
-                .child(div().flex_none().type_style(BODY_STRONG).child(name))
+                .child(fit(name).type_style(BODY_STRONG))
                 .child(grow())
                 .child(div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).font_family(FONT_MONO).child(detail))
                 .when_some(reference, |d, reference| {
-                    d.on_click(cx.listener(move |this, _, _, cx| this.select(Some(reference.clone()), cx)))
+                    d.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| select_or_open(this, &reference, event, window, cx)))
                 })
         });
         section("Agents inside")

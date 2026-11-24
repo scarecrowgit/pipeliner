@@ -3,6 +3,7 @@
 
 mod actions;
 mod list;
+mod open;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -45,13 +46,24 @@ pub(crate) struct Open {
 
 /// The view with `selected` open, as `Route::Agents` asks for it.
 pub(crate) fn open(cx: &mut TestAppContext, selected: Option<RunnableRef>) -> (Open, &mut VisualTestContext) {
+    open_with(cx, selected, |_| {})
+}
+
+/// [`open`] over the fixture world changed by `edit` first.
+pub(crate) fn open_with(
+    cx: &mut TestAppContext,
+    selected: Option<RunnableRef>,
+    edit: impl FnOnce(&mut World),
+) -> (Open, &mut VisualTestContext) {
     cx.update(|cx| {
         ui::init(cx);
         ui_rich::bind_keys(cx);
     });
     // After `ui::init`, which reads the preference again: popups appear and leave at once.
     ui::motion::set_reduced(true);
-    let api = Arc::new(FixtureApi::new(World::acme(NOW)));
+    let mut world = World::acme(NOW);
+    edit(&mut world);
+    let api = Arc::new(FixtureApi::new(world));
     let hub = cx.update(|cx| Hub::new_fixture(api.clone(), cx));
     cx.update(|cx| hub::navigate(Route::Agents { runnable: selected.clone() }, cx));
     let slot = Rc::new(RefCell::new(None));
@@ -75,6 +87,36 @@ pub(crate) fn click(cx: &mut VisualTestContext, selector: &str) {
     let bounds = cx.debug_bounds(leak(selector)).unwrap_or_else(|| panic!("`{selector}` was not laid out"));
     cx.simulate_click(bounds.center(), Modifiers::none());
     cx.run_until_parked();
+}
+
+/// Double-clicks the element drawn with debug selector `selector`: two presses through the
+/// window's event dispatch, the second with a click count of 2, as the platform reports one.
+pub(crate) fn double_click(cx: &mut VisualTestContext, selector: &str) {
+    cx.run_until_parked();
+    let at = cx.debug_bounds(leak(selector)).unwrap_or_else(|| panic!("`{selector}` was not laid out")).center();
+    for click_count in [1, 2] {
+        cx.simulate_event(gpui::MouseDownEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: gpui::MouseButton::Left,
+            click_count,
+            first_mouse: false,
+        });
+        cx.simulate_event(gpui::MouseUpEvent { position: at, modifiers: Modifiers::none(), button: gpui::MouseButton::Left, click_count });
+        cx.run_until_parked();
+    }
+}
+
+/// Whether the overlay `id` (a dialog or menu) is open.
+pub(crate) fn is_open(cx: &mut VisualTestContext, id: &str) -> bool {
+    let id = gpui::SharedString::from(id.to_string());
+    cx.update(|window, cx| ui::overlays(window, cx).is_open(id, cx))
+}
+
+/// The bounds of the element drawn with debug selector `selector`.
+pub(crate) fn bounds(cx: &mut VisualTestContext, selector: &str) -> gpui::Bounds<gpui::Pixels> {
+    cx.run_until_parked();
+    cx.debug_bounds(leak(selector)).unwrap_or_else(|| panic!("`{selector}` was not laid out"))
 }
 
 /// An element with debug selector `selector` was drawn in the last frame.

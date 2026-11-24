@@ -6,14 +6,14 @@
 //! Controls that change the definition save through `Commands::save_runnable`; definitions
 //! that cannot be changed here (built-in, Claude Code, created at run time) draw them inert.
 
-use gpui::{AnyElement, App, Context, ElementId, IntoElement, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, ElementId, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::Route;
 use hub::api::{Origin, Runnable, RunnableKind, RunnableState, Skill, ToolAccess, ToolGrants};
 use hub::model::RunnableRef;
 use ui::dev::Probe;
 use ui::prelude::*;
 
-use crate::list::{PLACES, kind_icon, state_cell, uses_at};
+use crate::list::{PLACES, fit, kind_icon, state_cell, uses_at};
 use crate::rows;
 use crate::view::{AgentsView, PANEL_W};
 
@@ -124,31 +124,41 @@ impl AgentsView {
                 row()
                     .items_start()
                     .gap(px(SPACE_3))
-                    .child(Tile::new(kind_icon(runnable)).tone(if spawned { TileTone::Spawn } else { TileTone::Neutral }).large())
                     .child(
-                        col()
+                        // The tile and the name: a double-click opens it as the list's row does.
+                        // The more button is beside this box, not in it.
+                        row()
+                            .id("agents-head")
+                            .debug_selector(|| "agents-head".into())
                             .flex_1()
                             .min_w_0()
-                            .child(div().type_style(TITLE).child(runnable.name.clone()))
+                            .items_start()
+                            .gap(px(SPACE_3))
+                            .child(Tile::new(kind_icon(runnable)).tone(if spawned { TileTone::Spawn } else { TileTone::Neutral }).large())
                             .child(
-                                row()
-                                    .gap(px(SPACE_1_5))
+                                col()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(truncate_block(runnable.name.clone(), TITLE.line).type_style(TITLE))
                                     .child(
-                                        div()
-                                            .flex_none()
+                                        row()
+                                            .min_w_0()
+                                            .gap(px(SPACE_1_5))
                                             .type_style(LABEL)
-                                            .text_color(if spawned { SPAWN_TEXT } else { TEXT_MUTED })
-                                            .child(kind),
-                                    )
-                                    .child(StatusDot::new(crate::list::status(mark.dot)).small())
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .type_style(LABEL)
-                                            .text_color(crate::list::tone_color(mark.tone))
-                                            .child(mark.text.clone()),
+                                            .child(fit(kind).text_color(if spawned { SPAWN_TEXT } else { TEXT_MUTED }))
+                                            .child(StatusDot::new(crate::list::status(mark.dot)).small())
+                                            .child(truncate_lh(mark.text.clone(), LABEL.line).text_color(crate::list::tone_color(mark.tone))),
                                     ),
-                            ),
+                            )
+                            .probe("agents-head")
+                            .on_click(cx.listener({
+                                let reference = runnable.reference.clone();
+                                move |this, event: &ClickEvent, window, cx| {
+                                    if event.click_count() >= 2 {
+                                        this.open_edit(&reference, window, cx);
+                                    }
+                                }
+                            })),
                     )
                     .child(more),
             )
@@ -177,7 +187,7 @@ impl AgentsView {
         facts = facts
             .row("Activity", div().child(rows::runs_today(activity.as_ref())))
             .row("Tools", div().child(tools_summary(&agent.tools)))
-            .row("Lives in", div().min_w_0().child(truncate(lives_in(runnable, cx))));
+            .row("Lives in", div().min_w_0().child(truncate_middle(lives_in(runnable, cx), BODY.line)));
         let buttons = self.agent_buttons(runnable, cx);
         let head = self.panel_head(runnable, buttons, facts, window, cx);
         let editable = rows::read_only_reason(runnable).is_none();
@@ -357,7 +367,7 @@ impl AgentsView {
     }
 
     /// A compact row for a runnable inside a section: tile, name, kind, state at the right.
-    /// Clicking selects it.
+    /// Clicking selects it; a double-click opens it as the list's row does.
     pub(crate) fn member_row(&self, id: ElementId, reference: &RunnableRef, cx: &mut Context<Self>) -> AnyElement {
         let catalog = self.catalog.read(cx);
         let Some(member) = catalog.runnable(reference) else {
@@ -377,11 +387,11 @@ impl AgentsView {
             .gap(px(SPACE_2))
             .cursor_pointer()
             .child(Tile::new(kind_icon(member)))
-            .child(div().flex_none().type_style(BODY_STRONG).child(member.name.clone()))
+            .child(fit(member.name.clone()).type_style(BODY_STRONG))
             .child(div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(rows::kind_word(member.kind)))
             .child(grow())
-            .child(div().flex_none().child(state_cell(&mark)))
-            .on_click(cx.listener(move |this, _, _, cx| this.select(Some(target.clone()), cx)))
+            .child(div().flex_initial().min_w_0().child(state_cell(&mark)))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| select_or_open(this, &target, event, window, cx)))
             .into_any_element()
     }
 
@@ -453,13 +463,12 @@ impl AgentsView {
                 .h(px(28.))
                 .gap(px(SPACE_2))
                 .child(StatusDot::new(if alive { Status::Spawn } else { Status::Idle }).small())
-                .child(div().text_color(SPAWN_TEXT).when(alive, |d| d.type_style(BODY_STRONG)).child(name))
+                .child(fit(name).text_color(SPAWN_TEXT).when(alive, |d| d.type_style(BODY_STRONG)))
                 .child(grow())
                 .child(
-                    div()
+                    fit(mark.text)
                         .type_style(LABEL)
-                        .text_color(if alive { TEXT_SECONDARY } else { TEXT_MUTED })
-                        .child(mark.text),
+                        .text_color(if alive { TEXT_SECONDARY } else { TEXT_MUTED }),
                 )
         });
         let has_created = catalog.runnables().iter().any(|r| matches!(&r.origin, Origin::Spawned { by, .. } if *by == runnable.reference));
@@ -528,8 +537,8 @@ impl AgentsView {
                         .gap(px(SPACE_2))
                         .cursor_pointer()
                         .child(icon(IconName::Pipelines, 14., TEXT_MUTED))
-                        .child(name)
-                        .on_click(cx.listener(move |this, _, _, cx| this.select(Some(target.clone()), cx)))
+                        .child(truncate(name))
+                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| select_or_open(this, &target, event, window, cx)))
                 });
                 let issues = used.issues.iter().enumerate().map(|(ix, key)| {
                     let target = key.clone();
@@ -577,6 +586,15 @@ impl AgentsView {
             .when(empty, |d| d.child(Note::new("No chats with it yet.")))
             .child(col().children(rows_))
             .into_any_element()
+    }
+}
+
+/// A click on a runnable named in the panel selects it; a double-click opens it as Enter on
+/// its row does.
+pub(crate) fn select_or_open(view: &mut AgentsView, target: &RunnableRef, event: &ClickEvent, window: &mut Window, cx: &mut Context<AgentsView>) {
+    view.select(Some(target.clone()), cx);
+    if event.click_count() >= 2 {
+        view.open_edit(target, window, cx);
     }
 }
 

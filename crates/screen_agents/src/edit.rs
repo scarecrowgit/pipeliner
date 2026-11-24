@@ -8,7 +8,7 @@ use hub::model::RunnableRef;
 use hub::Route;
 use ui::dev::Probe;
 use ui::prelude::*;
-use ui_rich::{TextArea, TextInput, text_area_field, text_field};
+use ui_rich::{TextArea, TextAreaEvent, TextInput, TextInputEvent, text_area_field, text_field};
 
 use crate::dialogs::Form;
 use crate::view::{AgentsView, open_editor};
@@ -111,9 +111,25 @@ impl AgentsView {
         let description = cx.new(|cx| TextInput::new(cx).with_text(&runnable.description).placeholder("What it is for, in one line"));
         let model = cx.new(|cx| TextInput::new(cx).with_text(&agent.model.to_string()).placeholder("The configured default"));
         let role = cx.new(|cx| TextArea::new(cx).with_text(&agent.role).rows(8, 16).placeholder("What it does and how"));
-        self.set_form(Form::Edit(EditForm { reference: reference.clone(), description, model, role, access: agent.tools.access }), Vec::new());
+        // The fields hold the keys while the dialog is open: Escape closes it, Enter in a line
+        // and Cmd/Ctrl-Enter in the instructions save it.
+        let line = |this: &mut Self, event: &TextInputEvent, window: &mut Window, cx: &mut Context<Self>| match event {
+            TextInputEvent::Submit => this.save_edit(window, cx),
+            TextInputEvent::Cancel => ui::overlays(window, cx).close(EDIT_DIALOG, window, cx),
+            _ => {}
+        };
+        let subs = vec![
+            cx.subscribe_in(&description, window, move |this, _, event, window, cx| line(this, event, window, cx)),
+            cx.subscribe_in(&model, window, move |this, _, event, window, cx| line(this, event, window, cx)),
+            cx.subscribe_in(&role, window, |this, _, event: &TextAreaEvent, window, cx| match event {
+                TextAreaEvent::Submit => this.save_edit(window, cx),
+                TextAreaEvent::Cancel => ui::overlays(window, cx).close(EDIT_DIALOG, window, cx),
+                _ => {}
+            }),
+        ];
+        self.set_form(Form::Edit(EditForm { reference: reference.clone(), description, model, role, access: agent.tools.access }), subs);
         let view = cx.entity();
-        let title = format!("Edit {}", runnable.name);
+        let title = format!("Edit {}", crate::dialogs::short_name(&runnable.name));
         ui::overlays(window, cx).open_dialog(
             EDIT_DIALOG,
             move |_, cx| edit_dialog(&view, &title, cx),
@@ -136,6 +152,12 @@ impl AgentsView {
             agent.role = role;
             agent.tools.access = access;
         });
+    }
+
+    /// Saves the edit dialog and closes it.
+    fn save_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
+        ui::overlays(window, cx).close(EDIT_DIALOG, window, cx);
     }
 
     fn set_access(&mut self, access: ToolAccess, cx: &mut Context<Self>) {

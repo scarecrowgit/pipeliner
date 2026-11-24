@@ -2,7 +2,9 @@
 //! detail panel. The parts are drawn by [`crate::list`], [`crate::detail`] and
 //! [`crate::pipeline`]; menus and dialogs live in [`crate::menus`] and [`crate::dialogs`].
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollHandle,
@@ -25,6 +27,14 @@ pub(crate) const NEW: &str = "agents-new";
 pub(crate) const SEARCH: &str = "agents-search";
 /// Width of the detail panel, px (`.panel` is 420 in the mockup).
 pub(crate) const PANEL_W: f32 = 420.;
+/// The list's width until its first frame is measured, px: a wide window's, so the first
+/// frame has every column.
+const LIST_W_UNTIL_MEASURED: f32 = 1020.;
+/// The screen's width until its first frame is measured, px.
+const SCREEN_W_UNTIL_MEASURED: f32 = 1440.;
+/// The narrowest screen whose header has room for the one-line explanation beside the title
+/// and "New", px: below it the line is left out rather than pushing "New" out of the window.
+pub(crate) const HEADER_LINE_MIN_W: f32 = 800.;
 
 /// The whole content of `Route::Agents`.
 pub struct AgentsView {
@@ -37,6 +47,12 @@ pub struct AgentsView {
     /// Focus was taken on the first frame the view was drawn.
     pub(crate) shown: bool,
     pub(crate) scroll: ScrollHandle,
+    /// The list's width in the last frame: a narrow list leaves columns out.
+    pub(crate) list_w: Rc<Cell<f32>>,
+    /// The whole screen's width in the last frame (the header's line needs room).
+    pub(crate) screen_w: Rc<Cell<f32>>,
+    /// Selectable texts (load errors), by key, kept so a selection survives redraws.
+    pub(crate) texts: HashMap<SharedString, Entity<Markdown>>,
     /// The detail panel's scroll position ("Run history" scrolls to the recent work).
     pub(crate) panel_scroll: ScrollHandle,
     /// How many sections the panel drew last frame.
@@ -93,6 +109,9 @@ impl AgentsView {
             focus: cx.focus_handle(),
             shown: false,
             scroll: ScrollHandle::new(),
+            list_w: Rc::new(Cell::new(LIST_W_UNTIL_MEASURED)),
+            screen_w: Rc::new(Cell::new(SCREEN_W_UNTIL_MEASURED)),
+            texts: HashMap::new(),
             panel_scroll: ScrollHandle::new(),
             panel_sections: 0,
             used_by: HashMap::new(),
@@ -129,10 +148,13 @@ impl AgentsView {
 
     /// What follows the title in the shell's header: the one-line explanation.
     pub fn header_badges(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.screen_w.get() < HEADER_LINE_MIN_W {
+            return Vec::new();
+        }
         vec![
             // The shell keeps badges at their size, and a truncating text in that box is measured
-            // short and cut without an ellipsis: the line is drawn whole, it fits beside the
-            // title and "New" from the narrowest window the app allows.
+            // short and cut without an ellipsis: the line is drawn whole, and only on a screen
+            // wide enough for it beside the title and "New".
             div()
                 .ml(px(SPACE_3))
                 .type_style(BODY)
@@ -205,6 +227,10 @@ impl AgentsView {
 
     /// Selects `runnable` without touching the route, and reads what its panel needs.
     fn apply(&mut self, runnable: Option<RunnableRef>, cx: &mut Context<Self>) {
+        // Another runnable's panel starts at its head, not where the last one was scrolled to.
+        if runnable != self.selected {
+            self.panel_scroll.set_offset(gpui::Point::default());
+        }
         self.selected = runnable.clone();
         if let Some(reference) = runnable {
             self.load_used_by(&reference, cx);
@@ -277,6 +303,22 @@ impl AgentsView {
                 self.role = Some((reference, md));
             }
         }
+    }
+
+    /// A selectable, wrapping view of `text` exactly as given, under `key`: made on first use,
+    /// brought up to date after.
+    pub(crate) fn text(&mut self, key: impl Into<SharedString>, text: impl Into<SharedString>, style: TypeStyle, color: gpui::Hsla, cx: &mut Context<Self>) -> Entity<Markdown> {
+        let (key, text) = (key.into(), text.into());
+        if let Some(view) = self.texts.get(&key) {
+            let view = view.clone();
+            if view.read(cx).text() != text.as_ref() {
+                view.update(cx, |md, cx| md.set_text(text, cx));
+            }
+            return view;
+        }
+        let view = cx.new(|cx| Markdown::verbatim(text, cx).type_style(style).color(color));
+        self.texts.insert(key, view.clone());
+        view
     }
 
     /// The scroll child index of list row `ix`: group headers sit between rows.
@@ -427,11 +469,15 @@ impl Render for AgentsView {
                         .bg(BG)
                         .overflow_y_scroll()
                         .track_scroll(&self.panel_scroll)
-                        .children(sections.into_iter().map(|s| div().flex_shrink_0().child(s))),
+                        .children(sections.into_iter().map(|s| div().flex_shrink_0().child(s)))
+                        .probe("agents-panel"),
                 )
             });
+        let screen_w = self.screen_w.clone();
         div()
             .id("agents")
+            .relative()
+            .child(crate::list::measure_width(move |w| screen_w.replace(w) != w))
             .key_context("Agents")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
