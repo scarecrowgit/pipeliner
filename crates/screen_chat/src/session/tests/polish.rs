@@ -92,3 +92,25 @@ fn enter_with_a_message_sends_it_and_leaves_the_question(cx: &mut TestAppContext
     assert_eq!(calls(&t.api, "send"), [format!("{FIX} Use the CI runner")]);
     assert!(calls(&t.api, "answer_permission").is_empty());
 }
+
+#[gpui::test]
+fn a_message_image_opens_the_viewer_and_esc_gives_the_composer_its_keys_back(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, FIX);
+    let first = t.view.read_with(cx, |v, cx| {
+        v.model.read(cx).blocks().iter().find_map(|b| match &b.kind {
+            hub::transcript::BlockKind::User(user) if !user.images.is_empty() => Some(b.id),
+            _ => None,
+        })
+    });
+    let Some(block) = first else { panic!("the fixture chat has a message with an image") };
+    focus_composer(&t, cx);
+    click(cx, &format!("thumb-{block}-0"));
+    assert!(cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx)), "the viewer is open");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx)), "Esc closed it");
+    let focused = cx.update(|window, cx| t.composer.read(cx).is_focused(window, cx));
+    assert!(focused, "the composer has the keys again");
+    let rejecting = t.view.read_with(cx, |v, cx| v.transcript.read(cx).is_rejecting());
+    assert!(!rejecting, "the Esc that closed the viewer did not also answer the question");
+}

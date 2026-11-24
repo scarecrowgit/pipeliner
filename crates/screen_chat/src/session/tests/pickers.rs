@@ -53,3 +53,15 @@ fn tab_in_the_composer_switches_build_and_plan(cx: &mut TestAppContext) {
     click(cx, "chat-mode-toggle");
     assert_eq!(calls(&t.api, "set_session_runnable").pop(), Some(format!("{FIX} agent:build Build")));
 }
+
+#[gpui::test]
+fn tab_in_the_agent_picker_switches_build_and_plan_as_its_footer_says(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, FIX);
+    click(cx, "chat-agent-picker");
+    assert!(shown(cx, "chat-mode-plan"));
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(calls(&t.api, "set_session_runnable"), [format!("{FIX} agent:build Plan")]);
+    let open = cx.update(|window, cx| ui::overlays(window, cx).open_count(cx));
+    assert_eq!(open, 1, "the picker stays open on the new choice");
+}

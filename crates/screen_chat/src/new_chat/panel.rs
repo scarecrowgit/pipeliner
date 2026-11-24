@@ -94,17 +94,14 @@ impl NewChatView {
                                         .probe("new-chat-panel-name"),
                                 ),
                             )
+                            // Straight in the column, as in a folder row: wrapped in a
+                            // shrinking box, a long path measured to nothing.
                             .child(
-                                row().child(
-                                    div()
-                                        .flex_shrink()
-                                        .min_w_0()
-                                        .type_style(MONO_SM)
-                                        .text_color(TEXT_MUTED)
-                                        .debug_selector(|| "new-chat-panel-path".into())
-                                        .child(path_line(format!("{runtime} · {}", display_path(&path, cx)), MONO_SM.line))
-                                        .probe("new-chat-panel-path"),
-                                ),
+                                path_line(format!("{runtime} · {}", display_path(&path, cx)), MONO_SM.line)
+                                    .type_style(MONO_SM)
+                                    .text_color(TEXT_MUTED)
+                                    .debug_selector(|| "new-chat-panel-path".into())
+                                    .probe("new-chat-panel-path"),
                             ),
                     ),
             )

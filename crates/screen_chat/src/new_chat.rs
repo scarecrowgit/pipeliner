@@ -89,6 +89,8 @@ pub struct NewChatView {
     failed: Option<SharedString>,
     starting: bool,
     shown: bool,
+    /// The folder column's scroll area, whose width sets the column's.
+    main_scroll: gpui::ScrollHandle,
     _subs: Vec<Subscription>,
 }
 
@@ -153,6 +155,7 @@ impl NewChatView {
             failed: None,
             starting: false,
             shown,
+            main_scroll: gpui::ScrollHandle::new(),
             _subs: subs,
         };
         // Focus is taken on the first frame drawn (see `render`): the shell builds the view
@@ -617,6 +620,7 @@ impl Render for NewChatView {
             let search = self.search.clone();
             window.defer(cx, move |window, cx| search.read(cx).focus(window));
         }
+        self.follow_main_width(window, cx);
         div()
             .flex()
             .flex_row()

@@ -440,7 +440,8 @@ fn line_row(
         .border_t_1()
         .border_color(LINE_SUBTLE)
         .child(div().flex_none().min_w(px(VERB_W)).type_style(MONO).text_color(TEXT_MUTED).child(verb.to_string()))
-        .child(truncate(target.to_string()).type_style(MONO).text_color(TEXT))
+        // Targets are mostly paths: a long one keeps its file name and loses the middle.
+        .child(ui::truncate::truncate_middle(target.to_string(), BODY.line).type_style(MONO).text_color(TEXT))
         .child(outcome);
     let error = error.map(|text| {
         div()

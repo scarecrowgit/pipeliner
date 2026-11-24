@@ -38,9 +38,13 @@ pub(crate) fn runtime_line(runtime: &Runtime) -> String {
 
 impl NewChatView {
     pub(super) fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // A definite width, from the scroll area's width in the last frame: as `w_full` capped
+        // by `max_w`, a long path measured the search field wider than the column and left
+        // its text no room.
+        let area = f32::from(self.main_scroll.bounds().size.width);
         let content = col()
-            .w_full()
-            .max_w(px(COLUMN))
+            .when(area > 0., |d| d.w(px(area.min(COLUMN))))
+            .when(area <= 0., |d| d.w_full().max_w(px(COLUMN)))
             .overflow_hidden()
             .px(px(SPACE_6))
             .py(px(SPACE_8))
@@ -64,10 +68,21 @@ impl NewChatView {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.main_scroll)
                     .child(col().w_full().items_center().child(content)),
             )
             .child(self.render_action_bar(cx))
             .into_any_element()
+    }
+
+    /// Draws again when the scroll area's width changed since this frame was built.
+    pub(super) fn follow_main_width(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let used = f32::from(self.main_scroll.bounds().size.width);
+        cx.defer_in(window, move |this, _, cx| {
+            if (f32::from(this.main_scroll.bounds().size.width) - used).abs() >= 0.5 {
+                cx.notify();
+            }
+        });
     }
 
     fn render_heading(&self, cx: &App) -> impl IntoElement {

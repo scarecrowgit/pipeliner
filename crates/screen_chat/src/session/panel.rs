@@ -276,7 +276,7 @@ fn files(view: &Entity<SessionView>, detail: &SessionDetail) -> impl IntoElement
         section = section.child(
             faded
                 .on_click(move |_, window, cx| v.update(cx, |this, cx| this.mention_file(&path, window, cx)))
-                .child(truncate(file.path.clone()).type_style(MONO))
+                .child(ui::truncate::truncate_middle(file.path.clone(), BODY.line).type_style(MONO))
                 .child(
                     row()
                         .flex_none()

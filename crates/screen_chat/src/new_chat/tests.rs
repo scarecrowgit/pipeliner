@@ -465,3 +465,45 @@ fn the_typed_row_tells_a_missing_folder_from_one_without_git(cx: &mut TestAppCon
     assert_eq!(typed_words(Some(&info(None)), Some(false)).0, "No such folder");
     assert_eq!(typed_words(Some(&info(None)), Some(true)).0, "Folder · not a git repository");
 }
+
+#[gpui::test]
+fn the_chats_filter_takes_the_keys_each_time_the_list_is_shown(cx: &mut TestAppContext) {
+    let (_api, view, cx) = open(cx, Route::Chats, ChatsView::new);
+    let focused = |cx: &mut VisualTestContext| cx.update(|window, cx| view.read(cx).filter().read(cx).is_focused(window));
+    assert!(focused(cx), "the filter has focus on open");
+    cx.update(|window, _| window.blur());
+    cx.update(|_, cx| hub::navigate(Route::NewChat, cx));
+    cx.run_until_parked();
+    cx.update(|_, cx| hub::navigate(Route::Chats, cx));
+    cx.run_until_parked();
+    assert!(focused(cx), "the filter has focus again when the list is shown again");
+}
+
+#[gpui::test]
+fn the_keys_scroll_the_highlighted_chat_into_view(cx: &mut TestAppContext) {
+    let (_api, view, cx) = open(cx, Route::Chats, ChatsView::new);
+    view.update(cx, |view, cx| view.set_now(NOW, cx));
+    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(260.)));
+    cx.run_until_parked();
+    let count = view.read_with(cx, |view, cx| view.rows(cx).len());
+    assert!(count > 6, "more chats than the window shows: {count}");
+    for _ in 0..count {
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+    }
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    });
+    assert_eq!(view.read_with(cx, |view, _| view.highlight_visible()), Some(true), "the last row is in view");
+    for _ in 0..count {
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+    }
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    });
+    assert_eq!(view.read_with(cx, |view, _| view.highlight_visible()), Some(true), "the first row is in view");
+}
+

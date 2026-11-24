@@ -15,6 +15,11 @@ use super::texts::TextKey;
 
 /// Size of the banner's policy mark (`.tile` without its fill).
 const MARK: f32 = 24.;
+/// Narrowest column that still has room for the `↵ allow  Esc reject` hints after the
+/// answers; below it the hints are left out (the composer's own hint row stays).
+const HINTS_MIN_COLUMN: f32 = 600.;
+/// Characters of a rule's pattern the Always button shows.
+const RULE_CHARS: usize = 32;
 
 /// What the agent wants to do, after "Build wants to": "run a command".
 pub(crate) fn wants(request: &PermissionRequest) -> String {
@@ -41,7 +46,8 @@ pub(crate) fn call_line(display: &ToolDisplay) -> String {
 pub(crate) fn always_label(request: &PermissionRequest) -> Option<String> {
     let rule = request.always_rule.as_ref()?;
     let what = if rule.pattern.is_empty() { &rule.tool } else { &rule.pattern };
-    Some(format!("Always allow {what}"))
+    // A long pattern would push Reject out of the banner; the call above shows it whole.
+    Some(format!("Always allow {}", base::fmt::truncate_chars(what, RULE_CHARS)))
 }
 
 impl TranscriptView {
@@ -93,6 +99,7 @@ impl TranscriptView {
                 .on_click(cx.listener(move |this, _, window, cx| this.start_reject_for(&id, window, cx)))
                 .probe("perm-deny")
         };
+        let hints_fit = self.column_width >= HINTS_MIN_COLUMN;
         let answers = match self.reject_note(&request.id).cloned() {
             Some(input) => row()
                 .gap(px(SPACE_2))
@@ -112,7 +119,7 @@ impl TranscriptView {
                         .on_click(cx.listener(|this, _, _, cx| this.cancel_reject(cx)))
                         .probe("perm-reject-cancel"),
                 )
-                .child(KeyHints::new().hint(["↵"], "reject").hint(["Esc"], "cancel")),
+                .when(hints_fit, |d| d.child(hints(KeyHints::new().hint(["↵"], "reject").hint(["Esc"], "cancel")))),
             None => row()
                 .gap(px(SPACE_2))
                 .pl(px(MARK + SPACE_3))
@@ -120,7 +127,7 @@ impl TranscriptView {
                 .children(always)
                 .child(deny)
                 .child(grow())
-                .child(KeyHints::new().hint(["↵"], "allow").hint(["Esc"], "reject")),
+                .when(hints_fit, |d| d.child(hints(KeyHints::new().hint(["↵"], "allow").hint(["Esc"], "reject")))),
         };
         Banner::new()
             .tone(BannerTone::Warning)
@@ -147,4 +154,10 @@ impl TranscriptView {
                 .into_any_element(),
         }
     }
+}
+
+/// The key hints at the end of the answers: clipped rather than drawn past the banner when
+/// long answers leave them too little room.
+fn hints(keys: KeyHints) -> impl IntoElement {
+    div().flex().flex_shrink().min_w_0().overflow_hidden().debug_selector(|| "perm-hints".into()).child(keys)
 }

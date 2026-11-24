@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, IntoElement, Render, SharedString, Subscription,
-    Window, div, prelude::*, px,
+    ScrollHandle, Window, div, prelude::*, px,
 };
 use hub::api::{Session, SessionState};
 use hub::{ChatIndex, LoadState, Route};
@@ -65,6 +65,14 @@ pub struct ChatsView {
     filter: Entity<TextInput>,
     highlight: Option<usize>,
     now: Option<i64>,
+    /// The filter takes focus on the next frame: the list was just opened or shown again.
+    focus_pending: bool,
+    /// The router is on the list.
+    shown: bool,
+    scroll: ScrollHandle,
+    /// The child of the scrolled column that draws each row, from the last frame: the keys
+    /// scroll the highlighted row into view.
+    row_children: Vec<usize>,
     _subs: Vec<Subscription>,
 }
 
@@ -73,13 +81,34 @@ impl ChatsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let index = hub::chat_index(cx);
         let filter = cx.new(|cx| TextInput::new(cx).placeholder("Filter chats by title or folder"));
+        let router = hub::router(cx);
         let subs = vec![
             cx.observe(&index, |_, _, cx| cx.notify()),
             cx.subscribe_in(&filter, window, |this: &mut Self, _, event: &TextInputEvent, _, cx| this.on_filter(event, cx)),
+            // The shell keeps one list: coming back to it puts the keys in the filter again.
+            cx.observe(&router, |this: &mut Self, router, cx| {
+                let here = *router.read(cx).current() == Route::Chats;
+                if here && !this.shown {
+                    this.focus_pending = true;
+                    cx.notify();
+                }
+                this.shown = here;
+            }),
         ];
-        let input = filter.clone();
-        window.defer(cx, move |window, cx| input.read(cx).focus(window));
-        Self { index, filter, highlight: None, now: None, _subs: subs }
+        let shown = *router.read(cx).current() == Route::Chats;
+        // Focus is taken on the first frame drawn (see `render`): the shell builds the view
+        // before it is in the window.
+        Self {
+            index,
+            filter,
+            highlight: None,
+            now: None,
+            focus_pending: true,
+            shown,
+            scroll: ScrollHandle::new(),
+            row_children: Vec::new(),
+            _subs: subs,
+        }
     }
 
     /// What the shell's header shows as the title.
@@ -148,9 +177,11 @@ impl ChatsView {
             TextInputEvent::Changed => self.highlight = None,
             TextInputEvent::Down if count > 0 => {
                 self.highlight = Some(self.highlight.map_or(0, |ix| (ix + 1).min(count - 1)));
+                self.reveal_highlight();
             }
             TextInputEvent::Up if count > 0 => {
                 self.highlight = Some(self.highlight.map_or(count - 1, |ix| ix.saturating_sub(1)));
+                self.reveal_highlight();
             }
             TextInputEvent::Submit => {
                 let ix = self.highlight.unwrap_or(0);
@@ -159,6 +190,24 @@ impl ChatsView {
             _ => return,
         }
         cx.notify();
+    }
+
+    /// Scrolls the highlighted row into view.
+    fn reveal_highlight(&self) {
+        if let Some(child) = self.highlight.and_then(|ix| self.row_children.get(ix)) {
+            self.scroll.scroll_to_item(*child);
+        }
+    }
+
+    /// The row the keys highlight, and whether it lies inside the list's viewport.
+    #[cfg(test)]
+    pub(crate) fn highlight_visible(&self) -> Option<bool> {
+        let child = *self.row_children.get(self.highlight?)?;
+        let row = self.scroll.bounds_for_item(child)?;
+        let view = self.scroll.bounds();
+        // Child bounds are laid out unscrolled; the offset moves them.
+        let dy = self.scroll.offset().y;
+        Some(row.top() + dy >= view.top() - gpui::px(0.5) && row.bottom() + dy <= view.bottom() + gpui::px(0.5))
     }
 
     /// Opens the chat in row `ix`.
@@ -171,6 +220,11 @@ impl ChatsView {
 
 impl Render for ChatsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_pending {
+            self.focus_pending = false;
+            let filter = self.filter.clone();
+            window.defer(cx, move |window, cx| filter.read(cx).focus(window));
+        }
         let rows = self.rows(cx);
         let index = self.index.read(cx);
         let (state, total, held) = (index.state().clone(), index.total(), index.pinned().len() + index.recent().len());
@@ -178,16 +232,28 @@ impl Render for ChatsView {
         let offset = base::time::utc_offset(now);
         let query = self.filter.read(cx).text().trim().to_string();
 
-        let mut list = col().flex_none().gap(px(1.));
+        // Every line is a child of the scrolled column, so a highlighted row can be scrolled to.
+        let line = |el: AnyElement| {
+            row().flex_none().w_full().justify_center().child(div().w_full().max_w(px(COLUMN)).px(px(SPACE_6)).child(el))
+        };
+        let mut lines: Vec<AnyElement> = vec![
+            line(text_field("chats-filter", &self.filter).icon(IconName::Search).probe("chats-filter").into_any_element())
+                .pt(px(SPACE_6))
+                .pb(px(SPACE_2))
+                .into_any_element(),
+        ];
+        let mut row_children = Vec::with_capacity(rows.len());
         let mut group = None;
         for (ix, (in_group, session)) in rows.iter().enumerate() {
             if group != Some(*in_group) {
                 group = Some(*in_group);
-                list = list.child(group_head(*in_group));
+                lines.push(line(group_head(*in_group).into_any_element()).into_any_element());
             }
             let current = self.highlight == Some(ix);
-            list = list.child(chat_row(ix, session, current, now, offset, window, cx));
+            row_children.push(lines.len());
+            lines.push(line(chat_row(ix, session, current, now, offset, window, cx)).into_any_element());
         }
+        self.row_children = row_children;
         let empty = match (&state, rows.is_empty()) {
             (LoadState::Loading, _) => Some("Loading chats…".to_string()),
             (LoadState::Failed(error), _) => Some(format!("Could not read the chats: {error}")),
@@ -197,22 +263,24 @@ impl Render for ChatsView {
         };
         let foot = (state == LoadState::Ready && total > held as u64)
             .then(|| format!("Showing the {held} latest of {} chats", base::fmt::count(total)));
+        if let Some(text) = empty {
+            lines.push(line(div().mt(px(SPACE_4)).px(px(SPACE_2)).text_color(TEXT_MUTED).child(text).into_any_element()).into_any_element());
+        }
+        if let Some(text) = foot {
+            lines.push(line(div().mt(px(SPACE_4)).px(px(SPACE_2)).child(Note::new(text)).into_any_element()).into_any_element());
+        }
 
-        div().id("chats-scroll").size_full().bg(BG).overflow_y_scroll().child(
-            col().w_full().items_center().child(
-                col()
-                    .w_full()
-                    .max_w(px(COLUMN))
-                    .px(px(SPACE_6))
-                    .py(px(SPACE_6))
-                    .child(text_field("chats-filter", &self.filter).icon(IconName::Search).probe("chats-filter"))
-                    .child(div().mt(px(SPACE_2)).child(list))
-                    .when_some(empty, |d, text| {
-                        d.child(div().mt(px(SPACE_4)).px(px(SPACE_2)).text_color(TEXT_MUTED).child(text))
-                    })
-                    .when_some(foot, |d, text| d.child(div().mt(px(SPACE_4)).px(px(SPACE_2)).child(Note::new(text)))),
-            ),
-        )
+        div()
+            .id("chats-scroll")
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .pb(px(SPACE_6))
+            .bg(BG)
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .children(lines)
     }
 }
 

@@ -290,8 +290,15 @@ fn agent_popover(view: &Entity<SessionView>, cx: &App) -> AnyElement {
             cx.stop_propagation();
         }
     };
+    let v = view.clone();
+    // The footer's `Tab Build ⇄ Plan`: Tab switches the mode here too and leaves the menu
+    // open on the new check, instead of moving focus out of the menu.
+    let switch_mode = move |_: &ui::keys::FocusNext, window: &mut Window, cx: &mut App| {
+        v.update(cx, |this, cx| this.toggle_mode(window, cx));
+    };
     div()
         .on_key_down(by_digit)
+        .on_action(switch_mode)
         .child(
             Popover::new()
                 .width(420.)

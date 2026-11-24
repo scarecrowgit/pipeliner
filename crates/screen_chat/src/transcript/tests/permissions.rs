@@ -89,3 +89,26 @@ fn the_keyboard_methods_answer_the_newest_question(cx: &mut TestAppContext) {
     let again = open.view.update(cx, |view, cx| view.allow_pending(cx));
     assert!(!again, "nothing is pending any more");
 }
+
+#[gpui::test]
+fn in_a_narrow_column_the_answers_stay_inside_the_banner(cx: &mut TestAppContext) {
+    let (open, cx) = open(cx, FIX, 4000.);
+    cx.simulate_resize(gpui::size(gpui::px(560.), gpui::px(4000.)));
+    settle(cx);
+    settle(cx);
+    let narrow = open.view.read_with(cx, |view, _| view.column_width);
+    assert!(narrow < 600., "the column follows the window: {narrow}");
+    let row = cx.debug_bounds("tool-t8").unwrap_or_else(|| panic!("the question is drawn"));
+    let deny = cx.debug_bounds("perm-deny").unwrap_or_else(|| panic!("Reject is drawn"));
+    assert!(deny.right() <= row.right(), "Reject {deny:?} stays in the banner {row:?}");
+}
+
+#[test]
+fn a_long_rule_is_cut_in_the_always_button() {
+    let world = hub::fixtures::World::acme(super::NOW);
+    let Some(mut request) = world.permissions.first().cloned() else { panic!("the fixture has a pending request") };
+    let Some(rule) = request.always_rule.as_mut() else { panic!("the request offers a rule") };
+    rule.pattern = "npm run test:integration -- --runInBand --coverage --verbose".into();
+    let label = crate::transcript::permission::always_label(&request).unwrap_or_default();
+    assert_eq!(label, "Always allow npm run test:integration -- --r…");
+}

@@ -15,6 +15,7 @@ use ui::dev::Probe;
 use ui::motion::Look;
 use ui::prelude::*;
 use ui_rich::markdown::Markdown;
+use ui_rich::viewer::{ImageThumb, ViewerImage};
 
 use super::TranscriptView;
 use super::rows::INDENT;
@@ -112,8 +113,22 @@ impl TranscriptView {
             .child(div().type_style(LABEL_STRONG).text_color(TEXT).child("You"))
             .child(self.ago(user.at));
         let queries = hub::queries(cx);
-        let thumbs: Vec<AnyElement> =
-            user.images.iter().enumerate().map(|(i, image)| thumb(block.id, i, image, &queries)).collect();
+        let paths: Vec<_> = user.images.iter().map(|image| queries.blob_path(&image.blob)).collect();
+        // A click opens the viewer on every image of the message, at the clicked one, each
+        // named as it was attached (the blob file has an opaque name).
+        let viewer: Vec<ViewerImage> = user
+            .images
+            .iter()
+            .zip(&paths)
+            .map(|(image, path)| ViewerImage::file(path).name(image.name.clone()))
+            .collect();
+        let thumbs: Vec<AnyElement> = user
+            .images
+            .iter()
+            .zip(paths)
+            .enumerate()
+            .map(|(i, (image, path))| thumb(block.id, i, image, path, viewer.clone()))
+            .collect();
         let text = (!user.text.is_empty()).then(|| {
             let md = self.markdown_for(block.id, &user.text, TEXT, true, cx);
             div().debug_selector(move || format!("user-text-{index}")).child(md)
@@ -208,9 +223,9 @@ impl TranscriptView {
     }
 }
 
-/// One image of a message: the picture over a caption with its name and size.
-fn thumb(block: u64, index: usize, image: &Attachment, queries: &hub::Queries) -> AnyElement {
-    let path = queries.blob_path(&image.blob);
+/// One image of a message: the picture over a caption with its name and size. A click opens
+/// `images` (all of the message's) in the viewer at this one.
+fn thumb(block: u64, index: usize, image: &Attachment, path: std::path::PathBuf, images: Vec<ViewerImage>) -> AnyElement {
     let shot = div()
         .absolute()
         .top(px(SPACE_2))
@@ -239,14 +254,12 @@ fn thumb(block: u64, index: usize, image: &Attachment, queries: &hub::Queries) -
         .child(icon(IconName::Image, 12., TEXT_SECONDARY))
         .child(truncate_lh(image.name.clone(), CAPTION.line))
         .child(div().flex_none().text_color(TEXT_MUTED).child(base::fmt::bytes(image.bytes)));
-    div()
-        .id(ElementId::NamedInteger(format!("thumb-{block}").into(), index as u64))
+    ImageThumb::new(ElementId::NamedInteger(format!("thumb-{block}").into(), index as u64), images, index)
+        .tooltip("Open image")
         .relative()
         .flex_none()
         .w(px(THUMB_W))
         .h(px(THUMB_H))
-        .border_1()
-        .border_color(LINE_STRONG)
         .rounded(px(RADIUS_LG))
         .bg(BG_SIDEBAR)
         .overflow_hidden()
