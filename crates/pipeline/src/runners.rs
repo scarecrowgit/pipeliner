@@ -50,6 +50,7 @@ use vcs::pr::Gh;
 
 use crate::api::{Job, JobNote, JobResult, JobSink, NodeOutput, NodeRunner};
 
+pub use agent::node_agent;
 pub use pattern::{Pattern, parse_tests};
 pub use services::{
     ANSWER_TOOL, AgentSessions, Answer, Firefox, InboxPost, Picture, Question, Questions, Records, Renderer,

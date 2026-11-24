@@ -17,7 +17,7 @@ fn the_feed_renders_every_event_of_the_fixture(cx: &mut TestAppContext) {
         };
         push(Actor::Me, IssueEventKind::StatusChanged { from: IssueStatus::Todo, to: IssueStatus::InProgress });
         push(Actor::Me, IssueEventKind::Detached);
-        let fixer = Actor::Runnable { reference: RunnableRef::agent("fixer"), name: "Fixer".into(), spawned: false };
+        let fixer = Actor::Runnable { reference: RunnableRef::agent("fixer"), name: "Fixer".into(), spawned: false, session: None };
         push(fixer, IssueEventKind::PrOpened { url: "https://github.com/acme/payments-api/pull/2291".into() });
         push(
             Actor::System,
@@ -25,22 +25,40 @@ fn the_feed_renders_every_event_of_the_fixture(cx: &mut TestAppContext) {
         );
     });
     let len = t.api.with_world(|w| w.issue_events[&IssueKey::new("PAY-1427")].len());
-    assert_eq!(len, 13);
+    assert_eq!(len, 16);
     for ix in 0..len {
         assert!(shown(cx, &format!("issue-activity-{ix}")), "event {ix} is drawn");
     }
-    assert!(shown(cx, "issue-activity-11-pr"), "the pull request links out");
+    assert!(shown(cx, "issue-activity-14-pr"), "the pull request links out");
 }
 
 #[gpui::test]
 fn a_new_event_appears_at_the_bottom(cx: &mut TestAppContext) {
     let (t, cx) = open(cx, "PAY-1427");
-    assert!(!shown(cx, "issue-activity-9"));
+    assert!(!shown(cx, "issue-activity-12"));
     t.api.emit(hub::api::Event::IssueActivity {
         key: IssueKey::new("PAY-1427"),
-        event: IssueEvent { seq: 10, at: NOW, actor: Actor::Me, kind: IssueEventKind::Detached },
+        event: IssueEvent { seq: 13, at: NOW, actor: Actor::Me, kind: IssueEventKind::Detached },
     });
-    assert!(shown(cx, "issue-activity-9"));
+    assert!(shown(cx, "issue-activity-12"));
+}
+
+#[gpui::test]
+fn a_run_agents_answer_is_its_comment_with_a_way_into_its_session(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, "PAY-1427");
+    // The mention (9), the wake inside it (10, seq 11) and the Fixer's answer (11, seq 12).
+    assert!(shown(cx, "issue-activity-10-open"), "the wake opens the session it continues");
+    let (woke, answer) = t.panel.read_with(cx, |p, cx| {
+        let woke = p.texts.get("event-11").map(|v| v.read(cx).text().to_string());
+        let answer = p.bodies.get(&12).map(|v| v.read(cx).text().to_string());
+        (woke.unwrap_or_default(), answer.unwrap_or_default())
+    });
+    assert_eq!(woke, "Fixer woken · @mention · continues its work from run 2 in its worktree");
+    assert!(answer.starts_with("Rebased `fix/pay-1427-batch` on main"), "{answer}");
+    assert!(shown(cx, "issue-activity-11"), "the answer is a row of the Fixer");
+    click(cx, "issue-activity-11-session");
+    let route = cx.update(|_, cx| hub::router(cx).read(cx).current().clone());
+    assert_eq!(route, hub::Route::Chat { session: hub::api::SessionId::new(hub::fixtures::FIXER_1427) });
 }
 
 #[gpui::test]

@@ -16,6 +16,9 @@ use tools::ToolRegistry;
 use crate::engine::Inner;
 use crate::host::StoreHost;
 
+/// How often a step waits for its session to be free.
+const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 /// The engine, as long as it is open.
 fn upgrade(inner: &Weak<Inner>) -> Result<Arc<Inner>> {
     inner.upgrade().ok_or_else(|| anyhow!("The app is shutting down"))
@@ -101,6 +104,39 @@ impl AgentSessions for Sessions {
         cancel: &CancelToken,
     ) -> AgentOutcome {
         let Some(inner) = self.0.upgrade() else { return cancelled() };
+        // One turn at a time: the session may be answering a comment on its issue, or an
+        // earlier job of a cancelled run may still be stopping. The step waits its turn.
+        while inner.live.claim(&env.session).is_none() {
+            if cancel.is_cancelled() {
+                return cancelled();
+            }
+            std::thread::sleep(CLAIM_POLL);
+        }
+        let outcome = self.run_claimed(&inner, spec, env, input, on_event, cancel);
+        // Messages sent meanwhile stay queued for the session's next turn.
+        inner.live.release(&env.session, false);
+        outcome
+    }
+
+    fn runnable(&self, reference: &RunnableRef) -> Option<Runnable> {
+        self.0.upgrade()?.catalog().get(reference).cloned()
+    }
+
+    fn default_model(&self) -> ModelRef {
+        self.0.upgrade().map(|inner| inner.default_model()).unwrap_or_default()
+    }
+}
+
+impl Sessions {
+    fn run_claimed(
+        &self,
+        inner: &Arc<Inner>,
+        spec: &AgentSpec,
+        env: &AgentEnv,
+        input: Input,
+        on_event: &mut (dyn FnMut(&SessionId, &AgentEvent) + Send),
+        cancel: &CancelToken,
+    ) -> AgentOutcome {
         let capacity = || inner.store.settings().map_or(1, |s| s.slots);
         let Some(slot) = inner.slots.acquire(capacity, cancel) else { return cancelled() };
         let mut spec = spec.clone();
@@ -109,8 +145,8 @@ impl AgentSessions for Sessions {
         inner.set_state(&id, SessionState::Running);
         let folder = env.workdir.clone();
         let catalog = inner.catalog_for(folder.as_deref());
-        let host = StoreHost::new(&inner);
-        let mcp = crate::chat::mcp_view(&inner, folder.as_deref());
+        let host = StoreHost::new(inner);
+        let mcp = crate::chat::mcp_view(inner, folder.as_deref());
         let deps = AgentDeps {
             llm: &*inner.llm,
             host: &host,
@@ -120,7 +156,7 @@ impl AgentSessions for Sessions {
             clock: &*inner.clock,
             tools: ToolRegistry::new(),
         };
-        let mut sink = Tee { inner: &inner, on_event };
+        let mut sink = Tee { inner, on_event };
         let outcome = agent::run(&spec, env, &deps, input, &mut sink, cancel);
         drop(slot);
         let state = match outcome.stop {
@@ -143,14 +179,6 @@ impl AgentSessions for Sessions {
             }
         });
         outcome
-    }
-
-    fn runnable(&self, reference: &RunnableRef) -> Option<Runnable> {
-        self.0.upgrade()?.catalog().get(reference).cloned()
-    }
-
-    fn default_model(&self) -> ModelRef {
-        self.0.upgrade().map(|inner| inner.default_model()).unwrap_or_default()
     }
 }
 

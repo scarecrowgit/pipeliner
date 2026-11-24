@@ -1,6 +1,7 @@
 //! The activity feed, oldest first and newest at the bottom, in the wording of
 //! `issue-comments.html`: comments by people as cards (with the wake-ups their mentions caused
-//! inside), comments and notes by agents and pipelines as rows with a tile, status changes,
+//! inside), comments and notes by agents and pipelines as rows with a tile (an agent's answer
+//! to a mention with a link to its session), status changes,
 //! attaching and detaching, wake-ups and their failures, pull requests.
 
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, App, Context, Entity, HighlightStyle, Hsla, IntoElement, SharedString, StyledText, Window, div, prelude::*, px,
 };
-use hub::api::{Actor, Issue, IssueEvent, IssueEventKind, RunId, RunnableRef, Target};
+use hub::api::{Actor, Issue, IssueEvent, IssueEventKind, RunId, RunnableRef, SessionId, Target};
 use hub::{LoadState, Route};
 use ui::dev::Probe;
 use ui::motion;
@@ -240,10 +241,16 @@ fn render_entry(
                 let thumbs = images.iter().enumerate().map(|(i, image)| thumbnail((SharedString::from(format!("{probe}-image")), i), image, cx));
                 text = text.child(row().flex_none().flex_wrap().gap(px(SPACE_2)).mt(px(SPACE_2)).children(thumbs));
             }
+            // An agent's answer to a mention: its session is where the work happened.
+            if let Actor::Runnable { session: Some(session), .. } = &event.actor {
+                text = text.child(row().mt(px(SPACE_1)).child(open_session_link(format!("{probe}-session"), session.clone())));
+            }
         }
-        IssueEventKind::Woken { run, .. } => {
+        IssueEventKind::Woken { run, target, .. } => {
             text = text.child(said(this, cx));
-            if let Some(run) = run.clone() {
+            if let Some(session) = target.session_id() {
+                text = text.child(row().mt(px(SPACE_0_5)).child(open_session_link(format!("{probe}-open"), session)));
+            } else if let Some(run) = run.clone() {
                 text = text.child(row().mt(px(SPACE_0_5)).child(open_run_link(format!("{probe}-open"), run)));
             }
         }
@@ -291,6 +298,13 @@ fn open_run_link(name: String, run: RunId) -> impl IntoElement {
                 None => hub::open(Target::Run(run.clone()), cx),
             }
         })
+        .probe(name)
+}
+
+/// "Open session": the chat of an agent that answered on the issue, or continues there.
+fn open_session_link(name: String, session: SessionId) -> impl IntoElement {
+    Link::new(SharedString::from(name.clone()), "Open session")
+        .on_click(move |_, _, cx| hub::open(Target::Session(session.clone()), cx))
         .probe(name)
 }
 
@@ -361,7 +375,7 @@ fn body_block(body: &Entity<Markdown>, width: f32) -> impl IntoElement {
 
 /// "Fixer woken · run 2 on this issue · comment passed as input  Open run".
 fn woke_box(this: &mut IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &mut Context<IssuePanel>) -> impl IntoElement {
-    let IssueEventKind::Woken { name, number, cause, run, .. } = &event.kind else { return div().into_any_element() };
+    let IssueEventKind::Woken { name, number, cause, run, target } = &event.kind else { return div().into_any_element() };
     let probe = format!("issue-activity-{ix}");
     let text_width = width - 2. * SPACE_2 - 12. - 2. * SPACE_2 - BOX_ACTION;
     let text = this.texts.view(format!("event-{}", event.seq), woken_text(name, *number, cause), LABEL, TEXT_SECONDARY, cx);
@@ -377,7 +391,11 @@ fn woke_box(this: &mut IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx
         .type_style(LABEL)
         .child(div().flex_none().pt(px(3.)).child(icon(IconName::Zap, 12., TEXT_SECONDARY)))
         .child(div().flex_none().w(px(text_width)).child(text))
-        .when_some(run.clone(), |d, run| d.child(grow()).child(open_run_link(format!("{probe}-open"), run)))
+        .map(|d| match (target.session_id(), run.clone()) {
+            (Some(session), _) => d.child(grow()).child(open_session_link(format!("{probe}-open"), session)),
+            (None, Some(run)) => d.child(grow()).child(open_run_link(format!("{probe}-open"), run)),
+            (None, None) => d,
+        })
         .named(probe)
         .into_any_element()
 }

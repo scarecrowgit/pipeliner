@@ -23,6 +23,8 @@ mod data_runs;
 mod data_sessions;
 mod data_transcript;
 pub mod script;
+/// The session of the Fixer step of `run-1427`, which a comment on PAY-1427 can continue.
+pub use data_runs::FIXER_1427;
 mod search;
 
 use std::collections::{HashMap, HashSet};

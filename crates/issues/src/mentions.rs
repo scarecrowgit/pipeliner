@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use model::{IssueKey, Runnable, RunnableKind, RunnableRef};
+use model::{IssueKey, RunAgent, Runnable, RunnableKind, RunnableRef};
 
 #[cfg(test)]
 mod tests;
@@ -16,7 +16,8 @@ pub struct Mention {
     /// Byte range in the text, `@` included.
     pub range: Range<usize>,
     pub target: RunnableRef,
-    /// The runnable's name as it is spelled in the library (not as typed).
+    /// The runnable's name as it is spelled in the library (not as typed); for a run's agent,
+    /// its node's name.
     pub name: String,
 }
 
@@ -26,9 +27,23 @@ pub struct Mention {
 /// `@Release`. A mention must start a word (`bob@example.com` has none), must end at a word
 /// boundary (`@Fixers` is not `@Fixer`) and is ignored inside code spans.
 pub fn find_mentions(text: &str, runnables: &[Runnable]) -> Vec<Mention> {
-    let mut names: Vec<(&Runnable, &str)> =
-        runnables.iter().map(|r| (r, r.name.trim())).filter(|(_, name)| !name.is_empty()).collect();
-    names.sort_by_key(|(_, name)| std::cmp::Reverse(name.chars().count()));
+    find_mentions_with(text, &[], runnables)
+}
+
+/// [`find_mentions`] with the agents of the issue's latest run as well, by their node's name
+/// and their runnable's. A name both a run's agent and a library runnable answer to is the
+/// run's agent.
+pub fn find_mentions_with(text: &str, agents: &[RunAgent], runnables: &[Runnable]) -> Vec<Mention> {
+    let mut names: Vec<(&RunnableRef, &str, &str)> = Vec::new();
+    for agent in agents {
+        for name in agent.names() {
+            names.push((&agent.reference, name.trim(), agent.name.as_str()));
+        }
+    }
+    names.extend(runnables.iter().map(|r| (&r.reference, r.name.trim(), r.name.as_str())));
+    names.retain(|(_, name, _)| !name.is_empty());
+    // Stable: at equal length the run's agents stay ahead of the library.
+    names.sort_by_key(|(_, name, _)| std::cmp::Reverse(name.chars().count()));
     let code = code_spans(text);
 
     let mut found = Vec::new();
@@ -38,14 +53,14 @@ pub fn find_mentions(text: &str, runnables: &[Runnable]) -> Vec<Mention> {
         let skip = at < resume;
         if !skip && c == '@' && starts_word(prev) && !in_code(&code, at) {
             let rest = &text[at + 1..];
-            let hit = names.iter().find_map(|(r, name)| {
+            let hit = names.iter().find_map(|(target, name, shown)| {
                 let len = match_prefix_ci(rest, name)?;
                 let boundary = rest[len..].chars().next().is_none_or(|n| !is_name_char(n));
-                boundary.then_some((*r, len))
+                boundary.then_some((*target, *shown, len))
             });
-            if let Some((r, len)) = hit {
+            if let Some((target, shown, len)) = hit {
                 resume = at + 1 + len;
-                found.push(Mention { range: at..resume, target: r.reference.clone(), name: r.name.clone() });
+                found.push(Mention { range: at..resume, target: target.clone(), name: shown.to_string() });
             }
         }
         prev = Some(c);

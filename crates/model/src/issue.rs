@@ -1,8 +1,10 @@
 //! The issue tracker: issues, their activity feed, and autopilots that create or pick them up.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
-use crate::{AutopilotId, BlobId, IssueKey, Millis, ProjectId, RunId, RunnableRef};
+use crate::{AutopilotId, BlobId, IssueKey, Millis, NodeId, ProjectId, RunId, RunnableKind, RunnableRef, SessionId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -153,8 +155,48 @@ pub enum Actor {
         /// Created by another agent; drawn in violet.
         #[serde(default)]
         spawned: bool,
+        /// The session it wrote from, when it can be opened: an agent answering a mention.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
     },
     System,
+}
+
+/// An agent or orchestrator that worked on an issue in its latest run, as a comment can
+/// mention it: the mention continues its node's own session, in its worktree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunAgent {
+    /// What a mention names: [`RunnableRef::session`] of `session`.
+    pub reference: RunnableRef,
+    /// The node's name in the run, with the variant's letter when it has one: "Mockup".
+    pub name: String,
+    /// The library runnable's name when the node uses one and it is not `name`: a mention
+    /// may use it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runnable_name: Option<String>,
+    pub kind: RunnableKind,
+    pub session: SessionId,
+    pub run: RunId,
+    /// "run 2" on the issue.
+    pub run_number: u32,
+    pub node: NodeId,
+    #[serde(default)]
+    pub variant: u32,
+    /// Where the node worked, when it had a worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Its node is running right now: a mention is refused until it finishes.
+    #[serde(default)]
+    pub busy: bool,
+}
+
+impl RunAgent {
+    /// The names a mention may use, the node's first.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str()).chain(self.runnable_name.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -266,4 +308,47 @@ pub struct Autopilot {
     /// Spending cap per tick.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_usd: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feed_rows_written_before_agent_sessions_still_load() {
+        let old = r#"{"seq":5,"at":1,"actor":{"actor":"runnable","reference":"agent:fixer","name":"Fixer","spawned":false},"event":"comment","text":"Picking this up."}"#;
+        let event: IssueEvent = serde_json::from_str(old).expect("old row");
+        assert_eq!(
+            event.actor,
+            Actor::Runnable { reference: RunnableRef::agent("fixer"), name: "Fixer".into(), spawned: false, session: None }
+        );
+        let reply = IssueEvent {
+            actor: Actor::Runnable {
+                reference: RunnableRef::session(&SessionId::new("s1")),
+                name: "Mockup".into(),
+                spawned: false,
+                session: Some(SessionId::new("s1")),
+            },
+            ..event
+        };
+        let text = serde_json::to_string(&reply).expect("write");
+        assert_eq!(serde_json::from_str::<IssueEvent>(&text).expect("read"), reply);
+        assert!(!serde_json::to_string(&Actor::Runnable {
+            reference: RunnableRef::agent("fixer"),
+            name: "Fixer".into(),
+            spawned: false,
+            session: None,
+        })
+        .expect("write")
+        .contains("session"));
+    }
+
+    #[test]
+    fn a_session_reference_names_its_session() {
+        let id = SessionId::new("0mwuv2k31-01zxq1xwjl");
+        let r = RunnableRef::session(&id);
+        assert_eq!(r.scheme(), "session");
+        assert_eq!(r.session_id(), Some(id));
+        assert_eq!(RunnableRef::agent("fixer").session_id(), None);
+    }
 }

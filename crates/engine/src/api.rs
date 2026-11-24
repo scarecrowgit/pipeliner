@@ -273,8 +273,13 @@ pub trait IssueApi {
     fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>) -> Result<Issue>;
     /// Starts the attached runner on the issue now, whatever the triggers say.
     fn start_issue(&self, key: &IssueKey) -> Result<()>;
-    /// Tries again to wake a runnable whose wake-up failed.
+    /// Tries again to wake a runnable whose wake-up failed. A run's agent gets the last
+    /// comment that mentioned it again.
     fn retry_wake(&self, key: &IssueKey, target: &RunnableRef) -> Result<()>;
+    /// The agents and orchestrators of the issue's latest run a comment can mention: a
+    /// mention continues the node's own session in its worktree, and its answer is posted on
+    /// the issue as that agent's comment.
+    fn issue_agents(&self, key: &IssueKey) -> Result<Vec<RunAgent>>;
 
     fn autopilots(&self, project: &ProjectId) -> Result<Vec<Autopilot>>;
     fn save_autopilot(&self, autopilot: Autopilot) -> Result<()>;

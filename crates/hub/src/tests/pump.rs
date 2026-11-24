@@ -81,7 +81,7 @@ fn issues_follow_changes_removals_and_activity(cx: &mut TestAppContext) {
     issues.update(cx, |model, cx| model.ensure_activity(&key, cx));
     cx.run_until_parked();
     let before = cx.update(|cx| issues.read(cx).activity(&key).and_then(|feed| feed.value().map(|v| v.len())));
-    assert_eq!(before, Some(9));
+    assert_eq!(before, Some(12));
 
     let commands = cx.update(|cx| crate::commands(cx));
     cx.update(|cx| commands.comment(&key, "@Reproducer try 500 items", Vec::new(), cx));
@@ -91,7 +91,7 @@ fn issues_follow_changes_removals_and_activity(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| {
         let model = issues.read(cx);
-        assert_eq!(model.activity(&key).and_then(|feed| feed.value().map(|v| v.len())), Some(10));
+        assert_eq!(model.activity(&key).and_then(|feed| feed.value().map(|v| v.len())), Some(13));
         assert!(model.issue(&IssueKey::new("PAY-1417")).is_none());
         assert_eq!(model.column(IssueStatus::InProgress).len(), 3);
         assert_eq!(model.column(IssueStatus::InProgress)[0].key.as_str(), "PAY-1435", "high priority first");

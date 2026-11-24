@@ -116,7 +116,7 @@ fn the_activity_feed_numbers_entries_and_goes_with_the_issue() {
     };
     let first = store.append_issue_event(&key, event(IssueEventKind::Created, 10)).unwrap();
     let mut by_agent = event(comment, 20);
-    by_agent.actor = Actor::Runnable { reference: RunnableRef::agent("lead"), name: "Lead".into(), spawned: true };
+    by_agent.actor = Actor::Runnable { reference: RunnableRef::agent("lead"), name: "Lead".into(), spawned: true, session: None };
     let second = store.append_issue_event(&key, by_agent.clone()).unwrap();
     let third = store
         .append_issue_event(&key, event(IssueEventKind::StatusChanged { from: IssueStatus::Todo, to: IssueStatus::Done }, 30))

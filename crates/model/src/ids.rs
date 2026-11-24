@@ -109,7 +109,18 @@ impl RunnableRef {
         Self(format!("spawned:{id}"))
     }
 
-    /// The part before the colon: `agent`, `orchestrator`, `pipeline` or `spawned`.
+    /// An agent of an issue's run, named by its node's session: a mention of it continues
+    /// that session instead of starting anything new.
+    pub fn session(id: &SessionId) -> Self {
+        Self(format!("session:{id}"))
+    }
+
+    /// The session a [`RunnableRef::session`] reference names.
+    pub fn session_id(&self) -> Option<SessionId> {
+        (self.scheme() == "session").then(|| SessionId::new(self.id()))
+    }
+
+    /// The part before the colon: `agent`, `orchestrator`, `pipeline`, `spawned` or `session`.
     pub fn scheme(&self) -> &str {
         self.0.split_once(':').map_or("", |(scheme, _)| scheme)
     }

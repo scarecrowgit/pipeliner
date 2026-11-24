@@ -4,6 +4,7 @@
 //! Everything here is pure: no IO, no threads, no clock. Times come in as arguments. Storage,
 //! starting agents and the screens call these functions and act on what they return.
 
+pub mod agents;
 pub mod autopilot;
 pub mod board;
 pub mod card;
@@ -19,4 +20,5 @@ pub use board::{Board, Chip, Column, ListColumn, RunLookup, RunsWith, SortDir};
 pub use card::CardState;
 pub use mentions::{Completion, CompletionItem, Mention};
 pub use status::{Effect, RunResult};
+pub use agents::{run_agents, wake_message};
 pub use triggers::{Happening, WakeIntent, WakeMode, WakeRefusal, Wakes};

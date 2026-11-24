@@ -24,7 +24,7 @@ fn only_ones_own_comments_can_be_deleted() {
     let issue = fx.engine.create_issue(new).expect("create");
     fx.engine.comment(&issue.key, "first", Vec::new()).expect("comment");
     fx.engine.comment(&issue.key, "second", Vec::new()).expect("comment");
-    let agent = Actor::Runnable { reference: RunnableRef::agent("fixer"), name: "Fixer".into(), spawned: false };
+    let agent = Actor::Runnable { reference: RunnableRef::agent("fixer"), name: "Fixer".into(), spawned: false, session: None };
     let kind = IssueEventKind::Comment { text: "from an agent".into(), images: Vec::new(), mentions: Vec::new() };
     let theirs = fx.engine.inner.store.append_issue_event(&issue.key, IssueEvent { seq: 0, at: 1, actor: agent, kind }).expect("append");
     let seq_of = |text: &str| {

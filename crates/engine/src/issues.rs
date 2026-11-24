@@ -3,7 +3,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use issues::Happening;
-use model::{Actor, Autopilot, AutopilotId, AutopilotTrigger, Event, Issue, IssueEvent, IssueEventKind, IssueKey, ProjectId, RunnableRef};
+use model::{Actor, Autopilot, AutopilotId, AutopilotTrigger, Event, Issue, IssueEvent, IssueEventKind, IssueKey, ProjectId, RunAgent, RunnableRef};
 
 use crate::api::{Attachment, IssueApi, IssuePatch, NewIssue};
 use crate::engine::{Engine, Inner};
@@ -138,12 +138,20 @@ impl IssueApi for Engine {
         }
         let mut issue = inner.issue_or_fail(key)?;
         let catalog = inner.catalog();
-        let mentions = issues::mentions::targets(&issues::mentions::find_mentions(text, catalog.runnables()));
-        let kind = IssueEventKind::Comment { text: text.to_string(), images, mentions: mentions.clone() };
+        // The agents of the latest run come first: a name they share with the library is theirs.
+        let agents = self.run_agents_of(key)?;
+        let mentions = issues::mentions::targets(&issues::mentions::find_mentions_with(text, &agents, catalog.runnables()));
+        let kind = IssueEventKind::Comment { text: text.to_string(), images: images.clone(), mentions: mentions.clone() };
         inner.activity(key, Actor::Me, kind)?;
         issue.updated = inner.now();
         inner.save_issue(&issue)?;
-        self.wake(&issue, &Happening::Comment { text: text.to_string(), mentions })
+        // Only a person's comment wakes anyone; agents answer through `wake::reply`, which
+        // never comes here.
+        self.wake_with(&issue, &Happening::Comment { text: text.to_string(), mentions }, &images)
+    }
+
+    fn issue_agents(&self, key: &IssueKey) -> Result<Vec<RunAgent>> {
+        self.run_agents_of(key)
     }
 
     fn delete_comment(&self, key: &IssueKey, seq: u64) -> Result<()> {
@@ -191,6 +199,9 @@ impl IssueApi for Engine {
 
     fn retry_wake(&self, key: &IssueKey, target: &RunnableRef) -> Result<()> {
         let issue = self.inner.issue_or_fail(key)?;
+        if target.session_id().is_some() {
+            return self.rewake_session(&issue, target);
+        }
         self.wake_by_hand(&issue, target, "tried again")
     }
 

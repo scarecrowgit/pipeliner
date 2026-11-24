@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Image, ImageFormat, TestAppContext};
-use hub::api::{IssueEventKind, RunnableRef};
+use hub::api::{IssueEventKind, RunnableRef, SessionId};
+use hub::fixtures::FIXER_1427;
 use hub::model::IssueKey;
 use ui_rich::Attachment;
 
@@ -48,15 +49,40 @@ fn a_mention_is_completed_and_the_comment_goes_out_with_cmd_enter(cx: &mut TestA
     assert_eq!(text(&t, cx), "", "the box is cleared");
     let (said, mentions, _) = last_comment(&t).unwrap_or_default();
     assert_eq!(said, "Try again @Fixer with batches of 50");
-    assert_eq!(mentions, [RunnableRef::agent("fixer")], "the mention goes out with the comment");
-    assert!(super::shown(cx, "issue-activity-9"), "the new comment is in the feed");
+    let fixer_step = RunnableRef::session(&SessionId::new(FIXER_1427));
+    assert_eq!(mentions, [fixer_step], "the run's Fixer is mentioned, not the library's");
+    assert!(super::shown(cx, "issue-activity-12"), "the new comment is in the feed");
+}
+
+#[gpui::test]
+fn the_at_menu_offers_the_runs_agents_first(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, "PAY-1427");
+    let rows = |busy: bool, cx: &mut gpui::VisualTestContext| {
+        t.panel.read_with(cx, |p, cx| {
+            let mut agents = p.run_agents(cx);
+            for agent in &mut agents {
+                agent.busy |= busy;
+            }
+            let (rows, total) = super::super::comment::mention_rows(p.catalog.read(cx), &agents, "fix", None, "PAY-1427");
+            let rows: Vec<_> = rows.into_iter().map(|r| (r.label.to_string(), r.detail.map(|d| d.to_string()), r.hint.map(|h| h.to_string()))).collect();
+            (rows, total)
+        })
+    };
+    let (shown, total) = rows(false, cx);
+    assert_eq!(shown[0].0, "Fixer");
+    assert_eq!(shown[0].1.as_deref(), Some("Agent · Fixer step of run 2 · continues in its worktree"));
+    assert_eq!(shown[0].2.as_deref(), Some("run 2"));
+    assert_eq!(shown.iter().filter(|(name, _, _)| name == "Fixer").count(), 1, "the library's Fixer gives way: {shown:#?}");
+    assert_eq!(total, shown.len());
+    let (shown, _) = rows(true, cx);
+    assert_eq!(shown[0].1.as_deref(), Some("Agent · Fixer step of run 2 · running now"));
 }
 
 #[gpui::test]
 fn the_at_menu_offers_agents_orchestrators_and_pipelines(cx: &mut TestAppContext) {
     let (t, cx) = open(cx, "PAY-1427");
     let rows = t.panel.read_with(cx, |p, cx| {
-        let (rows, total) = super::super::comment::mention_rows(p.catalog.read(cx), "re", None, "PAY-1427");
+        let (rows, total) = super::super::comment::mention_rows(p.catalog.read(cx), &[], "re", None, "PAY-1427");
         (rows.into_iter().map(|r| (r.label.to_string(), r.detail.map(|d| d.to_string()))).collect::<Vec<_>>(), total)
     });
     let (rows, total) = rows;
@@ -66,7 +92,7 @@ fn the_at_menu_offers_agents_orchestrators_and_pipelines(cx: &mut TestAppContext
     assert!(total >= 2);
     let attached = t.panel.read_with(cx, |p, cx| {
         let pipeline = RunnableRef::pipeline("pay-triage");
-        let (rows, _) = super::super::comment::mention_rows(p.catalog.read(cx), "pay", Some(&pipeline), "PAY-1427");
+        let (rows, _) = super::super::comment::mention_rows(p.catalog.read(cx), &[], "pay", Some(&pipeline), "PAY-1427");
         rows.first().and_then(|r| r.detail.clone()).map(|d| d.to_string())
     });
     assert_eq!(attached.as_deref(), Some("Pipeline · on this issue now · gets your comment as input"));

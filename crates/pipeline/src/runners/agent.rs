@@ -5,7 +5,10 @@ use std::collections::HashMap;
 
 use agent::{AgentEnv, AgentOutcome, AgentSpec, Finish, FinishTool, Input, StopCause, SubagentTemplate};
 use anyhow::{Result, anyhow, bail};
-use model::{AgentDef, AgentEvent, AgentNode, LogLevel, NodeKind, RunnableRef, SessionId, StartFrom, ToolDisplay};
+use model::{
+    AgentDef, AgentEvent, AgentNode, LogLevel, ModelRef, NodeKind, Runnable, RunnableRef, SessionId, StartFrom,
+    ToolDisplay,
+};
 
 use super::places::Place;
 use super::services::SessionOpen;
@@ -26,13 +29,33 @@ pub(crate) fn run(ctx: &Ctx, node: &AgentNode) -> JobResult {
 /// The library agent with the node's overrides: its display name, who spends, and the definition.
 fn resolve(ctx: &Ctx, node: &AgentNode) -> Result<(String, RunnableRef, AgentDef)> {
     let sessions = &ctx.services().sessions;
-    let (name, reference, mut def) = match &node.runnable {
-        Some(reference) => {
-            let found = sessions.runnable(reference).ok_or_else(|| anyhow!("{reference} is no longer in the library"))?;
+    let found = match &node.runnable {
+        Some(reference) => Some(sessions.runnable(reference).ok_or_else(|| anyhow!("{reference} is no longer in the library"))?),
+        None => None,
+    };
+    node_agent(&ctx.job.node.name, node, found.as_ref(), &ctx.runner.pipeline_id, sessions.default_model())
+}
+
+/// What an agent or orchestrator node of the pipeline with id `pipeline` runs as: the library agent it uses
+/// (`library`, looked up from `node.runnable`) with the node's overrides, or the node's own
+/// definition. Gives its display name, the runnable that spends, and the definition; fails
+/// with a reason a person can act on when there is no model or no role.
+///
+/// The engine also uses it to continue a node's session after its run, under the same rules.
+pub fn node_agent(
+    node_name: &str,
+    node: &AgentNode,
+    library: Option<&Runnable>,
+    pipeline: &str,
+    default_model: ModelRef,
+) -> Result<(String, RunnableRef, AgentDef)> {
+    let (name, reference, mut def) = match (&node.runnable, library) {
+        (Some(reference), Some(found)) => {
             let def = found.agent.clone().ok_or_else(|| anyhow!("{reference} is not an agent or orchestrator"))?;
             (found.name.clone(), reference.clone(), def)
         }
-        None => (ctx.job.node.name.clone(), RunnableRef::pipeline(&ctx.runner.pipeline_id), AgentDef::default()),
+        (Some(reference), None) => bail!("{reference} is no longer in the library"),
+        (None, _) => (node_name.to_string(), RunnableRef::pipeline(pipeline), AgentDef::default()),
     };
     if !node.role.trim().is_empty() {
         def.role = node.role.clone();
@@ -53,13 +76,13 @@ fn resolve(ctx: &Ctx, node: &AgentNode) -> Result<(String, RunnableRef, AgentDef
         def.max_steps = steps;
     }
     if def.model.is_empty() {
-        def.model = sessions.default_model();
+        def.model = default_model;
     }
     if def.model.is_empty() {
-        bail!("{} has no model and none is configured: pick one on the node or add a provider", ctx.job.node.name);
+        bail!("{node_name} has no model and none is configured: pick one on the node or add a provider");
     }
     if def.role.trim().is_empty() {
-        bail!("{} has no role: write one on the node or pick a library agent", ctx.job.node.name);
+        bail!("{node_name} has no role: write one on the node or pick a library agent");
     }
     Ok((name, reference, def))
 }

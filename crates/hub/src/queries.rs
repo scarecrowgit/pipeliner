@@ -131,6 +131,12 @@ impl Queries {
         self.ask(cx, move |api| api.run_log(&id, after_seq, limit))
     }
 
+    /// The agents of an issue's latest run a comment can mention.
+    pub fn issue_agents(&self, key: &IssueKey, cx: &App) -> Task<Result<Vec<crate::api::RunAgent>>> {
+        let key = key.clone();
+        self.ask(cx, move |api| api.issue_agents(&key))
+    }
+
     /// Every run of an issue, for its run history.
     pub fn runs_for_issue(&self, key: &IssueKey, cx: &App) -> Task<Result<Vec<Run>>> {
         let key = key.clone();

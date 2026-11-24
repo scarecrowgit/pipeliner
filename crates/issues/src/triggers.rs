@@ -1,6 +1,6 @@
 //! Who wakes up when something happens on an issue.
 
-use model::{Issue, IssueStatus, Runnable, RunnableRef};
+use model::{Issue, IssueStatus, RunAgent, Runnable, RunnableRef};
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +25,9 @@ pub enum WakeMode {
     Start,
     /// The attached runner carries on with this issue and gets the text as input.
     Continue,
+    /// An agent of the issue's latest run continues its node's own session, in its worktree,
+    /// with the comment as its next message. The run itself does not move.
+    Session,
 }
 
 /// A runnable that should be woken, and what to tell it.
@@ -74,6 +77,16 @@ struct Candidate<'a> {
 /// - A paused or archived runnable (or one that no longer exists) is not woken; it appears in
 ///   `refusals` instead, once.
 pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]) -> Wakes {
+    wake_intents_with(issue, happening, runnables, &[])
+}
+
+/// [`wake_intents`] on an issue whose latest run had `agents`.
+///
+/// A mentioned agent of the run continues its own session ([`WakeMode::Session`]); one whose
+/// node is running right now, or that is no longer an agent of the latest run, is refused. A
+/// comment that mentions a run's agent is meant for that agent: it does not also reach the
+/// attached runner through `on_comment` (a mention of the runner still does).
+pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runnable], agents: &[RunAgent]) -> Wakes {
     let attached = issue.runner.as_ref();
     let triggers = &issue.triggers;
     let mut candidates: Vec<Candidate> = Vec::new();
@@ -97,15 +110,18 @@ pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]
         }
         Happening::MovedTo(_) => {}
         Happening::Comment { text, mentions } => {
+            let to_run_agent = mentions.iter().any(|m| m.session_id().is_some());
             if let Some(target) = attached {
                 let mentioned = triggers.on_mention && mentions.contains(target);
-                if mentioned || triggers.on_comment {
+                if mentioned || (triggers.on_comment && !to_run_agent) {
                     let cause = if mentioned { "@mention · comment passed as input" } else { "comment passed as input" };
                     candidates.push(Candidate { target, mode: WakeMode::Continue, cause, input: text.clone() });
                 }
             }
             for target in mentions {
-                if Some(target) != attached {
+                if target.session_id().is_some() {
+                    candidates.push(Candidate { target, mode: WakeMode::Session, cause: "", input: text.clone() });
+                } else if Some(target) != attached {
                     candidates.push(Candidate {
                         target,
                         mode: WakeMode::Start,
@@ -124,6 +140,28 @@ pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]
             continue;
         }
         seen.push(c.target);
+        if c.mode == WakeMode::Session {
+            match agents.iter().find(|a| &a.reference == c.target) {
+                Some(agent) if agent.busy => wakes.refusals.push(WakeRefusal {
+                    target: c.target.clone(),
+                    name: agent.name.clone(),
+                    reason: format!("its step of run {} is running right now; mention it again once the step is done", agent.run_number),
+                }),
+                Some(agent) => wakes.intents.push(WakeIntent {
+                    target: c.target.clone(),
+                    name: agent.name.clone(),
+                    mode: WakeMode::Session,
+                    cause: session_cause(agent),
+                    input: c.input,
+                }),
+                None => wakes.refusals.push(WakeRefusal {
+                    target: c.target.clone(),
+                    name: "The agent".to_string(),
+                    reason: "it is no longer an agent of this issue's latest run".to_string(),
+                }),
+            }
+            continue;
+        }
         match runnables.iter().find(|r| &r.reference == c.target) {
             Some(r) if r.archived => wakes.refusals.push(refusal(r, "archived")),
             Some(r) if r.paused => wakes.refusals.push(refusal(r, "paused · takes no new work")),
@@ -142,6 +180,12 @@ pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]
         }
     }
     wakes
+}
+
+/// "@mention · continues its work from run 2 in its worktree".
+pub fn session_cause(agent: &RunAgent) -> String {
+    let place = if agent.worktree.is_some() { "in its worktree" } else { "in its session" };
+    format!("@mention · continues its work from run {} {place}", agent.run_number)
 }
 
 fn refusal(r: &Runnable, reason: &str) -> WakeRefusal {

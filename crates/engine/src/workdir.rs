@@ -187,3 +187,40 @@ impl WorkdirApi for Engine {
         Ok(())
     }
 }
+
+/// Puts back the worktree of `branch` at `dir`, whose folder was deleted, from the checkout
+/// `repo`. Fails with a reason a person can act on when the branch is gone too.
+pub(crate) fn restore_worktree(repo: &Path, dir: &Path, branch: &str) -> Result<()> {
+    let cancel = CancelToken::new();
+    if !repo.is_dir() {
+        bail!("its worktree {} is gone, and so is the checkout {} it came from", dir.display(), repo.display());
+    }
+    if !vcs::branches(repo, &cancel).iter().any(|b| b == branch) {
+        bail!("its worktree {} is gone and the branch `{branch}` no longer exists in {}", dir.display(), repo.display());
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    // The entry of the deleted folder would make git refuse to check the branch out again.
+    let _ = git(repo, &["worktree", "prune"]);
+    let dir_arg = dir.to_string_lossy();
+    git(repo, &["worktree", "add", &dir_arg, branch])
+        .with_context(|| format!("putting back the worktree of `{branch}` at {}", dir.display()))?;
+    Ok(())
+}
+
+/// Runs git in `dir` without a terminal to prompt on; fails with its error output.
+fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("starting git")?;
+    if !out.status.success() {
+        bail!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}

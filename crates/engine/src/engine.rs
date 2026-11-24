@@ -82,6 +82,8 @@ pub(crate) struct Inner {
     pub catalog: RwLock<Arc<Catalog>>,
     pub live: Live,
     pub asks: Asks,
+    /// Answers sessions owe the issues whose comments woke them.
+    pub replies: crate::wake::Replies,
     pub slots: Slots,
     pub mcp: McpHub,
     pub limits: Limits,
@@ -144,6 +146,7 @@ impl Engine {
             catalog: RwLock::new(Arc::new(catalog)),
             live: Live::default(),
             asks: Asks::default(),
+            replies: Default::default(),
             slots: Slots::default(),
             limits: options.limits,
             headers: Mutex::new(()),

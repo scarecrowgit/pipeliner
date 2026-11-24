@@ -7,13 +7,15 @@ use crate::api::{
     ActionNode, AgentNode, EdgeDef, EdgeKind, FileMode, FileNode, GraphDef, IssueKey, IssueStatus, Limits, LogLevel,
     NodeDef, NodeId, NodeInstance, NodeKind, NodeStatus, PORT_APPROVED, PORT_OUT, PipelineId, PipelineVersion, Pos,
     ReviewNode, RouterNode, RouterRule, Run, RunId, RunLogLine, RunState, RunnableRef, SkillPolicy, SourceKind,
-    SourceNode, SpanKind, SpawnPolicy, SubagentNode, ToolAccess, ToolGrants, Usage, VersionState, WorkdirDef,
+    SessionId, SourceNode, SpanKind, SpawnPolicy, SubagentNode, ToolAccess, ToolGrants, Usage, VersionState, WorkdirDef,
 };
 
 use super::data_sessions::{model, path};
 use super::{HOUR, MINUTE, World};
 
 pub const PAY_TRIAGE: &str = "pay-triage";
+/// The session of the Fixer step of run-1427 (the chat on PAY-1427).
+pub const FIXER_1427: &str = "chat-refund-timeout";
 
 fn node(id: &str, name: &str, x: f32, y: f32, kind: NodeKind) -> NodeDef {
     NodeDef { id: NodeId::new(id), name: name.to_string(), pos: Pos { x, y }, kind }
@@ -269,9 +271,16 @@ pub fn fill(world: &mut World) {
             instance("router", "Router", 0, Done, Step, t + MINUTE, 0.0, "rule 2: Bug"),
             instance("repro", "Reproducer", 0, Running, Agent, t + 2 * MINUTE, 0.10, ""),
             instance("logd", "Log digger", 0, Running, Spawned, t + 11 * MINUTE, 0.02, ""),
+            instance("fixer", "Fixer", 0, Done, Agent, t + 3 * MINUTE, 0.08, "Batched refunds by 50 per call"),
         ],
     );
     r1427.number = 2;
+    // The Fixer worked in its own worktree; a comment that mentions it continues there.
+    if let Some(fixer) = r1427.nodes.last_mut() {
+        fixer.session = Some(SessionId::new(FIXER_1427));
+        fixer.worktree = Some(path(".harness/worktrees/payments-api/fix-pay-1427-batch"));
+        fixer.branch = Some("fix/pay-1427-batch".into());
+    }
     let t = now - 3 * HOUR - 20 * MINUTE;
     let r1431 = run(
         "run-1431",

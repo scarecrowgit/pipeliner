@@ -1,15 +1,26 @@
 //! Waking runnables on issues: a pipeline starts a run with the issue as the item (or answers
-//! the question its open run waits on); an agent or orchestrator gets a chat on the issue.
-//! Every wake-up is recorded in the issue's feed, as `Woken` or `WakeFailed` with the reason.
+//! the question its open run waits on); an agent or orchestrator gets a chat on the issue; an
+//! agent of the issue's latest run continues its node's own session ([`session`]). Every
+//! wake-up is recorded in the issue's feed, as `Woken` or `WakeFailed` with the reason, and an
+//! agent's answer comes back to the thread as its comment ([`reply`]).
+
+pub(crate) mod node;
+mod reply;
+mod session;
+
+pub(crate) use reply::Replies;
+
+use std::path::PathBuf;
 
 use crate::api::RunApi as _;
 use anyhow::{Result, anyhow, bail};
 use issues::{Happening, WakeIntent, WakeMode};
-use model::{Actor, Issue, IssueEventKind, PipelineId, RunId, RunState, RunnableRef, WorkMode};
+use model::{Actor, Attachment, Issue, IssueEventKind, NodeKind, PipelineId, RunId, RunState, RunnableRef, WorkMode};
 use store::SessionFilter;
 
 use crate::api::{ChatApi, NewSession, UserMessage, WorkdirChoice};
 use crate::engine::Engine;
+use reply::PendingReply;
 
 /// Prefix of the branches chats on issues get.
 const ISSUE_BRANCH_PREFIX: &str = "issue/";
@@ -31,10 +42,20 @@ fn wake_input(about: String, said: &str) -> String {
 impl Engine {
     /// Wakes whoever `happening` wakes on `issue`, and records who could not be.
     pub(crate) fn wake(&self, issue: &Issue, happening: &Happening) -> Result<()> {
+        self.wake_with(issue, happening, &[])
+    }
+
+    /// [`Engine::wake`] for a comment with `images`: the agents it wakes get them too.
+    pub(crate) fn wake_with(&self, issue: &Issue, happening: &Happening, images: &[Attachment]) -> Result<()> {
         let catalog = self.inner.catalog();
-        let wakes = issues::triggers::wake_intents(issue, happening, catalog.runnables());
+        let agents = match happening {
+            Happening::Comment { mentions, .. } if mentions.iter().any(|m| m.session_id().is_some()) => self.run_agents_of(&issue.key)?,
+            _ => Vec::new(),
+        };
+        let wakes = issues::triggers::wake_intents_with(issue, happening, catalog.runnables(), &agents);
         for intent in wakes.intents {
-            self.wake_one(issue, &intent)?;
+            let started = self.try_wake(issue, &intent, images);
+            self.record(issue, &intent, &started)?;
         }
         for refusal in wakes.refusals {
             let kind = IssueEventKind::WakeFailed { target: refusal.target, name: refusal.name, reason: refusal.reason };
@@ -57,14 +78,9 @@ impl Engine {
             cause: cause.to_string(),
             input: issue_input(issue),
         };
-        let started = self.try_wake(issue, &intent);
+        let started = self.try_wake(issue, &intent, &[]);
         self.record(issue, &intent, &started)?;
         started.map(|_| ())
-    }
-
-    fn wake_one(&self, issue: &Issue, intent: &WakeIntent) -> Result<()> {
-        let started = self.try_wake(issue, intent);
-        self.record(issue, intent, &started)
     }
 
     fn record(&self, issue: &Issue, intent: &WakeIntent, started: &Result<(Option<RunId>, u32)>) -> Result<()> {
@@ -81,10 +97,13 @@ impl Engine {
         self.inner.activity(&issue.key, Actor::System, kind)
     }
 
-    fn try_wake(&self, issue: &Issue, intent: &WakeIntent) -> Result<(Option<RunId>, u32)> {
+    fn try_wake(&self, issue: &Issue, intent: &WakeIntent, images: &[Attachment]) -> Result<(Option<RunId>, u32)> {
+        if intent.mode == WakeMode::Session {
+            return self.wake_session(issue, &intent.target, &intent.input, images.to_vec());
+        }
         match intent.target.scheme() {
             "pipeline" => self.wake_pipeline(issue, intent),
-            "agent" | "orchestrator" => self.wake_agent(issue, intent).map(|_| (None, 0)),
+            "agent" | "orchestrator" => self.wake_agent(issue, intent, images).map(|_| (None, 0)),
             other => bail!("a {other} cannot be started on an issue"),
         }
     }
@@ -102,6 +121,7 @@ impl Engine {
                 bail!("run {} is still open ({:?}); the comment stays on the issue", run.number, run.state)
             }
             (WakeMode::Start, Some(run)) => bail!("run {} on this issue is still open; cancel it first", run.number),
+            (WakeMode::Session, _) => bail!("a pipeline is not an agent of a run"),
             (WakeMode::Continue | WakeMode::Start, None) => wake_input(issue_input(issue), &intent.input),
         };
         // Checked again, atomically, where the run starts.
@@ -110,8 +130,8 @@ impl Engine {
     }
 
     /// A chat with the agent on the issue: the one it already has, else a new one in a
-    /// worktree of the project's repo when it has one.
-    fn wake_agent(&self, issue: &Issue, intent: &WakeIntent) -> Result<()> {
+    /// worktree of the issue's repo when one is known. Its answer is posted on the issue.
+    fn wake_agent(&self, issue: &Issue, intent: &WakeIntent, images: &[Attachment]) -> Result<()> {
         let inner = &self.inner;
         let existing = inner
             .store
@@ -122,7 +142,7 @@ impl Engine {
         let session = match (intent.mode, existing) {
             (WakeMode::Continue, Some(session)) => session,
             _ => {
-                let workdir = self.issue_repo(issue)?.map(|path| WorkdirChoice {
+                let workdir = self.issue_repo(issue, &intent.target)?.map(|path| WorkdirChoice {
                     path,
                     mode: WorkMode::Worktree,
                     base: None,
@@ -140,19 +160,51 @@ impl Engine {
         };
         let text = match intent.mode {
             WakeMode::Start => format!("Issue {}: {}", issue.key, wake_input(issue_input(issue), &intent.input)),
-            WakeMode::Continue => intent.input.clone(),
+            WakeMode::Continue | WakeMode::Session => intent.input.clone(),
         };
-        self.send(&session.id, UserMessage { text, images: Vec::new() })
+        let actor = Actor::Runnable { reference: intent.target.clone(), name: intent.name.clone(), spawned: false, session: Some(session.id.clone()) };
+        inner.replies.expect(&session.id, PendingReply { issue: issue.key.clone(), actor, said: text.clone() });
+        if let Err(error) = self.send(&session.id, UserMessage { text: text.clone(), images: images.to_vec() }) {
+            inner.replies.forget(&session.id, &text);
+            return Err(error);
+        }
+        Ok(())
     }
 
-    /// The checkout the issue's work belongs in: the project's repo named by the issue, else
-    /// its first one.
-    fn issue_repo(&self, issue: &Issue) -> Result<Option<std::path::PathBuf>> {
-        let Some(project) = self.inner.store.project(&issue.project)? else { return Ok(None) };
-        let named = issue.repo.as_ref().and_then(|name| {
-            project.repos.iter().find(|path| path.file_name().is_some_and(|n| n.to_string_lossy() == name.as_str()))
+    /// The checkout the issue's work belongs in, for `target`: the project's repo named by the
+    /// issue, else its first one. A project without repos (the pipeline names its own) falls
+    /// back to the workdirs of the pipeline the issue runs with: the one the issue names, else
+    /// the one a node run by `target` works in, else the first.
+    fn issue_repo(&self, issue: &Issue, target: &RunnableRef) -> Result<Option<PathBuf>> {
+        let named = |path: &PathBuf| issue.repo.as_ref().is_some_and(|name| path.file_name().is_some_and(|n| n.to_string_lossy() == name.as_str()));
+        if let Some(project) = self.inner.store.project(&issue.project)? {
+            let found = project.repos.iter().find(|p| named(p)).or(project.repos.first()).filter(|p| p.is_dir());
+            if let Some(path) = found {
+                return Ok(Some(path.clone()));
+            }
+        }
+        Ok(self.pipeline_repo(issue, target).filter(|p| p.is_dir()))
+    }
+
+    /// The workdir of the issue's pipeline that `target` would work in (see [`Engine::issue_repo`]).
+    fn pipeline_repo(&self, issue: &Issue, target: &RunnableRef) -> Option<PathBuf> {
+        let inner = &self.inner;
+        let latest = inner.store.runs_for_issue(&issue.key).ok()?.into_iter().max_by_key(|r| (r.number, r.started));
+        let graph = match (&latest, issue.runner.as_ref().filter(|r| r.scheme() == "pipeline")) {
+            (Some(run), _) => crate::pipelines::run_graph(inner, &run.id),
+            (None, Some(runner)) => crate::pipelines::live_graph(inner, &PipelineId::new(runner.id())).ok().map(|(g, _)| g),
+            (None, None) => None,
+        }?;
+        let by_name = issue.repo.as_ref().and_then(|name| {
+            graph.workdirs.iter().find(|w| {
+                w.id == *name || w.name.eq_ignore_ascii_case(name) || w.path.file_name().is_some_and(|n| n.to_string_lossy() == name.as_str())
+            })
         });
-        Ok(named.or(project.repos.first()).filter(|p| p.is_dir()).cloned())
+        let by_node = graph.nodes.iter().find_map(|n| match &n.kind {
+            NodeKind::Agent(a) | NodeKind::Orchestrator(a) if a.runnable.as_ref() == Some(target) => graph.workdirs.iter().find(|w| w.id == a.workdir),
+            _ => None,
+        });
+        by_name.or(by_node).or(graph.workdirs.first()).map(|w| inner.paths.expand(&w.path.to_string_lossy()))
     }
 }
 

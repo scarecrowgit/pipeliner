@@ -2,9 +2,10 @@
 
 use crate::api::{
     Actor, Attachment, Autopilot, AutopilotId, AutopilotTrigger, BlobId, Issue, IssueEvent, IssueEventKind, IssueKey,
-    IssueStatus, IssueType, Priority, Project, ProjectId, RunId, RunnableRef, Schedule, StartTriggers,
+    IssueStatus, IssueType, Priority, Project, ProjectId, RunId, RunnableRef, Schedule, SessionId, StartTriggers,
 };
 
+use super::data_runs::FIXER_1427;
 use super::data_sessions::path;
 use super::{DAY, HOUR, MINUTE, World};
 
@@ -143,7 +144,7 @@ fn next_two_am(now: i64) -> i64 {
 
 fn runnable(reference: RunnableRef, name: &str) -> Actor {
     let spawned = reference.scheme() == "spawned";
-    Actor::Runnable { reference, name: name.to_string(), spawned }
+    Actor::Runnable { reference, name: name.to_string(), spawned, session: None }
 }
 
 fn feed_1440(world: &mut World) {
@@ -168,6 +169,7 @@ fn feed_1427(world: &mut World) {
     let now = world.now;
     let fixer = RunnableRef::agent("fixer");
     let codex = RunnableRef::agent("codex");
+    let fixer_step = RunnableRef::session(&SessionId::new(FIXER_1427));
     let events = vec![
         (13, Actor::Me, IssueEventKind::Attached { runner: RunnableRef::pipeline("pay-triage") }),
         (12, runnable(RunnableRef::pipeline("pay-triage"), "PAY triage"), IssueEventKind::Note { text: "Picked up by rule 2 → Reproducer.".into() }),
@@ -206,6 +208,31 @@ fn feed_1427(world: &mut World) {
             2,
             Actor::System,
             IssueEventKind::WakeFailed { target: codex, name: "Codex".into(), reason: "runtime laptop offline since 14:02 · reconnect it or retry".into() },
+        ),
+        (
+            1,
+            Actor::Me,
+            IssueEventKind::Comment { text: "@Fixer the batch test fails on main now, fix it".into(), images: Vec::new(), mentions: vec![fixer_step.clone()] },
+        ),
+        (
+            1,
+            Actor::System,
+            IssueEventKind::Woken {
+                target: fixer_step.clone(),
+                name: "Fixer".into(),
+                run: None,
+                number: 0,
+                cause: "@mention · continues its work from run 2 in its worktree".into(),
+            },
+        ),
+        (
+            0,
+            Actor::Runnable { reference: fixer_step, name: "Fixer".into(), spawned: false, session: Some(SessionId::new(FIXER_1427)) },
+            IssueEventKind::Comment {
+                text: "Rebased `fix/pay-1427-batch` on main and fixed the batch size check; `refund.spec` passes again.".into(),
+                images: Vec::new(),
+                mentions: Vec::new(),
+            },
         ),
     ];
     if let Some(feed) = world.issue_events.get_mut(&IssueKey::new("PAY-1427")) {

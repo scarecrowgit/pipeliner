@@ -33,7 +33,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     ScrollHandle, SharedString, canvas, Subscription, Task, Window, div, prelude::*, px,
 };
-use hub::api::{Actor, Issue, IssueEventKind, IssuePatch, Run, RunId};
+use hub::api::{Actor, Issue, IssueEventKind, IssuePatch, Run, RunAgent, RunId};
 use hub::model::IssueKey;
 use hub::{CatalogModel, InboxModel, IssuesModel, LoadState, RunsModel};
 use ui::dev::{Probe, Probed};
@@ -75,12 +75,15 @@ pub(crate) enum Shown {
     Ready(Arc<Issue>),
 }
 
-/// Every run of the issue, read when the latest run or the run count changes.
+/// Every run of the issue, read when the latest run or the run count changes, and the agents
+/// of the latest one a comment can mention.
 #[derive(Default)]
 struct History {
     stamp: Option<(Option<RunId>, u32)>,
     runs: Vec<Arc<Run>>,
+    agents: Vec<RunAgent>,
     _task: Option<Task<()>>,
+    _agents_task: Option<Task<()>>,
 }
 
 /// The side panel of one issue. Self-contained: it reads the issue, its runs and its activity
@@ -342,8 +345,20 @@ impl IssuePanel {
         self.history.stamp = Some(stamp);
         if issue.run_count == 0 && issue.run.is_none() {
             self.history.runs.clear();
+            self.history.agents.clear();
             return;
         }
+        let agents = hub::queries(cx).issue_agents(&self.issue, cx);
+        self.history._agents_task = Some(cx.spawn(async move |this, cx| {
+            let result = agents.await;
+            this.update(cx, |this, cx| {
+                if let Ok(agents) = result {
+                    this.history.agents = agents;
+                    this.sync_mentions(cx);
+                }
+            })
+            .ok();
+        }));
         let task = hub::queries(cx).runs_for_issue(&self.issue, cx);
         self.history._task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -384,9 +399,23 @@ impl IssuePanel {
         }
     }
 
-    /// Names drawn as mentions in comments: every runnable of the catalog.
+    /// The agents of the latest run a comment can mention, with whether their step runs now
+    /// as the live run shows it.
+    pub(crate) fn run_agents(&self, cx: &App) -> Vec<RunAgent> {
+        let latest = self.latest_run(cx);
+        let mut agents = self.history.agents.clone();
+        for agent in &mut agents {
+            if let Some(node) = latest.as_ref().filter(|run| run.id == agent.run).and_then(|run| run.instance(&agent.node, agent.variant)) {
+                agent.busy = node.status == hub::api::NodeStatus::Running;
+            }
+        }
+        agents
+    }
+
+    /// Names drawn as mentions in comments: the run's agents and every runnable of the catalog.
     fn mention_names(&self, cx: &App) -> Vec<String> {
-        self.catalog.read(cx).runnables().iter().map(|runnable| runnable.name.clone()).collect()
+        let agents = self.history.agents.iter().flat_map(|a| a.names().map(str::to_string));
+        agents.chain(self.catalog.read(cx).runnables().iter().map(|runnable| runnable.name.clone())).collect()
     }
 
     fn sync_mentions(&mut self, cx: &mut Context<Self>) {

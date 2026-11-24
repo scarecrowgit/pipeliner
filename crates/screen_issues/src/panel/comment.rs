@@ -1,4 +1,5 @@
-//! The comment composer docked under the panel: Cmd/Ctrl+Enter posts, `@` completes agents,
+//! The comment composer docked under the panel: Cmd/Ctrl+Enter posts, `@` completes the agents
+//! of the issue's latest run (a mention continues their own session) and the agents,
 //! orchestrators and pipelines of the catalog (a mention wakes them: the engine reads the
 //! names in the text), images pasted, dropped or picked are stored before the comment can go
 //! out, and the draft is kept per issue.
@@ -7,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, Entity, IntoElement, PathPromptOptions, SharedString, Task, Window, div, prelude::*, px};
-use hub::api::{Attachment as Uploaded, Origin, Runnable, RunnableKind, RunnableRef};
+use hub::api::{Attachment as Uploaded, Origin, RunAgent, Runnable, RunnableKind, RunnableRef};
 use hub::{CatalogModel, HubNotice};
 use ui::prelude::*;
 use ui_rich::{Attachment, AttachmentContent, AttachmentId, Completion, Composer, ComposerEvent, Trigger, TriggerKind, composer_view};
@@ -112,7 +113,8 @@ impl IssuePanel {
     fn complete(&mut self, trigger: Option<&Trigger>, cx: &mut Context<Self>) {
         let Some(trigger) = trigger.filter(|t| t.kind == TriggerKind::Mention) else { return };
         let attached = self.current(cx).and_then(|issue| issue.runner.clone());
-        let (rows, total) = mention_rows(self.catalog.read(cx), &trigger.query, attached.as_ref(), &self.issue.to_string());
+        let agents = self.run_agents(cx);
+        let (rows, total) = mention_rows(self.catalog.read(cx), &agents, &trigger.query, attached.as_ref(), &self.issue.to_string());
         self.composer.update(cx, |c, cx| c.set_completions(rows, Some(total), cx));
     }
 
@@ -244,52 +246,74 @@ pub(super) fn mentionable(catalog: &CatalogModel) -> impl Iterator<Item = &Runna
     catalog.runnables().iter().filter(|r| !r.archived && r.uses.issues && !matches!(r.origin, Origin::Spawned { .. }))
 }
 
-/// The `@` rows for `query` and how many matched in all. Names that start with the query
-/// come first, then names that contain it; within each, the attached runner, then
+/// The `@` rows for `query` and how many matched in all. The agents of the issue's latest run
+/// come first (a mention continues their own session); a library runnable with the name of
+/// one of them is left out, since the name is theirs. Then, among the library: names that
+/// start with the query, then names that contain it; within each, the attached runner, then
 /// orchestrators, agents and pipelines.
 pub(super) fn mention_rows(
     catalog: &CatalogModel,
+    agents: &[RunAgent],
     query: &str,
     attached: Option<&RunnableRef>,
     issue: &str,
 ) -> (Vec<Completion>, usize) {
     let q = query.to_lowercase();
-    let mut hits: Vec<(u8, &Runnable)> = mentionable(catalog)
-        .filter_map(|r| {
-            let name = r.name.to_lowercase();
-            if name.starts_with(&q) {
-                Some((0, r))
-            } else if name.contains(&q) {
-                Some((1, r))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let class = |name: &str| {
+        let name = name.to_lowercase();
+        if name.starts_with(&q) {
+            Some(0)
+        } else if name.contains(&q) {
+            Some(1)
+        } else {
+            None
+        }
+    };
+    let mut run_hits: Vec<(u8, &RunAgent)> =
+        agents.iter().filter_map(|a| a.names().filter_map(class).min().map(|c| (c, a))).collect();
+    run_hits.sort_by_key(|(class, a)| (*class, a.name.to_lowercase()));
+    let taken = |name: &str| agents.iter().any(|a| a.names().any(|n| n.eq_ignore_ascii_case(name)));
+    let mut hits: Vec<(u8, &Runnable)> =
+        mentionable(catalog).filter(|r| !taken(&r.name)).filter_map(|r| class(&r.name).map(|c| (c, r))).collect();
     hits.sort_by_key(|(class, r)| (*class, attached != Some(&r.reference), kind_rank(r.kind), r.name.to_lowercase()));
-    let total = hits.len();
-    let rows = hits
-        .into_iter()
-        .take(MENTION_LIMIT)
-        .map(|(_, r)| {
-            let kind = pickers::kind_label(r.kind);
-            let detail = if r.paused {
-                format!("{kind} · paused · takes no new work")
-            } else if attached == Some(&r.reference) {
-                format!("{kind} · on this issue now · gets your comment as input")
-            } else {
-                format!("{kind} · starts a new run on {issue}")
-            };
-            let row = Completion::new(format!("runnable:{}", r.reference), r.name.clone(), format!("@{}", r.name))
-                .detail(detail)
-                .icon(pickers::kind_icon(r.kind));
-            match catalog.activity(&r.reference) {
-                Some(activity) => row.hint(pickers::state_label(&activity.state).0),
-                None => row,
-            }
-        })
-        .collect();
+    let total = run_hits.len() + hits.len();
+    let agent_rows = run_hits.into_iter().map(|(_, a)| agent_row(a));
+    let library_rows = hits.into_iter().map(|(_, r)| {
+        let kind = pickers::kind_label(r.kind);
+        let detail = if r.paused {
+            format!("{kind} · paused · takes no new work")
+        } else if attached == Some(&r.reference) {
+            format!("{kind} · on this issue now · gets your comment as input")
+        } else {
+            format!("{kind} · starts a new run on {issue}")
+        };
+        let row = Completion::new(format!("runnable:{}", r.reference), r.name.clone(), format!("@{}", r.name))
+            .detail(detail)
+            .icon(pickers::kind_icon(r.kind));
+        match catalog.activity(&r.reference) {
+            Some(activity) => row.hint(pickers::state_label(&activity.state).0),
+            None => row,
+        }
+    });
+    let rows = agent_rows.chain(library_rows).take(MENTION_LIMIT).collect();
     (rows, total)
+}
+
+/// "Agent · Mockup step of run 2 · continues in its worktree".
+fn agent_row(agent: &RunAgent) -> Completion {
+    let kind = pickers::kind_label(agent.kind);
+    let step = format!("{} step of run {}", agent.name, agent.run_number);
+    let detail = if agent.busy {
+        format!("{kind} · {step} · running now")
+    } else if agent.worktree.is_some() {
+        format!("{kind} · {step} · continues in its worktree")
+    } else {
+        format!("{kind} · {step} · continues its session")
+    };
+    let row = Completion::new(format!("agent:{}", agent.reference), agent.name.clone(), format!("@{}", agent.name))
+        .detail(detail)
+        .icon(pickers::kind_icon(agent.kind));
+    if agent.busy { row.hint("running") } else { row.hint(format!("run {}", agent.run_number)) }
 }
 
 fn kind_rank(kind: RunnableKind) -> u8 {

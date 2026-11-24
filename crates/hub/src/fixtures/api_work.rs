@@ -21,6 +21,34 @@ fn wait_of(run: &Run) -> Option<RunWait> {
 
 use super::{FixtureApi, World, data_inbox};
 
+/// The agents of an issue's latest fixture run: its agent nodes with a session.
+fn run_agents(world: &World, key: &IssueKey) -> Vec<crate::api::RunAgent> {
+    let Some(run) = world.runs.iter().filter(|r| r.issue.as_ref() == Some(key)).max_by_key(|r| (r.number, r.started)) else {
+        return Vec::new();
+    };
+    run.nodes
+        .iter()
+        .filter(|n| n.kind == crate::api::SpanKind::Agent && n.spawned_by.is_none())
+        .filter_map(|n| {
+            let session = n.session.clone()?;
+            Some(crate::api::RunAgent {
+                reference: RunnableRef::session(&session),
+                name: n.name.clone(),
+                runnable_name: None,
+                kind: crate::api::RunnableKind::Agent,
+                session,
+                run: run.id.clone(),
+                run_number: run.number,
+                node: n.node.clone(),
+                variant: n.variant,
+                worktree: n.worktree.clone(),
+                branch: n.branch.clone(),
+                busy: n.status == crate::api::NodeStatus::Running,
+            })
+        })
+        .collect()
+}
+
 impl FixtureApi {
     /// Appends an activity entry and returns its event.
     fn activity(world: &mut World, key: &IssueKey, actor: Actor, kind: IssueEventKind) -> Event {
@@ -177,12 +205,20 @@ impl IssueApi for FixtureApi {
         let event = {
             let mut world = self.world();
             world.issue_mut(key)?;
-            let mentions = world
-                .runnables
-                .iter()
-                .filter(|runnable| text.contains(&format!("@{}", runnable.name)))
-                .map(|runnable| runnable.reference.clone())
-                .collect();
+            // A run's agent answers to its name before a library runnable of the same name.
+            let agents = run_agents(&world, key);
+            let mut mentions: Vec<RunnableRef> = Vec::new();
+            for agent in &agents {
+                if text.contains(&format!("@{}", agent.name)) {
+                    mentions.push(agent.reference.clone());
+                }
+            }
+            for runnable in &world.runnables {
+                let taken = agents.iter().any(|a| a.name == runnable.name);
+                if !taken && text.contains(&format!("@{}", runnable.name)) {
+                    mentions.push(runnable.reference.clone());
+                }
+            }
             Self::activity(&mut world, key, Actor::Me, IssueEventKind::Comment { text: text.to_string(), images, mentions })
         };
         self.emit(event);
@@ -249,6 +285,10 @@ impl IssueApi for FixtureApi {
     fn retry_wake(&self, key: &IssueKey, target: &RunnableRef) -> Result<()> {
         self.record("retry_wake", format!("{key} {target}"))?;
         bail!("runtime laptop is still offline")
+    }
+
+    fn issue_agents(&self, key: &IssueKey) -> Result<Vec<crate::api::RunAgent>> {
+        Ok(run_agents(&self.world(), key))
     }
 
     fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, i64)>> {

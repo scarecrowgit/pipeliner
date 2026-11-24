@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use agent::{AgentDeps, AgentEnv, AgentOutcome, AgentSpec, Input, RuleGate, StopCause};
+use agent::{AgentDeps, AgentEnv, AgentOutcome, AgentSpec, AllowAll, Input, PermissionGate, RuleGate, StopCause};
 use anyhow::{Result, anyhow, bail};
 use base::cancel::CancelToken;
 use mcp::OnChange;
-use model::{AgentEvent, Event, Session, SessionId, SessionState, WorkMode};
+use model::{AgentEvent, Event, Session, SessionId, SessionOrigin, SessionState, WorkMode};
 use tools::ToolRegistry;
 
 use crate::bus::lock;
@@ -50,6 +50,8 @@ fn drive(inner: &Arc<Inner>, id: &SessionId, mut input: Input, cancel: &CancelTo
     let slot = inner.slots.acquire(capacity, cancel);
     loop {
         let (outcome, notes) = if slot.is_some() { run_guarded(inner, id, input, cancel) } else { cancelled() };
+        // Comments on an issue this turn took in get its answer in the issue's thread.
+        inner.post_replies(id, &outcome);
         // Only a turn that ended on its own goes on with what was queued; queued messages stay
         // for the person after a cancel, a question, a limit or a failure.
         let deliver = outcome.stop == StopCause::Finished && !cancel.is_cancelled();
@@ -114,27 +116,39 @@ fn run_once(inner: &Arc<Inner>, id: &SessionId, input: Input, cancel: &CancelTok
     let session = inner.session(id)?;
     let folder = session.workdir.as_ref().map(|w| w.path.clone());
     let catalog = inner.catalog_for(folder.as_deref());
-    let spec = spec_for(inner, &session, &catalog)?;
-    let env = AgentEnv {
-        session: id.clone(),
-        depth: session.depth,
-        workdir: folder.clone(),
-        repo: session.workdir.as_ref().map(|w| w.source.clone().unwrap_or_else(|| w.path.clone())),
-        env: BTreeMap::new(),
-        read_only: session.workdir.as_ref().is_some_and(|w| w.mode == WorkMode::ReadOnly),
-        mode: session.mode,
-        run: None,
-        node: None,
-        created_by: None,
+    // A pipeline node's session keeps the node's definition and its policy: nobody watches a
+    // permission dialog for it, so what its access level grants is allowed, as in its run.
+    let node = match &session.origin {
+        SessionOrigin::Run { run, node, .. } => Some(crate::wake::node::node_turn(inner, &session, run, node, &catalog)?),
+        _ => None,
+    };
+    let rules = StoreRules(inner);
+    let asking = RuleGate::new(&rules, |request, cancel| inner.ask_person(request, cancel));
+    let (spec, env, gate): (AgentSpec, AgentEnv, &dyn PermissionGate) = match node {
+        Some((spec, env)) => (spec, env, &AllowAll),
+        None => {
+            let spec = spec_for(inner, &session, &catalog)?;
+            let env = AgentEnv {
+                session: id.clone(),
+                depth: session.depth,
+                workdir: folder.clone(),
+                repo: session.workdir.as_ref().map(|w| w.source.clone().unwrap_or_else(|| w.path.clone())),
+                env: BTreeMap::new(),
+                read_only: session.workdir.as_ref().is_some_and(|w| w.mode == WorkMode::ReadOnly),
+                mode: session.mode,
+                run: None,
+                node: None,
+                created_by: None,
+            };
+            (spec, env, &asking)
+        }
     };
     let host = StoreHost::new(inner);
-    let rules = StoreRules(inner);
-    let gate = RuleGate::new(&rules, |request, cancel| inner.ask_person(request, cancel));
     let mcp = mcp_view(inner, folder.as_deref());
     let deps = AgentDeps {
         llm: &*inner.llm,
         host: &host,
-        gate: &gate,
+        gate,
         mcp: Some(&mcp),
         skills: &catalog,
         clock: &*inner.clock,

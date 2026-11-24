@@ -110,7 +110,7 @@ fn workdir_issue_and_run_queries_answer() {
     assert!(issues.len() >= 10);
     assert!(issues.iter().all(|issue| issue.project == project));
     assert!(api.issue(&IssueKey::new("PAY-1427")).ok().flatten().is_some());
-    assert_eq!(api.issue_events(&IssueKey::new("PAY-1427")).map(|e| e.len()).ok(), Some(9));
+    assert_eq!(api.issue_events(&IssueKey::new("PAY-1427")).map(|e| e.len()).ok(), Some(12));
     assert!(!api.autopilots(&project).unwrap_or_default().is_empty());
 
     let run = RunId::new("run-1427");
@@ -380,4 +380,20 @@ fn work_commands_change_the_world_and_emit() {
     assert_eq!(events, [Event::SettingsChanged]);
     api.shutdown();
     assert_eq!(api.recorded_names().last(), Some(&"shutdown"));
+}
+
+#[test]
+fn the_fixture_run_has_an_agent_a_comment_can_continue() {
+    let api = acme();
+    let key = crate::api::IssueKey::new("PAY-1427");
+    let agents = api.issue_agents(&key).expect("agents");
+    let fixer = agents.iter().find(|a| a.name == "Fixer").expect("the Fixer step had a session");
+    assert!(!fixer.busy && fixer.worktree.is_some() && fixer.run_number == 2, "{fixer:#?}");
+    api.comment(&key, "@Fixer once more", Vec::new()).expect("comment");
+    let feed = api.issue_events(&key).expect("feed");
+    let mentions = feed.iter().rev().find_map(|e| match &e.kind {
+        crate::api::IssueEventKind::Comment { mentions, .. } => Some(mentions.clone()),
+        _ => None,
+    });
+    assert_eq!(mentions, Some(vec![fixer.reference.clone()]), "the run's Fixer wins over the library's");
 }
