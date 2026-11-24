@@ -97,12 +97,14 @@ pub struct TranscriptView {
     now: Option<i64>,
     ticker: Option<Task<()>>,
     older_check: bool,
+    /// Width of the centred column, from the list's width in the last frame.
+    column_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
 impl TranscriptView {
     /// A transcript for `session`. Loading starts at once.
-    pub fn new(session: SessionId, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(session: SessionId, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = hub::session(&session, cx);
         let count = model.read(cx).blocks().len() + 1;
         let list = ListState::new(count, ListAlignment::Bottom, px(OVERDRAW));
@@ -140,6 +142,7 @@ impl TranscriptView {
             now: None,
             ticker: None,
             older_check: false,
+            column_width: rows::column_width(f32::from(window.viewport_size().width)),
             _subscriptions: subscriptions,
         };
         view.links = Links::compute(view.model.read(cx).blocks());
@@ -360,6 +363,20 @@ impl TranscriptView {
         }
     }
 
+    /// Follows the list's width; a new width measures every row again.
+    fn fit_column(&mut self, window: &Window) -> bool {
+        let list = f32::from(self.list.viewport_bounds().size.width);
+        let available = if list > 0. { list } else { f32::from(window.viewport_size().width) };
+        let width = rows::column_width(available);
+        if (width - self.column_width).abs() >= 0.5 {
+            self.column_width = width;
+            let count = self.list.item_count();
+            self.splice_list(0..count, count);
+            return true;
+        }
+        false
+    }
+
     fn render_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let blocks: Vec<Arc<Block>> = self.model.read(cx).blocks().to_vec();
         if index >= blocks.len() {
@@ -395,6 +412,13 @@ impl Render for TranscriptView {
             self.older_check = true;
             cx.defer_in(window, |this, _, cx| this.check_older(cx));
         }
+        self.fit_column(window);
+        // The list's own width is known only after this frame's layout.
+        cx.defer_in(window, |this, window, cx| {
+            if this.fit_column(window) {
+                cx.notify();
+            }
+        });
         let following = self.is_following();
         let rows = list(self.list.clone(), cx.processor(|this, index: usize, window, cx| this.render_row(index, window, cx)))
             .flex_1()

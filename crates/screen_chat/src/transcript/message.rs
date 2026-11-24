@@ -98,6 +98,7 @@ impl TranscriptView {
     /// The person's message: avatar, "You", time, then the card with images and text.
     pub(crate) fn user_message(
         &mut self,
+        index: usize,
         block: &Block,
         user: &UserBlock,
         _window: &mut Window,
@@ -113,7 +114,10 @@ impl TranscriptView {
         let queries = hub::queries(cx);
         let thumbs: Vec<AnyElement> =
             user.images.iter().enumerate().map(|(i, image)| thumb(block.id, i, image, &queries)).collect();
-        let text = (!user.text.is_empty()).then(|| self.markdown_for(block.id, &user.text, TEXT, true, cx));
+        let text = (!user.text.is_empty()).then(|| {
+            let md = self.markdown_for(block.id, &user.text, TEXT, true, cx);
+            div().debug_selector(move || format!("user-text-{index}")).child(md)
+        });
         let card = col()
             .ml(px(INDENT))
             .gap(px(SPACE_2_5))

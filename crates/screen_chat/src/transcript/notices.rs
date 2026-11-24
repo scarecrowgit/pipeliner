@@ -11,7 +11,7 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use super::TranscriptView;
-use super::rows::{COLUMN_MAX, INDENT};
+use super::rows::INDENT;
 
 /// "30 older messages summarised", or the running line.
 pub(crate) fn compaction(block: CompactionBlock) -> AnyElement {
@@ -151,8 +151,8 @@ impl TranscriptView {
             .justify_center()
             .child(
                 col()
-                    .w_full()
-                    .max_w(px(COLUMN_MAX))
+                    .flex_none()
+                    .w(px(self.column_width))
                     .px(px(SPACE_6))
                     .when(has_content, |d| d.pt(px(SPACE_3)))
                     .pb(px(SPACE_6))

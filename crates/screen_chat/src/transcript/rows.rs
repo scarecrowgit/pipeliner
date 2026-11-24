@@ -116,16 +116,26 @@ pub(crate) fn place(blocks: &[Arc<Block>], links: &Links, index: usize) -> Place
     Place { top, header, group }
 }
 
+/// The column's width in a list `available` px wide: [`COLUMN_MAX`] or the whole list.
+pub(crate) fn column_width(available: f32) -> f32 {
+    available.clamp(0., COLUMN_MAX)
+}
+
 /// The centred column around one row's content, keyed by the block's id so a row keeps its
 /// element state while it streams.
-pub(crate) fn frame(index: usize, block: &Block, top: f32, content: impl IntoElement) -> AnyElement {
+///
+/// The column gets a fixed width, not `w_full().max_w(..)`: list rows are laid out as roots
+/// at the list's width, and with a relative width taffy measures wrapped text (Markdown) at
+/// the wrong width, giving rows thousands of pixels tall or text overflowing its row.
+pub(crate) fn frame(width: f32, index: usize, block: &Block, top: f32, content: impl IntoElement) -> AnyElement {
     div()
         .id(ElementId::NamedInteger("block".into(), block.id))
         .w_full()
         .flex()
-        .justify_center()
+        .flex_col()
+        .items_center()
         .debug_selector(|| format!("block-{index}"))
-        .child(col().w_full().max_w(px(COLUMN_MAX)).px(px(SPACE_6)).pt(px(top)).child(content))
+        .child(col().flex_none().w(px(width)).px(px(SPACE_6)).pt(px(top)).child(content))
         .probe(format!("block-{index}"))
         .into_any_element()
 }
@@ -139,14 +149,15 @@ pub(crate) fn row(
     cx: &mut Context<TranscriptView>,
 ) -> AnyElement {
     let block = blocks[index].clone();
+    let width = view.column_width;
     if view.links.is_hidden(index) {
-        return frame(index, &block, 0., div());
+        return frame(width, index, &block, 0., div());
     }
     let place = place(blocks, &view.links, index);
     let content: AnyElement = match &block.kind {
-        BlockKind::User(user) => return frame(index, &block, place.top, view.user_message(&block, user, window, cx)),
+        BlockKind::User(user) => return frame(width, index, &block, place.top, view.user_message(index, &block, user, window, cx)),
         BlockKind::Compaction(compaction) => {
-            return frame(index, &block, place.top, super::notices::compaction(*compaction));
+            return frame(width, index, &block, place.top, super::notices::compaction(*compaction));
         }
         BlockKind::Assistant(text) => view.assistant_text(&block, text, cx),
         BlockKind::Thinking(text) => view.thinking(index, &block, text, window, cx),
@@ -160,9 +171,9 @@ pub(crate) fn row(
     let body = div().ml(px(INDENT)).flex().flex_col().child(content);
     if place.header {
         let header = view.agent_header(blocks, index, cx);
-        frame(index, &block, place.top, col().gap(px(SPACE_3)).child(header).child(body))
+        frame(width, index, &block, place.top, col().gap(px(SPACE_3)).child(header).child(body))
     } else {
-        frame(index, &block, place.top, body)
+        frame(width, index, &block, place.top, body)
     }
 }
 

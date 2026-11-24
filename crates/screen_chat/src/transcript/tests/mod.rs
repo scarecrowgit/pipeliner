@@ -2,6 +2,7 @@
 //! following and scrolling, paging, permission answers, folding and sub-agent links.
 
 mod blocks;
+mod heights;
 mod permissions;
 mod scrolling;
 
