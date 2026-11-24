@@ -128,8 +128,9 @@ fn spend_popover(ops: &OpsModel) -> AnyElement {
     }
     let top = rows.iter().map(|(_, cost, _)| *cost).fold(0., f64::max);
     let runtimes: Vec<Runtime> = ops.runtimes().value().map(|r| r.to_vec()).unwrap_or_default();
-    let online = runtimes.iter().filter(|runtime| runtime.online);
-    let (slots, busy) = online.fold((0, 0), |(s, b), r| (s + r.slots_total, b + r.slots_busy));
+    // Slots of the runtimes work can go to now; the others are drawn as coming soon.
+    let usable = runtimes.iter().filter(|runtime| runtime.available && runtime.online);
+    let (slots, busy) = usable.fold((0, 0), |(s, b), r| (s + r.slots_total, b + r.slots_busy));
 
     let spend_head = col()
         .px(px(SPACE_2_5))
@@ -194,13 +195,25 @@ fn spend_popover(ops: &OpsModel) -> AnyElement {
         .child(PopSeparator)
         .child(runtime_head)
         .child(PopSeparator)
-        .child(MenuItem::new("spend-settings", "Limits and runtimes").icon(IconName::Settings).coming_soon())
+        .child(
+            MenuItem::new("spend-limits", "Limits and runtimes")
+                .icon(IconName::Settings)
+                .hint("Settings")
+                .on_click(|_, window, cx| super::limits::open(window, cx))
+                .probe("spend-limits"),
+        )
         .into_any_element()
+}
+
+/// "4 slots · 2 busy · this office".
+pub(crate) fn runtime_line(runtime: &Runtime) -> String {
+    let slots = format!("{} · {} busy", base::fmt::plural(u64::from(runtime.slots_total), "slot", "slots"), runtime.slots_busy);
+    if runtime.note.is_empty() { slots } else { format!("{slots} · {}", runtime.note) }
 }
 
 /// One runtime: its tile, name, slots, and online state. Runtimes that cannot be used yet
 /// (cloud sandboxes, other machines) say "Coming soon".
-fn runtime_row(runtime: &Runtime) -> impl IntoElement {
+pub(crate) fn runtime_row(runtime: &Runtime) -> impl IntoElement {
     let tile = match runtime.kind {
         RuntimeKind::Local => IconName::Server,
         RuntimeKind::Cloud => IconName::Cloud,
@@ -218,12 +231,7 @@ fn runtime_row(runtime: &Runtime) -> impl IntoElement {
             col()
                 .flex_1()
                 .child(div().type_style(BODY_STRONG).text_color(fg).child(runtime.name.clone()))
-                .child(
-                    div()
-                        .type_style(LABEL)
-                        .text_color(TEXT_MUTED)
-                        .child(format!("{} slots · {} busy", runtime.slots_total, runtime.slots_busy)),
-                ),
+                .child(truncate_block(runtime_line(runtime), LABEL.line).type_style(LABEL).text_color(TEXT_MUTED)),
         )
         .when(!runtime.available, |d| d.child(Tag::new("Coming soon")))
         .when(runtime.available, |d| {

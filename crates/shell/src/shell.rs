@@ -45,7 +45,7 @@ impl Shell {
     pub fn new(screens: Screens, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let hub = hub::hub(cx);
         let router = hub::router(cx);
-        let sidebar = cx.new(Sidebar::new);
+        let sidebar = cx.new(|cx| Sidebar::new(window, cx));
         let subscriptions = vec![
             cx.observe_in(&router, window, |this: &mut Shell, _, window, cx| this.sync(window, cx)),
             cx.subscribe_in(&hub, window, |_, _, notice: &HubNotice, window, cx| {

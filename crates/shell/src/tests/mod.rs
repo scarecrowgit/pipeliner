@@ -2,6 +2,7 @@
 //! following hub events, collapse, the placeholder, toasts, row actions and keys.
 
 mod chrome;
+mod projects;
 mod sidebar;
 
 use std::cell::RefCell;
@@ -72,12 +73,18 @@ struct Setup {
 }
 
 fn setup(cx: &mut TestAppContext) -> Setup {
+    setup_with_width(cx, 1920.)
+}
+
+/// [`setup`] in a window `width` px wide.
+fn setup_with_width(cx: &mut TestAppContext, width: f32) -> Setup {
     let api = Arc::new(FixtureApi::new(World::acme(NOW)));
     let hub = cx.update(|cx| {
         ui::motion::set_reduced(true);
         ui::keys::init(cx);
+        ui_rich::bind_keys(cx);
         crate::init(cx);
-        Hub::new(api.clone(), cx)
+        Hub::new_fixture(api.clone(), cx)
     });
     let log: Log = Rc::default();
     let registry = screens(&log);
@@ -85,7 +92,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
     let out = slot.clone();
     let window = cx
         .update(|cx| {
-            let bounds = Bounds::maximized(None, cx);
+            let bounds = Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(width), px(1000.)));
             cx.open_window(
                 WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },
                 move |window, cx| {
@@ -142,6 +149,24 @@ impl Setup {
     fn shown(&mut self) -> crate::Shown {
         let shell = self.shell.clone();
         self.cx.update(|_, cx| shell.read(cx).sidebar().read(cx).shown().clone())
+    }
+
+    fn typed(&mut self, text: &str) {
+        self.cx.simulate_input(text);
+        self.cx.run_until_parked();
+    }
+
+    fn keys(&mut self, keys: &str) {
+        self.cx.simulate_keystrokes(keys);
+        self.cx.run_until_parked();
+    }
+
+    fn open(&mut self, layer: &'static str) -> bool {
+        self.cx.update(|window, cx| ui::overlays(window, cx).is_open(layer, cx))
+    }
+
+    fn settings(&self) -> hub::api::Settings {
+        self.api.with_world(|world| world.settings.clone())
     }
 
     fn recorded(&self, name: &str) -> Vec<String> {

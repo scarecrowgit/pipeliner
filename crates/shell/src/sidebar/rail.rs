@@ -68,14 +68,14 @@ impl Sidebar {
             button.tooltip(tooltip).probe(entry.probe)
         });
 
-        let live: Vec<_> = self.pipelines(cx).into_iter().filter(|row| row.status == Status::Live).collect();
+        let live: Vec<_> = self.pipelines(cx).into_iter().filter(|row| matches!(row.status, Status::Live | Status::Running)).collect();
         let pipelines = live.into_iter().map(|row| {
             let probe: SharedString = format!("sidebar-pipeline-{}", row.reference.id()).into();
             let pipeline = PipelineId::new(row.reference.id());
             IconButton::new(ElementId::Name(probe.clone()), IconName::Pipelines)
                 .rail()
-                .pip(SUCCESS)
-                .tooltip(format!("{} · live", row.name))
+                .pip(row.status.color())
+                .tooltip(format!("{} · {}", row.name, row.meta.clone().unwrap_or_default()))
                 .on_click(move |_, _, cx| hub::navigate(Route::Editor { pipeline: pipeline.clone(), node: None }, cx))
                 .probe(probe)
         });

@@ -12,7 +12,8 @@
 
 mod chats;
 mod foot;
-mod projects;
+pub(crate) mod limits;
+pub(crate) mod projects;
 mod rail;
 
 use gpui::{
@@ -31,6 +32,10 @@ use crate::screen::section_label;
 /// Recent chats listed before "View all".
 const RECENT_ROWS: usize = 30;
 
+/// Below this window width a visit to the pipeline editor starts with the rail, as the
+/// editor's mockup draws it.
+pub const EDITOR_RAIL_BELOW: f32 = 1500.;
+
 /// What the last frame of the sidebar showed, for tests and checks.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shown {
@@ -46,6 +51,8 @@ pub struct Shown {
     pub current_chat: Option<SessionId>,
     /// Every chat row with its state, top to bottom.
     pub chats: Vec<(SessionId, SessionState)>,
+    /// Every pipeline row: its id and the text at its right ("37 queued", "v3", "draft").
+    pub pipelines: Vec<(String, String)>,
 }
 
 /// The sidebar view. Build it with [`Sidebar::new`] after [`hub::Hub::new`].
@@ -57,12 +64,14 @@ pub struct Sidebar {
     runs: Entity<RunsModel>,
     catalog: Entity<CatalogModel>,
     shown: Shown,
+    /// The route is the editor (a visit is going on).
+    in_editor: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Sidebar {
     /// A sidebar over the hub's models (loading them if nobody did yet).
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let router = hub::router(cx);
         let chats = hub::chat_index(cx);
         let inbox = hub::inbox(cx);
@@ -70,7 +79,10 @@ impl Sidebar {
         let runs = hub::runs(cx);
         let catalog = hub::catalog(cx);
         let subscriptions = vec![
-            cx.observe(&router, |_, _, cx| cx.notify()),
+            cx.observe_in(&router, window, |this: &mut Self, _, window, cx| {
+                this.follow_editor(window, cx);
+                cx.notify();
+            }),
             cx.observe(&chats, |_, _, cx| cx.notify()),
             cx.observe(&inbox, |_, _, cx| cx.notify()),
             cx.observe(&runs, |_, _, cx| cx.notify()),
@@ -81,7 +93,34 @@ impl Sidebar {
             }),
             cx.observe_global::<collapse::Pending>(|_, cx| cx.notify()),
         ];
-        Self { router, chats, inbox, ops, runs, catalog, shown: Shown::default(), _subscriptions: subscriptions }
+        let mut sidebar = Self {
+            router,
+            chats,
+            inbox,
+            ops,
+            runs,
+            catalog,
+            shown: Shown::default(),
+            in_editor: false,
+            _subscriptions: subscriptions,
+        };
+        sidebar.follow_editor(window, cx);
+        sidebar
+    }
+
+    /// Entering the editor in a narrow window starts a visit drawn as the rail; leaving it
+    /// ends the visit.
+    fn follow_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = matches!(self.router.read(cx).current(), Route::Editor { .. });
+        if editor && !self.in_editor {
+            self.in_editor = true;
+            if window.viewport_size().width < px(EDITOR_RAIL_BELOW) {
+                collapse::begin_visit(&self.ops, cx);
+            }
+        } else if !editor && self.in_editor {
+            self.in_editor = false;
+            collapse::end_visit(cx);
+        }
     }
 
     /// What the last frame showed.
@@ -152,6 +191,8 @@ impl Sidebar {
         }));
 
         let pipelines = self.pipelines(cx);
+        self.shown.pipelines =
+            pipelines.iter().map(|row| (row.reference.id().to_string(), row.meta.clone().unwrap_or_default().to_string())).collect();
         let open_pipeline = self.open_pipeline(cx);
         let pipeline_section = col()
             .flex_none()
@@ -215,7 +256,6 @@ impl Sidebar {
         let rest = Look::bg(if open { SURFACE_HOVER } else { TRANSPARENT });
         let hover = Look::bg(if open { SURFACE_HOVER } else { SURFACE_RAISED });
         let faded = motion::hover_fade_state("sidebar-project", rest, hover, window, cx);
-        let ops = self.ops.clone();
         let project = row()
             .id("sidebar-project")
             .debug_selector(|| "sidebar-project".into())
@@ -226,7 +266,7 @@ impl Sidebar {
             .rounded(px(RADIUS_MD))
             .cursor_pointer()
             .type_style(BODY_STRONG)
-            .on_click(move |_, window, cx| projects::open(ops.clone(), window, cx));
+            .on_click(move |_, window, cx| projects::open(window, cx));
         let project = faded
             .apply(project)
             .child(logo(20.))
@@ -353,8 +393,8 @@ pub(crate) struct PipelineRow {
     pub meta: Option<SharedString>,
 }
 
-/// A pipeline's dot and meta: live while it has work queued or running, a ring for a draft,
-/// grey when idle or paused.
+/// A pipeline's dot and meta: live with its queue while items wait, running while runs are
+/// open, else its deployed version (grey), a draft ring, or paused.
 fn pipeline_status(paused: bool, state: &RunnableState, queued: u32, running: usize) -> (Status, Option<SharedString>) {
     if paused || matches!(state, RunnableState::Paused) {
         return (Status::Idle, Some("paused".into()));
@@ -362,7 +402,8 @@ fn pipeline_status(paused: bool, state: &RunnableState, queued: u32, running: us
     match state {
         RunnableState::Draft { .. } => (Status::Draft, Some("draft".into())),
         _ if queued > 0 => (Status::Live, Some(format!("{} queued", base::fmt::count(u64::from(queued))).into())),
-        _ if running > 0 => (Status::Live, Some(format!("{running} running").into())),
+        _ if running > 0 => (Status::Running, Some(format!("{running} running").into())),
+        RunnableState::Live { version } => (Status::Idle, Some(format!("v{version}").into())),
         _ => (Status::Idle, None),
     }
 }

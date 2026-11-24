@@ -27,7 +27,11 @@
 //!   actions); without one the header shows the section's label.
 //! - **Keys** ([`init`]): ⌘K / Ctrl-K opens the palette (the router's [`hub::Overlay::Palette`],
 //!   drawn in the slot [`Shell::set_palette`] fills), ⌘N / Ctrl-N goes to the new-chat page,
-//!   ⌘\ / Ctrl-\ collapses or expands the sidebar (saved in the settings).
+//!   ⌘\ / Ctrl-\ collapses or expands the sidebar (saved in the settings), ⌘O opens the
+//!   project switcher, ⌘, the current project's settings, ⌘1–⌘5 switch projects.
+//! - **Editor**: a visit to the pipeline editor in a window narrower than
+//!   [`EDITOR_RAIL_BELOW`] starts with the rail; toggles during it are not saved and the
+//!   person's own setting returns when they leave.
 //! - **Notices**: every [`hub::HubNotice`] becomes a toast through the overlay host.
 
 mod cache;
@@ -51,7 +55,7 @@ pub use notice::toast_for;
 pub use placeholder::Placeholder;
 pub use screen::{Crumb, Header, HeaderFn, Keep, Mounted, Screen, ScreenKind, Screens, ShowFn, section_label};
 pub use shell::{PALETTE_LAYER, Shell};
-pub use sidebar::{Shown, Sidebar};
+pub use sidebar::{EDITOR_RAIL_BELOW, Shown, Sidebar};
 
 actions!(
     shell,
@@ -62,6 +66,20 @@ actions!(
         NewChat,
         /// Collapse the sidebar to the rail, or expand it (⌘\).
         ToggleSidebar,
+        /// Open the project switcher (⌘O).
+        OpenProjects,
+        /// Open the current project's settings (⌘,).
+        ProjectSettings,
+        /// Switch to the first project (⌘1).
+        SwitchProject1,
+        /// Switch to the second project (⌘2).
+        SwitchProject2,
+        /// Switch to the third project (⌘3).
+        SwitchProject3,
+        /// Switch to the fourth project (⌘4).
+        SwitchProject4,
+        /// Switch to the fifth project (⌘5).
+        SwitchProject5,
     ]
 );
 
@@ -72,6 +90,13 @@ pub fn bindings() -> Vec<KeyBinding> {
         bindings.push(KeyBinding::new(&format!("{modifier}-k"), TogglePalette, None));
         bindings.push(KeyBinding::new(&format!("{modifier}-n"), NewChat, None));
         bindings.push(KeyBinding::new(&format!("{modifier}-\\"), ToggleSidebar, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-o"), OpenProjects, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-,"), ProjectSettings, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-1"), SwitchProject1, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-2"), SwitchProject2, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-3"), SwitchProject3, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-4"), SwitchProject4, None));
+        bindings.push(KeyBinding::new(&format!("{modifier}-5"), SwitchProject5, None));
     }
     bindings
 }
@@ -85,6 +110,20 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|_: &NewChat, cx| hub::navigate(hub::Route::NewChat, cx));
     cx.on_action(|_: &ToggleSidebar, cx| collapse::toggle(cx));
+    cx.on_action(|_: &OpenProjects, cx| in_active_window(cx, sidebar::projects::open));
+    cx.on_action(|_: &ProjectSettings, cx| in_active_window(cx, sidebar::projects::form::open_edit));
+    cx.on_action(|_: &SwitchProject1, cx| sidebar::projects::switch_to_nth(1, cx));
+    cx.on_action(|_: &SwitchProject2, cx| sidebar::projects::switch_to_nth(2, cx));
+    cx.on_action(|_: &SwitchProject3, cx| sidebar::projects::switch_to_nth(3, cx));
+    cx.on_action(|_: &SwitchProject4, cx| sidebar::projects::switch_to_nth(4, cx));
+    cx.on_action(|_: &SwitchProject5, cx| sidebar::projects::switch_to_nth(5, cx));
+}
+
+/// Run `f` in the active window, for shortcuts that open a popover or a dialog.
+fn in_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App)) {
+    if let Some(window) = cx.active_window() {
+        window.update(cx, |_, window, cx| f(window, cx)).ok();
+    }
 }
 
 /// Build the shell for `window` and the overlay host around it: return the host as the
