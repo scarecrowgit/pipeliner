@@ -79,7 +79,8 @@ impl Selection {
         (start < end || (unit > s.unit && unit < e.unit)).then_some(start..end)
     }
 
-    /// The selected text: each unit's part, joined by the later unit's joiner.
+    /// The selected text: each unit's part (tabs a verbatim unit shows as spaces come back
+    /// as tabs), joined by the later unit's joiner.
     pub fn text(&self, units: &[Unit]) -> Option<String> {
         let mut out = String::new();
         let mut first = true;
@@ -92,7 +93,7 @@ impl Selection {
             if !first {
                 out.push_str(&u.joiner);
             }
-            out.push_str(&t[s..e.max(s)]);
+            out.push_str(&u.text.source(s..e.max(s)));
             first = false;
         }
         (!out.is_empty()).then_some(out)

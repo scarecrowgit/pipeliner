@@ -4,6 +4,7 @@
 mod parse;
 mod runs;
 mod text;
+mod verbatim;
 mod window;
 
 use super::parse::{Block, Document, Inline};

@@ -11,13 +11,13 @@ use gpui::{
     SharedString, Task, Window, actions, prelude::*,
 };
 use ui::layout::col;
-use ui::theme::{SPACE_3, TEXT};
+use ui::theme::{BODY, SPACE_3, TEXT, TypeStyle};
 
 use super::cache::parse_cached;
 use super::element::{Shared, Tracker};
 use super::parse::Document;
 use super::render::Renderer;
-use super::rich::{Unit, UnitKind, units};
+use super::rich::{Unit, UnitKind, units, verbatim_unit};
 
 actions!(
     markdown,
@@ -50,13 +50,33 @@ pub type LinkHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 /// How long a code block's copy button says "Copied".
 const COPIED_FOR: Duration = Duration::from_millis(1500);
 
-/// Rendered Markdown of one message (agent or user text): paragraphs, headings, lists,
-/// quotes, code blocks with copy buttons, tables, links and `@mentions`. The text can be
-/// selected with the mouse across blocks and copied with Cmd/Ctrl+C (after [`bind_keys`]).
+/// Selectable, copyable text of one message, banner or tool output.
+///
+/// [`Markdown::new`] renders Markdown (agent or user text): paragraphs, headings, lists,
+/// quotes, code blocks with copy buttons, tables, links and `@mentions`.
+/// [`Markdown::verbatim`] shows any other text exactly as given (errors, tool inputs and
+/// outputs, log lines): nothing is Markdown, every `\n` breaks the line, spaces are kept,
+/// long lines wrap (between graphemes inside a word too long for the line).
+///
+/// Either way the text can be selected with the mouse and copied with Cmd/Ctrl+C, or
+/// selected whole with Cmd/Ctrl+A (after [`bind_keys`]); a press anywhere else in the
+/// window drops the selection, so only one view shows one. [`type_style`](Self::type_style)
+/// and [`color`](Self::color) set the look of body text in both modes.
+///
+/// # Placement
+///
+/// The view takes the full width of its parent and wraps to it, so the parent needs a
+/// width the layout can resolve before measuring text: a fixed width, a stretched column
+/// child, or a `flex_1().min_w_0()` child of a row. Never put it straight into a
+/// shrink-to-fit or content-sized row child: it is then measured at one-line width.
 ///
 /// ```ignore
 /// let md = cx.new(|cx| Markdown::new(text, cx).on_link(|url, _, cx| cx.open_url(url)));
 /// md.update(cx, |md, cx| md.set_text(streamed_so_far, cx));
+///
+/// // A failure banner: icon | text | button.
+/// let err = cx.new(|cx| Markdown::verbatim(message, cx).type_style(LABEL).color(DANGER));
+/// row().items_start().child(icon).child(div().flex_1().min_w_0().child(err)).child(retry)
 /// ```
 pub struct Markdown {
     text: SharedString,
@@ -68,16 +88,38 @@ pub struct Markdown {
     on_link: Option<LinkHandler>,
     on_copy: Option<LinkHandler>,
     color: Hsla,
+    style: TypeStyle,
+    verbatim: bool,
     copied: Option<usize>,
     copied_reset: Option<Task<()>>,
 }
 
 impl Markdown {
-    /// A view showing `text`.
+    /// A view showing `text` as Markdown.
     pub fn new(text: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let text = text.into();
         let doc = parse_cached(&text, None);
         let units = Rc::new(units(&doc, &[]));
+        Self::with(text, doc, units, false, cx)
+    }
+
+    /// A view showing `text` verbatim: no Markdown syntax, every newline a line break,
+    /// leading spaces kept, tabs shown as four spaces (copied as tabs). Mentions and links
+    /// do not apply. With a mono style (`MONO`, `MONO_SM`) it looks like a code block's text
+    /// without the frame; the frame, padding and any line cap are the caller's.
+    pub fn verbatim(text: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
+        let text = text.into();
+        let units = Rc::new(vec![verbatim_unit(&text)]);
+        Self::with(text, Arc::default(), units, true, cx)
+    }
+
+    fn with(
+        text: SharedString,
+        doc: Arc<Document>,
+        units: Rc<Vec<Unit>>,
+        verbatim: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             text,
             doc,
@@ -88,14 +130,49 @@ impl Markdown {
             on_link: None,
             on_copy: None,
             color: TEXT,
+            style: BODY,
+            verbatim,
             copied: None,
             copied_reset: None,
         }
     }
 
-    /// Names shown in the mention look when written as `@name` in plain text.
+    /// The type style of body text (paragraphs, list items, table cells; all of a verbatim
+    /// text): `BODY` by default, `LABEL` or `CAPTION` for small text, `MONO`/`MONO_SM` for
+    /// tool output. Headings keep their own sizes.
+    pub fn type_style(mut self, style: TypeStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Change the type style of body text.
+    pub fn set_type_style(&mut self, style: TypeStyle, cx: &mut Context<Self>) {
+        if self.style != style {
+            self.style = style;
+            cx.notify();
+        }
+    }
+
+    /// Change the body text colour.
+    pub fn set_color(&mut self, color: Hsla, cx: &mut Context<Self>) {
+        if self.color != color {
+            self.color = color;
+            cx.notify();
+        }
+    }
+
+    /// The view shows its text verbatim rather than as Markdown.
+    pub fn is_verbatim(&self) -> bool {
+        self.verbatim
+    }
+
+    /// Names shown in the mention look when written as `@name` in plain text (Markdown mode
+    /// only).
     pub fn mentions(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.mentions = names.into_iter().map(Into::into).collect();
+        if self.verbatim {
+            return self;
+        }
         self.units = Rc::new(units(&self.doc, &self.mentions));
         self
     }
@@ -112,18 +189,33 @@ impl Markdown {
         self
     }
 
-    /// The body text colour: `TEXT` (the default, user messages) or `TEXT_SECONDARY`
-    /// (agent prose in the transcript).
+    /// The body text colour: `TEXT` (the default, user messages), `TEXT_SECONDARY` (agent
+    /// prose in the transcript), `DANGER` (a failure).
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = color;
         self
     }
 
     /// Replace the text. A text that extends the current one (a streaming message) only
-    /// re-parses its last block; the selection is kept.
+    /// re-parses its last block, or in verbatim mode only adds the new part; the selection
+    /// is kept.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         let text = text.into();
         if text == self.text {
+            return;
+        }
+        if self.verbatim {
+            let unit = match (text.strip_prefix(self.text.as_ref()), self.units.first()) {
+                (Some(more), Some(old)) => {
+                    let mut unit = old.clone();
+                    Rc::make_mut(&mut unit.text).extend_verbatim(more);
+                    unit
+                }
+                _ => verbatim_unit(&text),
+            };
+            self.text = text;
+            self.units = Rc::new(vec![unit]);
+            cx.notify();
             return;
         }
         self.doc = parse_cached(&text, Some((&self.text, &self.doc)));
@@ -132,19 +224,22 @@ impl Markdown {
         cx.notify();
     }
 
-    /// Replace the mention names.
+    /// Replace the mention names (Markdown mode only).
     pub fn set_mentions(&mut self, names: Vec<String>, cx: &mut Context<Self>) {
         self.mentions = names;
+        if self.verbatim {
+            return;
+        }
         self.units = Rc::new(units(&self.doc, &self.mentions));
         cx.notify();
     }
 
-    /// The Markdown source.
+    /// The source text.
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    /// The parsed document.
+    /// The parsed document (empty in verbatim mode).
     pub fn document(&self) -> &Document {
         &self.doc
     }
@@ -221,9 +316,14 @@ impl Render for Markdown {
             self.shared.clone(),
             self.focus.is_focused(window),
             self.color,
+            self.style,
             self.copied,
         );
-        let blocks: Vec<_> = doc.blocks.iter().map(|b| r.block(b, window, cx)).collect();
+        let blocks: Vec<_> = if self.verbatim {
+            vec![r.verbatim()]
+        } else {
+            doc.blocks.iter().map(|b| r.block(b, window, cx)).collect()
+        };
         let tracker = Tracker {
             shared: self.shared.clone(),
             view: cx.entity().downgrade(),

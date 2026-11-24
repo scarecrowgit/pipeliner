@@ -28,6 +28,8 @@ pub(crate) struct Renderer<'a> {
     shared: Rc<RefCell<Shared>>,
     focused: bool,
     color: Hsla,
+    /// Type style of body text: paragraphs, list markers, table cells, verbatim text.
+    body: TypeStyle,
     copied: Option<usize>,
     codes: usize,
     tables: usize,
@@ -39,6 +41,7 @@ impl<'a> Renderer<'a> {
         shared: Rc<RefCell<Shared>>,
         focused: bool,
         color: Hsla,
+        body: TypeStyle,
         copied: Option<usize>,
     ) -> Self {
         Self {
@@ -47,6 +50,7 @@ impl<'a> Renderer<'a> {
             shared,
             focused,
             color,
+            body,
             copied,
             codes: 0,
             tables: 0,
@@ -66,6 +70,11 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    /// The element of a view in verbatim mode: its one unit in the body style.
+    pub fn verbatim(&mut self) -> AnyElement {
+        self.text(Look::text(self.body, self.color))
+    }
+
     pub fn block(
         &mut self,
         block: &Block,
@@ -73,7 +82,7 @@ impl<'a> Renderer<'a> {
         cx: &mut Context<Markdown>,
     ) -> AnyElement {
         match block {
-            Block::Paragraph(_) => self.text(Look::text(BODY, self.color)),
+            Block::Paragraph(_) => self.text(Look::text(self.body, self.color)),
             Block::Heading { level, .. } => {
                 let t = match level {
                     1 => TITLE,
@@ -115,14 +124,14 @@ impl<'a> Renderer<'a> {
             }
             None => 16.,
         };
-        let color = self.color;
+        let (color, style) = (self.color, self.body);
         let mut items = Vec::with_capacity(list.items.len());
         for (i, item) in list.items.iter().enumerate() {
             let marker = match item.task {
                 Some(done) => checkbox(done),
                 None => div()
-                    .h(px(BODY.line))
-                    .type_style(BODY)
+                    .h(px(style.line))
+                    .type_style(style)
                     .text_color(TEXT_MUTED)
                     .child(shown_marker(list.start, i))
                     .into_any_element(),
@@ -139,7 +148,7 @@ impl<'a> Renderer<'a> {
                     .relative()
                     .w_full()
                     .flex_none()
-                    .min_h(px(BODY.line))
+                    .min_h(px(style.line))
                     .pl(px(indent))
                     .child(div().absolute().left_0().top_0().child(marker))
                     .child(
@@ -223,9 +232,10 @@ impl<'a> Renderer<'a> {
             fill: a == Align::Left,
             ..Look::text(LABEL, TEXT_MUTED)
         };
+        let body = self.body;
         let body_look = |a: Align, c: Hsla| Look {
             fill: a == Align::Left,
-            ..Look::text(BODY, c)
+            ..Look::text(body, c)
         };
         // Column widths: the widest cell, measured unwrapped, within [COL_MIN, COL_MAX].
         let mut widths = vec![COL_MIN; cols];

@@ -97,6 +97,9 @@ struct Piece {
     glyphs: Vec<(usize, f32)>,
     /// The box behind the piece: left, right, colour.
     bg: Option<(f32, f32, Hsla)>,
+    /// The fonts of the runs the piece was shaped with.
+    #[cfg(test)]
+    fonts: Vec<Font>,
 }
 
 impl Piece {
@@ -205,6 +208,27 @@ impl InlineLayout {
     /// Height of all lines.
     pub fn height(&self) -> f32 {
         self.line_height * self.lines.len().max(1) as f32
+    }
+
+    /// The text of every visual line.
+    #[cfg(test)]
+    pub fn line_texts(&self) -> Vec<&str> {
+        self.lines
+            .iter()
+            .map(|l| &self.rich.text[l.range.clone()])
+            .collect()
+    }
+
+    /// Every font each piece was shaped with, with the size it was shaped at.
+    #[cfg(test)]
+    pub fn fonts(&self) -> Vec<(Font, f32)> {
+        let pieces = self.lines.iter().flat_map(|l| &l.pieces);
+        pieces
+            .flat_map(|p| {
+                let size = f32::from(p.shaped.font_size);
+                p.fonts.iter().map(move |f| (f.clone(), size))
+            })
+            .collect()
     }
 
     fn line_at(&self, y: f32) -> Option<(usize, &Line)> {
@@ -571,6 +595,11 @@ fn line(
             shaped,
             glyphs,
             bg,
+            #[cfg(test)]
+            fonts: runs(rich, s..e, look, hover)
+                .into_iter()
+                .map(|r| r.font)
+                .collect(),
         });
     }
     // Align every piece's baseline with the prose's (inline code is a smaller size).

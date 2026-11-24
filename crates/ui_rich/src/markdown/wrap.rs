@@ -13,8 +13,9 @@ use unicode_segmentation::UnicodeSegmentation;
 ///
 /// `left(o)` is the x where a line starting at byte `o` begins; `right(o)` the x where a line
 /// ending at `o` ends (they differ around padded spans). Spaces at a break stay at the end of
-/// the earlier line and do not count towards its width. Every line holds at least one
-/// grapheme, so a too-narrow width still terminates.
+/// the earlier line and do not count towards its width; spaces that start a line (indented
+/// verbatim text) are not a break, so an indent stays with its word. Every line holds at
+/// least one grapheme, so a too-narrow width still terminates.
 pub(crate) fn wrap(
     text: &str,
     width: f32,
@@ -28,12 +29,16 @@ pub(crate) fn wrap(
     let mut start = 0;
     let mut brk: Option<usize> = None;
     let mut prev_space = false;
+    // A non-space grapheme came before: a run of spaces after it is a break. Every line
+    // after the first starts with one, so only the first line's indent is not a break.
+    let mut worded = false;
     for (k, &i) in gs.iter().enumerate() {
         let space = text[i..].starts_with(' ');
-        if !space && prev_space && i > start {
+        if !space && prev_space && i > start && worded {
             brk = Some(i);
         }
         prev_space = space;
+        worded |= !space;
         if space || i == start {
             continue;
         }
@@ -87,6 +92,13 @@ mod tests {
         assert_eq!(lines("abcdefghij", 4.), ["abcd", "efgh", "ij"]);
         assert_eq!(lines("ab cdefghij", 4.), ["ab ", "cdef", "ghij"]);
         assert_eq!(lines("abc", 0.), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn an_indent_stays_with_its_word() {
+        assert_eq!(lines("    indented words", 12.), ["    indented ", "words"]);
+        assert_eq!(lines("  ab cd", 4.), ["  ab ", "cd"]);
+        assert_eq!(lines("    indented", 6.), ["    in", "dented"]);
     }
 
     #[test]

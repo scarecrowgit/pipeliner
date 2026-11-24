@@ -1,6 +1,7 @@
 //! Markdown and diff preview: a long agent message with every block type (and a code fence
 //! still streaming) next to diff cards: the chat's edit card, a two-hunk review card with a
-//! pager, an added file, a deleted file and a binary file.
+//! pager, an added file, a deleted file and a binary file. Under the message, verbatim text:
+//! a failure banner (icon, small danger text, button) and a mono tool output that grows.
 //!
 //! `cargo run -p ui_rich --example rich`
 
@@ -191,8 +192,15 @@ fn long_edit() -> DiffFile {
     }
 }
 
+const FAILURE: &str = "git worktree add failed: fatal: '/home/someone/.harness/worktrees/pipeliner/issue-1234-retry-budget' already exists (a3f9c2e17b5d4e0f8a6c1b2d3e4f5a6b7c8d9e0f)";
+
+const OUTPUT: &str = "   Compiling charges v0.1.0 (/src/charges)\n# not a heading, *not* emphasis, `not` code\n\trunning 3 tests\n";
+
 struct Demo {
     message: Entity<Markdown>,
+    failure: Entity<Markdown>,
+    output: Entity<Markdown>,
+    output_lines: usize,
     files: Vec<Arc<DiffFile>>,
     page: usize,
     log: Option<SharedString>,
@@ -216,6 +224,16 @@ impl Demo {
                     });
                 })
         });
+        let failure = cx.new(|cx| {
+            Markdown::verbatim(FAILURE, cx)
+                .type_style(LABEL)
+                .color(DANGER)
+        });
+        let output = cx.new(|cx| {
+            Markdown::verbatim(OUTPUT, cx)
+                .type_style(MONO)
+                .color(TEXT_SECONDARY)
+        });
         let files = vec![
             Arc::new(retry_diff()),
             Arc::new(added_file()),
@@ -234,11 +252,85 @@ impl Demo {
         ];
         Self {
             message,
+            failure,
+            output,
+            output_lines: 0,
             files,
             page: 0,
             log: None,
             long_edit: DiffCardState::default(),
         }
+    }
+}
+
+impl Demo {
+    /// A streaming tool output: append one more line.
+    fn append_line(&mut self, cx: &mut Context<Self>) {
+        self.output_lines += 1;
+        let n = self.output_lines;
+        let more = format!("test charges::retry_{n} ... ok\n");
+        self.output.update(cx, |o, cx| {
+            let text = format!("{}{more}", o.text());
+            o.set_text(text, cx);
+        });
+    }
+
+    /// The failure banner (`icon | text | button`) and the tool output block.
+    fn verbatim(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let banner = row()
+            .items_start()
+            .gap(px(SPACE_2))
+            .px(px(SPACE_3))
+            .py(px(SPACE_2))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(BANNER_DANGER_LINE)
+            .bg(DANGER_SOFT)
+            .child(
+                div()
+                    .flex_none()
+                    .pt(px(3.))
+                    .child(icon(IconName::Alert, 12., DANGER)),
+            )
+            .child(div().flex_1().min_w_0().child(self.failure.clone()))
+            .child(Button::new("retry", "Retry").small());
+        let output = col()
+            .rounded(px(RADIUS_XL))
+            .border_1()
+            .border_color(LINE)
+            .overflow_hidden()
+            .child(
+                row()
+                    .h(px(CONTROL_HEIGHT_MD))
+                    .px(px(SPACE_3))
+                    .child(
+                        div()
+                            .flex_1()
+                            .type_style(MONO)
+                            .child("$ cargo test -p charges"),
+                    )
+                    .child(
+                        Button::new("append", "Append a line")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.append_line(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .px(px(SPACE_3))
+                    .py(px(SPACE_1_5))
+                    .bg(BG_SIDEBAR)
+                    .border_t_1()
+                    .border_color(LINE)
+                    .child(self.output.clone()),
+            );
+        col()
+            .flex_none()
+            .gap(px(SPACE_3))
+            .child(div().type_style(HEADING).child("Verbatim text"))
+            .child(banner)
+            .child(output)
     }
 }
 
@@ -268,6 +360,7 @@ impl Render for Demo {
                     .gap(px(SPACE_3))
                     .child(div().type_style(HEADING).child("Agent message"))
                     .child(self.message.clone())
+                    .child(self.verbatim(cx))
                     .children(
                         self.log
                             .clone()

@@ -6,6 +6,8 @@
 //! - [`Markdown`] is the view: the Graphite type scale, inline code and `@mention` boxes,
 //!   links with an `on_link` callback, code blocks with a copy button, tables that scroll
 //!   sideways, and mouse selection across blocks copied with Cmd/Ctrl+C ([`bind_keys`]).
+//!   [`Markdown::verbatim`] shows any other text (errors, tool output, log lines) exactly as
+//!   given with the same selection and copy, in the type style and colour the caller picks.
 //! - [`plain_text`] and [`first_paragraph`] strip the Markdown for previews and list rows.
 
 mod cache;

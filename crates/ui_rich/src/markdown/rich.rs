@@ -31,12 +31,18 @@ pub(crate) struct RichText {
     pub text: String,
     pub spans: Vec<Span>,
     pub links: Vec<(Range<usize>, String)>,
+    /// Display offsets where a source tab was shown as [`TAB`]; a copy gives the tab back.
+    /// Empty for Markdown units, whose copies keep the spaces.
+    pub tabs: Vec<usize>,
 }
+
+/// What a tab is shown as: GPUI has no tab stops.
+const TAB: &str = "    ";
 
 impl RichText {
     /// Unstyled text (code blocks). Tabs become four spaces: GPUI has no tab stops.
     pub fn plain(text: &str) -> Self {
-        let text = text.replace('\t', "    ");
+        let text = text.replace('\t', TAB);
         let spans = vec![Span {
             range: 0..text.len(),
             style: SpanStyle::default(),
@@ -45,7 +51,63 @@ impl RichText {
             text,
             spans,
             links: Vec::new(),
+            tabs: Vec::new(),
         }
+    }
+
+    /// Unstyled text shown exactly as given, tabs as four spaces that copy as tabs.
+    pub fn verbatim(text: &str) -> Self {
+        let mut out = Self::default();
+        out.extend_verbatim(text);
+        out
+    }
+
+    /// Append `more` to a [`verbatim`](Self::verbatim) text.
+    pub fn extend_verbatim(&mut self, more: &str) {
+        let start = self.text.len();
+        self.text.reserve(more.len());
+        let mut parts = more.split('\t');
+        if let Some(first) = parts.next() {
+            self.text.push_str(first);
+        }
+        for part in parts {
+            self.tabs.push(self.text.len());
+            self.text.push_str(TAB);
+            self.text.push_str(part);
+        }
+        let end = self.text.len();
+        match self.spans.last_mut() {
+            Some(last) => last.range.end = end,
+            None => self.spans.push(Span {
+                range: start..end,
+                style: SpanStyle::default(),
+            }),
+        }
+    }
+
+    /// The source text behind display bytes `range`: the display text, except that a shown
+    /// tab the range touches comes back as one `\t`.
+    pub fn source(&self, range: Range<usize>) -> String {
+        if range.is_empty() {
+            return String::new();
+        }
+        let first = self.tabs.partition_point(|&t| t + TAB.len() <= range.start);
+        let mut out = String::with_capacity(range.len());
+        let mut at = range.start;
+        for &t in &self.tabs[first..] {
+            if t >= range.end {
+                break;
+            }
+            if t > at {
+                out.push_str(&self.text[at..t]);
+            }
+            out.push('\t');
+            at = t + TAB.len();
+        }
+        if at < range.end {
+            out.push_str(&self.text[at..range.end]);
+        }
+        out
     }
 
     /// Runs of a paragraph, with `@name` for every name in `mentions` marked as a mention.
@@ -150,6 +212,8 @@ pub(crate) enum UnitKind {
     Code { lang: String, raw: Rc<str> },
     HeadCell,
     Cell,
+    /// The whole text of a view in verbatim mode.
+    Verbatim,
 }
 
 /// One selectable text block of a rendered document.
@@ -159,6 +223,15 @@ pub(crate) struct Unit {
     /// Put before this unit's text when a copied selection also covers earlier units.
     pub joiner: String,
     pub kind: UnitKind,
+}
+
+/// The one unit of a view in verbatim mode.
+pub(crate) fn verbatim_unit(text: &str) -> Unit {
+    Unit {
+        text: Rc::new(RichText::verbatim(text)),
+        joiner: String::new(),
+        kind: UnitKind::Verbatim,
+    }
 }
 
 /// The selectable units of `doc` in reading order: the order the renderer walks it in.
