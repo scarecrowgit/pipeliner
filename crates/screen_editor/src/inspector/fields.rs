@@ -350,7 +350,7 @@ impl InspectorView {
         let danger = error.is_some() || problem.is_some();
         let field = text_field(key.clone(), input).small().danger(danger).when(mono, |f| f.mono());
         let el = div().w_full().min_w_0().child(field).probe(key);
-        with_messages(el.into_any_element(), error.or(problem))
+        self.with_messages(el.into_any_element(), error.or(problem), cx)
     }
 
     /// A multi-line field in the `.textarea` frame.
@@ -362,19 +362,19 @@ impl InspectorView {
         let danger = error.is_some() || problem.is_some();
         let field = text_area_field(key.clone(), area).danger(danger).when(mono, |f| f.mono());
         let el = div().w_full().min_w_0().child(field).probe(key);
-        with_messages(el.into_any_element(), error.or(problem))
+        self.with_messages(el.into_any_element(), error.or(problem), cx)
     }
-}
 
-/// `control` with a danger line under it when there is a message.
-fn with_messages(control: AnyElement, message: Option<SharedString>) -> AnyElement {
-    match message {
-        None => control,
-        Some(message) => col()
-            .gap(px(SPACE_1_5))
-            .child(control)
-            .child(div().type_style(LABEL).text_color(DANGER).child(message))
-            .into_any_element(),
+    /// `control` with a danger line under it when there is a message; the line can be
+    /// selected and copied.
+    fn with_messages(&mut self, control: AnyElement, message: Option<SharedString>, cx: &mut Context<Self>) -> AnyElement {
+        match message {
+            None => control,
+            Some(message) => {
+                let text = self.texts.text("field-message", message, LABEL, DANGER, cx);
+                col().w_full().min_w_0().gap(px(SPACE_1_5)).child(control).child(text).into_any_element()
+            }
+        }
     }
 }
 

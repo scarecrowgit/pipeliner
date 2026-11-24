@@ -32,6 +32,10 @@ const META_CHARS: usize = 18;
 /// Axis steps tried in order, seconds: the first that gives at most this many labels wins.
 const TICK_STEPS: [u64; 12] = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
 const MAX_TICKS: u64 = 4;
+/// The narrowest a figure of the strip is drawn, px.
+const STRIP_CELL_MIN: f32 = 104.0;
+/// The dock width below which the run's line leaves out the legend, px.
+const LEGEND_MIN: f32 = 680.0;
 
 /// The test run part of the editor: the item's fields, the answer field and the run on show.
 pub(super) struct TestRun {
@@ -331,27 +335,44 @@ impl EditorView {
                 stats.budget_usd.map_or_else(|| "no limit".to_string(), |b| format!("of {}", base::fmt::cost(b))),
             ),
         ];
-        row()
-            .flex_none()
-            .items_start()
-            .px(px(SPACE_5))
-            .py(px(SPACE_3))
-            .border_b_1()
-            .border_color(LINE)
-            .children(cells.into_iter().enumerate().map(|(ix, (label, value, sub))| {
+        let per_row = strip_columns(self.measured.left_width() - 2. * SPACE_5);
+        let mut cells: Vec<AnyElement> = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ix, (label, value, sub))| {
                 col()
                     .flex_1()
                     .min_w_0()
-                    .when(ix > 0, |d| d.pl(px(SPACE_4)).border_l_1().border_color(LINE))
-                    .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(label))
+                    .when(ix % per_row > 0, |d| d.pl(px(SPACE_4)).border_l_1().border_color(LINE))
+                    .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(truncate_block(label, LABEL.line)))
                     .child(
                         row()
                             .items_baseline()
                             .gap(px(SPACE_1))
-                            .child(div().type_style(TITLE_SM).tabular().child(value))
-                            .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(sub)),
+                            .child(div().flex_none().type_style(TITLE_SM).tabular().child(value))
+                            .child(div().flex_1().min_w_0().type_style(LABEL).text_color(TEXT_MUTED).child(truncate_lh(sub, LABEL.line))),
                     )
-            }))
+                    .debug_selector(move || format!("test-run-figure-{ix}"))
+                    .into_any_element()
+            })
+            .collect();
+        // Fill the last row so its cells are as wide as those above.
+        while !cells.len().is_multiple_of(per_row) {
+            cells.push(div().flex_1().min_w_0().into_any_element());
+        }
+        let mut rows = Vec::new();
+        while !cells.is_empty() {
+            let rest = cells.split_off(per_row.min(cells.len()));
+            rows.push(row().items_start().children(std::mem::replace(&mut cells, rest)));
+        }
+        col()
+            .flex_none()
+            .gap(px(SPACE_3))
+            .px(px(SPACE_5))
+            .py(px(SPACE_3))
+            .border_b_1()
+            .border_color(LINE)
+            .children(rows)
             .probe("test-run-strip")
             .into_any_element()
     }
@@ -386,7 +407,7 @@ impl EditorView {
     }
 
     /// The run on show: its line, what it waits for or how it ended, and its timeline.
-    fn render_run(&self, run: &Arc<Run>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_run(&mut self, run: &Arc<Run>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let now = base::time::now_ms();
         let end = run.finished.unwrap_or(now).max(run.started);
         let secs = ((end - run.started) / 1000).max(0) as u64;
@@ -429,7 +450,7 @@ impl EditorView {
             )))
             .child(div().flex_1().min_w_0().text_color(TEXT_MUTED).child(truncate_lh(format!("· {}", facts.join(" · ")), LABEL.line)))
             .child(state_word(run.state))
-            .child(legend)
+            .when(self.measured.left_width() >= LEGEND_MIN, |d| d.child(legend))
             .child(control);
         let rows = timeline_rows(run, now);
         let total = (end - run.started).max(0) as u64;
@@ -447,10 +468,12 @@ impl EditorView {
     }
 
     /// What the run waits for, or why it stopped.
-    fn render_waiting(&self, run: &Run, _window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_waiting(&mut self, run: &Run, _window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let banner = match run.state {
             RunState::WaitingAnswer => {
                 let question = asking(run).map(|(_, question)| question).unwrap_or_default();
+                let question = if question.is_empty() { "An agent is waiting for your answer".to_string() } else { question };
+                let question = self.texts.text("test-run-question", question, BODY_STRONG, TEXT, cx);
                 Banner::new()
                     .tone(BannerTone::Warning)
                     .child(icon(IconName::Chat, 16., WARNING))
@@ -459,7 +482,7 @@ impl EditorView {
                             .flex_1()
                             .min_w_0()
                             .gap(px(SPACE_1_5))
-                            .child(div().type_style(BODY_STRONG).child(if question.is_empty() { "An agent is waiting for your answer".to_string() } else { question }))
+                            .child(question)
                             .child(
                                 row()
                                     .gap(px(SPACE_2))
@@ -485,10 +508,11 @@ impl EditorView {
                     (RunState::Interrupted, None) => "The app closed while it was running.".to_string(),
                     _ => "It stopped with an error.".to_string(),
                 };
+                let why = self.texts.text("test-run-error", why, BODY, TEXT, cx);
                 Banner::new()
                     .tone(BannerTone::Danger)
                     .child(icon(IconName::Alert, 16., DANGER))
-                    .child(div().flex_1().min_w_0().child(why))
+                    .child(div().flex_1().min_w_0().child(why).debug_selector(|| "test-run-error".into()))
                     .child(
                         Button::new("test-run-resume", "Resume")
                             .secondary()
@@ -501,6 +525,12 @@ impl EditorView {
         };
         Some(div().pt(px(SPACE_1_5)).child(banner).into_any_element())
     }
+}
+
+/// How many of the five figures share a row in a strip `width` px wide: all five, or three
+/// (then two) when each would get less than [`STRIP_CELL_MIN`].
+fn strip_columns(width: f32) -> usize {
+    [5, 3, 2].into_iter().find(|n| width >= *n as f32 * STRIP_CELL_MIN).unwrap_or(1)
 }
 
 /// The state of a run in one or two words, coloured by meaning.

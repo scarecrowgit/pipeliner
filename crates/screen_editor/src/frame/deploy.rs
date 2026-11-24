@@ -20,14 +20,17 @@ use ui_rich::{TextInput, TextInputEvent, text_field};
 use super::EditorView;
 use super::dock::DockTab;
 use super::problems::sorted;
+use crate::selectable::Texts;
 
 /// The dialog's overlay id.
 pub(crate) const DIALOG_ID: &str = "deploy-dialog";
 /// Width and distance from the top, as drawn.
 const DIALOG_WIDTH: f32 = 600.0;
 const DIALOG_TOP: f32 = 150.0;
-/// Height of a change row.
+/// Height of a change row of one line.
 const CHANGE_ROW_HEIGHT: f32 = 36.0;
+/// The widest a changed node's name is drawn before it ends in `…`, px.
+const CHANGE_NAME_MAX: f32 = 200.0;
 
 /// The dialog's own state; everything else is read from the editor each frame.
 pub(crate) struct DeployDialog {
@@ -35,6 +38,8 @@ pub(crate) struct DeployDialog {
     pub(crate) note: Entity<TextInput>,
     /// The note took focus after the dialog's own first focus.
     focused: bool,
+    /// The change descriptions and problems, selectable.
+    texts: Texts,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -46,7 +51,7 @@ impl DeployDialog {
                 this.confirm(window, cx);
             }
         })];
-        Self { editor, note, focused: false, _subscriptions: subscriptions }
+        Self { editor, note, focused: false, texts: Texts::default(), _subscriptions: subscriptions }
     }
 
     /// Deploys with the note and closes, unless something blocks the deploy.
@@ -71,18 +76,23 @@ impl DeployDialog {
             });
         }
         let Some(editor) = self.editor.upgrade() else { return div().into_any_element() };
-        let editor = editor.read(cx);
-        let versions = editor.versions(cx);
-        let name = editor.title(cx);
-        let draft = editor.parts.draft.read(cx);
-        let graph = draft.graph().cloned();
-        let problems = sorted(draft.problems());
-        let current = draft.problems_are_current();
-        let blocked = editor.deploy_blocked(cx);
-        let changes = editor.doc.changes.clone();
-        let queued = editor.queued(cx);
-        let run = editor.shown_run(cx);
+        let (versions, name, graph, problems, current, blocked, changes, queued, run) = {
+            let editor = editor.read(cx);
+            let draft = editor.parts.draft.read(cx);
+            (
+                editor.versions(cx),
+                editor.title(cx),
+                draft.graph().cloned(),
+                sorted(draft.problems()),
+                draft.problems_are_current(),
+                editor.deploy_blocked(cx),
+                editor.doc.changes.clone(),
+                editor.queued(cx),
+                editor.shown_run(cx),
+            )
+        };
 
+        self.texts.begin_frame();
         let mut body: Vec<AnyElement> = Vec::new();
         let since = match versions.live {
             Some(live) => format!("Changes since v{live}"),
@@ -103,13 +113,14 @@ impl DeployDialog {
                                 .child("Compare canvases"),
                         ),
                 )
-                .child(changes_card(changes.as_deref(), graph.as_ref()))
+                .child(changes_card(&mut self.texts, changes.as_deref(), graph.as_ref(), cx))
                 .into_any_element(),
         );
         body.push(self.run_row(run.as_deref(), cx));
-        if let Some(problems_block) = problems_banner(&problems, current, graph.as_ref()) {
+        if let Some(problems_block) = problems_banner(&mut self.texts, &problems, current, graph.as_ref(), cx) {
             body.push(problems_block);
         }
+        self.texts.end_frame();
         let all = if queued > 0 {
             format!("{} start on v{} as soon as it’s live", base::fmt::plural(queued.into(), "queued issue", "queued issues"), versions.next)
         } else {
@@ -245,8 +256,8 @@ fn kind_icon(kind: &NodeKind) -> IconName {
     }
 }
 
-/// The rows of "Changes since vN".
-fn changes_card(changes: Option<&[GraphChange]>, graph: Option<&GraphDef>) -> AnyElement {
+/// The rows of "Changes since vN"; what changed can be selected.
+fn changes_card(texts: &mut Texts, changes: Option<&[GraphChange]>, graph: Option<&GraphDef>, cx: &mut Context<DeployDialog>) -> AnyElement {
     let frame = col().bg(SURFACE).border_1().border_color(LINE).rounded(px(RADIUS_XL)).overflow_hidden();
     let Some(changes) = changes else {
         return frame.child(change_note("Reading the changes…")).into_any_element();
@@ -255,13 +266,14 @@ fn changes_card(changes: Option<&[GraphChange]>, graph: Option<&GraphDef>) -> An
         return frame.child(change_note("Nothing changed since the live version")).into_any_element();
     }
     let node_icon = |node: &NodeId| graph.and_then(|g| g.node(node)).map_or(IconName::Trash, |n| kind_icon(&n.kind));
-    let rows = changes.iter().enumerate().map(|(ix, change)| {
+    let rows: Vec<_> = changes.iter().enumerate().map(|(ix, change)| {
         let (sign, color, mark, name, what) = match change {
             GraphChange::Added { node, name, what } => ("+", SUCCESS, node_icon(node), name.clone(), what.clone()),
             GraphChange::Removed { node, name } => ("−", DANGER, node_icon(node), name.clone(), "removed".to_string()),
             GraphChange::Changed { node, name, what } => ("~", WARNING, node_icon(node), name.clone(), what.clone()),
             GraphChange::Wiring { what } => ("·", TEXT_MUTED, IconName::Branch, "Wiring".to_string(), what.clone()),
         };
+        let what = texts.text("deploy-change", what, LABEL, TEXT_SECONDARY, cx);
         row()
             .id(ElementId::Name(format!("deploy-change-{ix}").into()))
             .debug_selector(move || format!("deploy-change-{ix}"))
@@ -271,10 +283,10 @@ fn changes_card(changes: Option<&[GraphChange]>, graph: Option<&GraphDef>) -> An
             .when(ix > 0, |d| d.border_t_1().border_color(LINE_SUBTLE))
             .child(div().w(px(14.)).flex_none().flex().justify_center().type_style(MONO).text_color(color).child(sign))
             .child(div().size(px(20.)).flex().flex_none().items_center().justify_center().rounded(px(RADIUS_MD)).bg(SURFACE_HOVER).child(icon(mark, 12., TEXT_SECONDARY)))
-            .child(div().flex_none().type_style(BODY_STRONG).child(name))
-            .child(div().flex_1().min_w_0().type_style(LABEL).text_color(TEXT_SECONDARY).child(truncate_lh(what, LABEL.line)))
+            .child(div().flex_none().max_w(px(CHANGE_NAME_MAX)).type_style(BODY_STRONG).child(truncate(name)))
+            .child(div().flex_1().min_w_0().py(px(SPACE_2)).child(what))
             .probe(format!("deploy-change-{ix}"))
-    });
+    }).collect();
     frame.children(rows).into_any_element()
 }
 
@@ -282,8 +294,14 @@ fn change_note(text: &'static str) -> impl IntoElement {
     row().min_h(px(CHANGE_ROW_HEIGHT)).px(px(SPACE_3)).type_style(LABEL).text_color(TEXT_MUTED).child(text)
 }
 
-/// Errors that block the deploy and warnings worth a look; a note while checking.
-fn problems_banner(problems: &[Problem], current: bool, graph: Option<&GraphDef>) -> Option<AnyElement> {
+/// Errors that block the deploy and warnings worth a look, selectable; a note while checking.
+fn problems_banner(
+    texts: &mut Texts,
+    problems: &[Problem],
+    current: bool,
+    graph: Option<&GraphDef>,
+    cx: &mut Context<DeployDialog>,
+) -> Option<AnyElement> {
     if !current {
         return Some(
             div()
@@ -324,7 +342,7 @@ fn problems_banner(problems: &[Problem], current: bool, graph: Option<&GraphDef>
                     .flex_1()
                     .min_w_0()
                     .child(div().type_style(BODY_STRONG).child(title))
-                    .children(problems.iter().map(|p| div().type_style(LABEL).text_color(TEXT_SECONDARY).child(line(p)))),
+                    .children(problems.iter().map(|p| texts.text("deploy-problem", line(p), LABEL, TEXT_SECONDARY, cx))),
             ))
             .probe("deploy-blocked")
             .into_any_element(),

@@ -4,6 +4,7 @@
 mod deploy;
 mod dock;
 mod load_save;
+mod narrow;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -37,10 +38,23 @@ impl Render for Stage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (title, badges, actions) =
             self.view.update(cx, |v, cx| (v.title(cx), v.header_badges(window, cx), v.header_actions(window, cx)));
+        // As the shell lays it out: the badges are clipped before the title, the actions stay.
+        let mut after = row().gap(px(SPACE_2)).min_w_0().overflow_hidden();
+        after.style().flex_shrink = Some(1000.);
+        let header = row()
+            .flex_none()
+            .h(px(HEADER_HEIGHT))
+            .gap(px(SPACE_2))
+            .pl(px(SPACE_5))
+            .pr(px(SPACE_2))
+            .child(row().min_w_0().flex_shrink().child(truncate(title)))
+            .child(after.children(badges.into_iter().map(|badge| div().flex_none().child(badge))))
+            .child(grow())
+            .child(row().flex_none().gap(px(SPACE_2)).children(actions));
         ui::root()
             .flex()
             .flex_col()
-            .child(row().flex_none().h(px(HEADER_HEIGHT)).gap(px(SPACE_2)).child(title).children(badges).child(grow()).children(actions))
+            .child(header)
             .child(div().flex_1().min_h_0().flex().child(self.view.clone()))
     }
 }

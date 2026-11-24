@@ -9,7 +9,7 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use super::fields::{Spec, count_value, on_kind, parse_count};
-use super::form::{INNER, field, note, problem_line, titled};
+use super::form::{INNER, field, note, titled};
 use super::{InspectorView, ops};
 
 /// Width of the fields inside a rule card.
@@ -82,14 +82,14 @@ impl InspectorView {
                 .child(div().type_style(MONO).text_color(TEXT_SECONDARY).child("else"))
                 .child(div().type_style(LABEL).text_color(TEXT_MUTED).child("anything no rule matched"))
                 .child(grow())
-                .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(else_text))
+                .child(div().flex_shrink().min_w_0().type_style(LABEL).text_color(TEXT_MUTED).child(truncate_lh(else_text, LABEL.line)))
                 .probe("insp-rule-else"),
         );
         let general = problems
             .iter()
             .find(|(f, rule, _)| *f == Some("rules") && rule.is_none())
             .map(|(_, _, m)| SharedString::from(m.clone()));
-        vec![section.children(problem_line(general, INNER)).into_any_element()]
+        vec![section.children(self.problem_line(general, INNER, cx)).into_any_element()]
     }
 
     #[expect(clippy::too_many_arguments, reason = "one rule card and where it sits")]
@@ -177,8 +177,8 @@ impl InspectorView {
                     .gap(px(SPACE_2))
                     .child(div().child(mode).probe(key("mode")))
                     .child(grow())
-                    .child(div().type_style(MONO_SM).text_color(TEXT_MUTED).child(rule.id.clone()))
-                    .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(target)),
+                    .child(div().flex_shrink().min_w_0().max_w(px(RULE_INNER / 3.)).type_style(MONO_SM).text_color(TEXT_MUTED).child(truncate_lh(rule.id.clone(), MONO_SM.line)))
+                    .child(div().flex_shrink().min_w_0().type_style(LABEL).text_color(TEXT_MUTED).child(truncate_lh(target, LABEL.line))),
             );
         match &rule.ask {
             None => {
@@ -244,7 +244,7 @@ impl InspectorView {
                     .child(question)
                     .child(field("Model", model))
                     .child(field("Reads", workdir))
-                    .children(problem_line(at("ask-workdir"), RULE_INNER))
+                    .children(self.problem_line(at("ask-workdir"), RULE_INNER, cx))
                     .child(row().gap(px(SPACE_3)).child(div().flex_1().type_style(LABEL).text_color(TEXT_MUTED).child("Max steps")).child(div().w(px(96.)).child(steps)))
                     .child(super::form::note("A yes/no question the model answers with read-only tools.", RULE_INNER));
             }

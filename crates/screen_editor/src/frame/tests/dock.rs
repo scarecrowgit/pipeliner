@@ -109,3 +109,32 @@ async fn the_last_test_run_is_on_show_after_a_restart(cx: &mut TestAppContext) {
     assert!(t.view.read_with(cx, |v, cx| v.draft().read(cx).run().is_none()));
     assert!(shown(cx, "test-run-start"));
 }
+
+#[gpui::test]
+async fn a_log_line_can_be_copied_and_a_long_one_wraps(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx);
+    start(&t, cx);
+    let id = t.view.read_with(cx, |v, cx| v.draft().read(cx).run().cloned()).expect("the run is on show");
+    let long = format!("bash {}", "cargo test --workspace --all-features ".repeat(8));
+    let texts = ["worktree ready", "read src/refunds.ts", long.as_str()];
+    for (ix, text) in texts.iter().enumerate() {
+        let line = RunLogLine {
+            seq: ix as u64 + 1,
+            at: super::NOW,
+            node: Some(NodeId::new("fixer")),
+            variant: 0,
+            level: if ix == 2 { LogLevel::Tool } else { LogLevel::Info },
+            text: text.to_string(),
+        };
+        t.api.emit(Event::RunLog { run: id.clone(), line });
+    }
+    cx.run_until_parked();
+    click(cx, "dock-tabs-1");
+    assert_eq!(super::narrow::drag_and_copy(cx, "log-text-1").as_deref(), Some("read src/refunds.ts"));
+    // The long line wraps inside the dock instead of running past it.
+    let Some(editor) = cx.debug_bounds("editor") else { panic!("the editor was not laid out") };
+    let Some(text) = cx.debug_bounds("log-text-2") else { panic!("the long line was not laid out") };
+    assert!(text.right() <= editor.right() - gpui::px(ui::theme::PANEL_WIDTH), "{text:?}");
+    assert!(text.size.height > gpui::px(ui::theme::LABEL.line), "{text:?}");
+    assert_eq!(super::narrow::drag_and_copy(cx, "log-text-2"), Some(long));
+}

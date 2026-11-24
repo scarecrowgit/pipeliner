@@ -10,6 +10,9 @@ use ui::prelude::*;
 use super::form::{INNER, OnPick, Pick, field, note, psec};
 use super::{InspectorView, ops};
 
+/// The widest a node id is drawn beside its name before it ends in `…`, px.
+const EDGE_ID_MAX: f32 = 120.0;
+
 /// What each edge kind means, in the order of the kind control.
 const KINDS: [(EdgeKind, &str, &str); 4] = [
     (EdgeKind::Route, "Route", "The item moves along it."),
@@ -77,7 +80,7 @@ impl InspectorView {
                 .child(div().w(px(48.)).flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(label))
                 .children(n.map(|n| Tile::new(super::form::kind_icon(&n.kind)).tone(super::form::kind_tone(&n.kind))))
                 .child(div().flex_shrink().min_w_0().child(truncate(name(n, id))))
-                .child(div().flex_none().type_style(MONO_SM).text_color(TEXT_MUTED).child(id.to_string()))
+                .child(div().flex_shrink().min_w_0().max_w(px(EDGE_ID_MAX)).type_style(MONO_SM).text_color(TEXT_MUTED).child(truncate_lh(id.to_string(), MONO_SM.line)))
         };
         let problems: Vec<_> = self
             .problems_of(Some(&edge.from), cx)
@@ -85,7 +88,7 @@ impl InspectorView {
             .filter(|(_, m)| m.contains("edge") || m.contains("connects") || m.contains("Context edges") || m.contains("Spawn edges") || m.contains("send work back"))
             .collect();
         let mut sections = Vec::new();
-        if let Some(list) = self.problem_list(problems) {
+        if let Some(list) = self.problem_list(problems, cx) {
             sections.push(list);
         }
         sections.push(

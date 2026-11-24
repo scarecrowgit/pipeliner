@@ -26,9 +26,12 @@ mod toolbar;
 #[cfg(test)]
 mod tests;
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, IntoElement, KeyDownEvent,
-    MouseButton, Render, SharedString, Subscription, Window, div, prelude::*, px,
+    MouseButton, Render, SharedString, Subscription, Window, canvas, div, prelude::*, px,
 };
 use hub::model::{NodeId, PipelineId};
 use hub::{CatalogModel, HubNotice, Route, Router};
@@ -36,6 +39,7 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use crate::canvas::{CanvasEvent, CanvasView};
+use crate::selectable::Texts;
 use crate::{Draft, DraftEvent, InspectorView, Selection};
 
 pub use dock::DockTab;
@@ -73,6 +77,61 @@ impl Parts {
     }
 }
 
+/// The editor's width until its first frame is measured, px: a wide window, so the first
+/// frame looks as it always did.
+const WIDTH_UNTIL_MEASURED: f32 = 1484.0;
+
+/// What the editor measured of its own layout in the last frame. Narrow layouts follow it;
+/// a change is drawn again at once.
+pub(super) struct Measured {
+    /// Width of the editor's content, px.
+    pub(super) width: Cell<f32>,
+    /// Width of the toolbar's "Add" and its chips with their labels, once drawn so.
+    pub(super) labelled_add: Cell<Option<f32>>,
+    /// Width of the toolbar's zoom controls and "Fit".
+    pub(super) view_controls: Cell<f32>,
+}
+
+impl Default for Measured {
+    fn default() -> Self {
+        Self { width: Cell::new(WIDTH_UNTIL_MEASURED), labelled_add: Cell::new(None), view_controls: Cell::new(0.) }
+    }
+}
+
+impl Measured {
+    /// Width of the column under the toolbar beside the inspector: the canvas and the dock.
+    pub(super) fn left_width(&self) -> f32 {
+        (self.width.get() - PANEL_WIDTH).max(0.)
+    }
+}
+
+/// An invisible layer over its (relative) parent that hands the parent's width to `store`;
+/// when `store` says it changed the window is drawn again.
+pub(super) fn measure_width(store: impl Fn(f32) -> bool + 'static) -> impl IntoElement {
+    canvas(
+        move |bounds, window, cx| {
+            if store(f32::from(bounds.size.width)) {
+                // A refresh asked for while drawing is dropped: ask once this frame is done.
+                window.defer(cx, |window, _| window.refresh());
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// Sets `cell` to `width` and says whether that changed it by half a pixel or more.
+pub(super) fn store_width(cell: &Cell<f32>, width: f32) -> bool {
+    if width <= 0. || (cell.get() - width).abs() < 0.5 {
+        return false;
+    }
+    cell.set(width);
+    true
+}
+
 /// The whole content of `Route::Editor`.
 pub struct EditorView {
     pipeline: PipelineId,
@@ -85,6 +144,9 @@ pub struct EditorView {
     focus: FocusHandle,
     /// Move focus into the editor on the next frame: it was just shown.
     wants_focus: bool,
+    measured: Rc<Measured>,
+    /// Selectable texts drawn in the editor's own frame (problems, errors).
+    texts: Texts,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -112,6 +174,8 @@ impl EditorView {
             deploy: None,
             focus: cx.focus_handle(),
             wants_focus: true,
+            measured: Rc::default(),
+            texts: Texts::default(),
             _subscriptions: subscriptions,
         };
         this.start_loading(cx);
@@ -240,7 +304,7 @@ impl EditorView {
             .min_w_0()
             .relative()
             .child(div().size_full().child(self.parts.canvas.clone()))
-            .children(self.conflict_banner(cx));
+            .children(self.file_banners(cx));
         let left = col().flex_1().min_w_0().h_full().child(canvas_area).child(self.render_dock(window, cx));
         let inspector = div()
             .w(px(PANEL_WIDTH))
@@ -266,19 +330,26 @@ impl Render for EditorView {
             let focus = self.parts.canvas.read(cx).focus_handle().clone();
             window.focus(&focus);
         }
+        self.texts.begin_frame();
         let body = match self.doc.load.clone() {
             Load::Ready => self.render_editor(window, cx),
-            other => self.render_placeholder(other, cx),
+            other => self.render_placeholder(other, window, cx),
         };
+        self.texts.end_frame();
+        let measured = self.measured.clone();
         div()
             .id("editor")
             .debug_selector(|| "editor".into())
             .key_context("Editor")
             .track_focus(&self.focus)
+            .relative()
             .flex()
             .flex_col()
             .size_full()
+            .min_w_0()
+            .overflow_hidden()
             .bg(BG)
+            .child(measure_width(move |width| store_width(&measured.width, width)))
             .on_action(cx.listener(|this, _: &keys::Undo, _, cx| this.undo(cx)))
             .on_key_down(cx.listener(Self::on_key))
             .on_mouse_down(

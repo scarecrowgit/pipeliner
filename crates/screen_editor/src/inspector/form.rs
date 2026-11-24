@@ -55,10 +55,6 @@ pub(crate) fn note(text: impl Into<SharedString>, width: f32) -> Div {
     div().w(px(width)).type_style(LABEL).text_color(TEXT_MUTED).child(text.into())
 }
 
-/// A danger line under a control that a problem is about.
-pub(crate) fn problem_line(problem: Option<SharedString>, width: f32) -> Option<Div> {
-    problem.map(|message| div().w(px(width)).type_style(LABEL).text_color(DANGER).child(message))
-}
 
 /// The tile icon of a node kind, as the canvas draws it.
 pub(crate) fn kind_icon(kind: &NodeKind) -> IconName {
@@ -139,6 +135,14 @@ impl Pick {
 pub(crate) type OnPick = Rc<dyn Fn(&mut InspectorView, usize, &mut Window, &mut Context<InspectorView>)>;
 
 impl InspectorView {
+    /// A danger line under a control that a problem is about, `width` wide; it can be
+    /// selected and copied.
+    pub(crate) fn problem_line(&mut self, problem: Option<SharedString>, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let message = problem?;
+        let text = self.texts.text("problem-line", message, LABEL, DANGER, cx);
+        Some(div().w(px(width)).child(text).into_any_element())
+    }
+
     /// A select box showing `value` that opens a menu of `picks`; rows are probed as
     /// `<key>-<index>`. `muted` draws the value as a placeholder (an inherited value).
     #[expect(clippy::too_many_arguments, reason = "a picker is its value, its rows and what a pick does")]
@@ -232,7 +236,8 @@ impl InspectorView {
     }
 }
 
-/// A mono tag with an × that removes it (`.tag.mono`); `id` is the ×'s id and probe.
+/// A mono tag with an × that removes it (`.tag.mono`); `id` is the ×'s id and probe. A text
+/// too long for [`INNER`] ends in `…`.
 pub(crate) fn removable_tag(
     id: impl Into<SharedString>,
     text: impl Into<SharedString>,
@@ -242,6 +247,7 @@ pub(crate) fn removable_tag(
     cx: &mut App,
 ) -> AnyElement {
     let id: SharedString = id.into();
+    let text: SharedString = text.into();
     let (bg, fg) = match tone {
         TagTone::Neutral => (SURFACE_HOVER, TEXT_SECONDARY),
         TagTone::Spawn => (SPAWN_SOFT, SPAWN_TEXT),
@@ -262,6 +268,7 @@ pub(crate) fn removable_tag(
         .on_click(on_remove);
     row()
         .flex_none()
+        .max_w(px(INNER))
         .gap(px(SPACE_1))
         .h(px(20.))
         .pl(px(SPACE_1_5))
@@ -271,8 +278,8 @@ pub(crate) fn removable_tag(
         .text_color(fg)
         .type_style(MONO_SM)
         .whitespace_nowrap()
-        .child(text.into())
-        .child(x.probe(id))
+        .child(div().flex_shrink().min_w_0().child(truncate_lh(text, MONO_SM.line)))
+        .child(div().flex_none().child(x.probe(id)))
         .into_any_element()
 }
 

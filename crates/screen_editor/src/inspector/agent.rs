@@ -17,6 +17,9 @@ use super::grants::Owner;
 use super::{InspectorView, ops};
 use crate::Selection;
 
+/// The longest path in a file tag: what fits the panel in mono 11px.
+const TAG_CHARS: usize = 44;
+
 impl InspectorView {
     /// The library agent behind `reference`, if the catalog has it.
     fn library_def(&self, reference: Option<&RunnableRef>, cx: &gpui::App) -> Option<AgentDef> {
@@ -153,7 +156,7 @@ impl InspectorView {
         };
         psec()
             .child(field("Agent from your library", picker))
-            .children(super::form::problem_line(self.problem_at(&node.id, "runnable", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "runnable", cx), INNER, cx))
             .child(note(library_note, INNER).mt(px(SPACE_1_5)))
             .child(div().mt(px(SPACE_3)).child(self.name_and_id(graph, node, window, cx)))
             .child(div().mt(px(SPACE_3)).child(field("Role", role)))
@@ -187,9 +190,9 @@ impl InspectorView {
         };
         psec()
             .child(field("Workdir", workdir))
-            .children(super::form::problem_line(self.problem_at(&node.id, "workdir", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "workdir", cx), INNER, cx))
             .child(row_field("Variants", variants.probe("insp-variants")).mt(px(SPACE_3)))
-            .children(super::form::problem_line(self.problem_at(&node.id, "variants", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "variants", cx), INNER, cx))
             .child(note(explain, INNER).mt(px(SPACE_1_5)))
             .into_any_element()
     }
@@ -205,7 +208,8 @@ impl InspectorView {
                 _ => None,
             })
             .flat_map(|path| path.split(", ").map(str::to_string).collect::<Vec<_>>())
-            .map(|path| Tag::new(path).mono().into_any_element())
+            // The tag does not shrink: a long path is cut to what fits the panel.
+            .map(|path| Tag::new(base::fmt::truncate_chars(&path, TAG_CHARS)).mono().into_any_element())
             .collect();
         let add_in = Button::new("insp-files-in-add", "Add file")
             .ghost()
@@ -365,7 +369,7 @@ impl InspectorView {
         let limits = psec()
             .gap(px(SPACE_2))
             .child(row_field("Per run", per_run.probe("insp-per-run")))
-            .children(super::form::problem_line(self.problem_at(&node.id, "per-run", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "per-run", cx), INNER, cx))
             .child(note("How many of these one parent run may create.", INNER))
             .child(row().mt(px(SPACE_2)).gap(px(SPACE_3)).child(div().flex_1().type_style(LABEL).text_color(TEXT_MUTED).child("Max steps")).child(div().w(px(120.)).child(steps)))
             .into_any_element();

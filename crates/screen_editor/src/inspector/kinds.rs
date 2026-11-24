@@ -8,7 +8,7 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use super::fields::{Spec, count_value, on_kind, parse_count};
-use super::form::{INNER, OnPick, Pick, field, note, problem_line, psec, row_field};
+use super::form::{INNER, OnPick, Pick, field, note, psec, row_field};
 use super::{InspectorView, ops};
 
 /// Source kinds in picker order, with whether they work yet.
@@ -76,7 +76,7 @@ impl InspectorView {
         psec()
             .gap(px(SPACE_1_5))
             .child(field("Starts from", picker))
-            .children(problem_line(self.problem_at(&node.id, "source", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "source", cx), INNER, cx))
             .child(note(if soon { format!("{sub}. Coming soon: pick another source to run it.") } else { format!("{sub}.") }, INNER))
             .into_any_element()
     }
@@ -120,7 +120,7 @@ impl InspectorView {
         psec()
             .gap(px(SPACE_3))
             .child(field("Workdir", picker))
-            .children(problem_line(self.problem_at(&node.id, "workdir", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "workdir", cx), INNER, cx))
             .child(field(if mode == FileMode::Read { "Path or glob" } else { "Path template" }, path_field))
             .child(field("Mode", div().child(modes).probe("insp-mode")))
             .child(note(meaning, INNER))
@@ -146,7 +146,7 @@ impl InspectorView {
         psec()
             .gap(px(SPACE_1_5))
             .child(field("Send back restarts", picker))
-            .children(problem_line(self.problem_at(&node.id, "send-back", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "send-back", cx), INNER, cx))
             .child(note("The agent a person's Send back runs again, with their note. It must be upstream of the review.", INNER))
             .child(row_field("Skip if empty", toggle.probe("insp-skip-if-empty")).mt(px(SPACE_3)))
             .child(note("Pass straight through when there is nothing to look at: no diff, no render.", INNER))
@@ -181,7 +181,7 @@ impl InspectorView {
                 window,
                 cx,
             );
-            main = main.child(div().mt(px(SPACE_2)).child(field("Workdir", picker))).children(problem_line(self.problem_at(&node.id, "workdir", cx), INNER));
+            main = main.child(div().mt(px(SPACE_2)).child(field("Workdir", picker))).children(self.problem_line(self.problem_at(&node.id, "workdir", cx), INNER, cx));
         }
         let mut sections = vec![main.into_any_element()];
         match action {
@@ -288,7 +288,7 @@ impl InspectorView {
         psec()
             .gap(px(SPACE_3))
             .child(field("Move the issue to", picker))
-            .children(problem_line(self.problem_at(&node.id, "status", cx), INNER))
+            .children(self.problem_line(self.problem_at(&node.id, "status", cx), INNER, cx))
             .child(field("Comment", comment))
             .into_any_element()
     }

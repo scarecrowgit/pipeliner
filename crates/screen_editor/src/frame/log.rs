@@ -3,54 +3,107 @@
 //! are read page by page on demand. With a node selected on the canvas the log can show only
 //! that node's lines.
 //!
-//! Probes: `test-run-log` (the list), `log-earlier`, `log-only-node`.
+//! The text of a line wraps and can be selected and copied. Its view is made when the row is
+//! first drawn and kept by the line's number while the row is drawn; views of rows long out
+//! of sight are dropped, so a long log costs what is on screen.
+//!
+//! Probes: `test-run-log` (the list), `log-earlier`, `log-only-node`; debug selectors
+//! `log-text-<n>` on the text of the n-th row as listed.
 
-use std::ops::Range;
+use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, App, Context, IntoElement, ScrollStrategy, Task, UniformListScrollHandle, Window, div, prelude::*, px,
-    uniform_list,
+    AnyElement, App, Context, Entity, IntoElement, ListAlignment, ListState, Task, Window, div, list, prelude::*, px,
 };
 use hub::RunLogEvent;
 use hub::model::{LogLevel, NodeId, RunLogLine};
 use ui::dev::Probe;
 use ui::prelude::*;
+use ui_rich::markdown::Markdown;
 
 use super::EditorView;
 use crate::Selection;
 
-/// Height of a log line.
+/// Height of a one-line log row.
 const LINE_HEIGHT: f32 = 22.0;
 /// Lines read per "Show earlier lines".
 const PAGE: usize = 500;
 /// Width of the time column and of the node column.
 const TIME_WIDTH: f32 = 44.0;
 const NODE_WIDTH: f32 = 120.0;
+/// How far past the visible rows the list draws, px.
+const OVERDRAW: f32 = 200.0;
+/// Text views kept before the ones of rows not drawn lately are dropped.
+const KEEP_TEXTS: usize = 240;
+/// The longest node name in the "Only …" filter chip.
+const ONLY_NAME_CHARS: usize = 24;
 
-/// The Log tab's own state: where the list is scrolled, the earlier pages read, the filter.
+/// The Log tab's own state: the list, the earlier pages read, the filter, the text views.
 pub(super) struct LogState {
-    pub(super) scroll: UniformListScrollHandle,
+    /// Bottom-aligned: at the end it follows new lines, scrolled up it stays put.
+    pub(super) list: ListState,
+    /// The numbers (`seq`) of the lines the list was last told about, in its order.
+    rows: Vec<u64>,
     /// Lines older than the model's first, oldest first.
     pub(super) earlier: Vec<RunLogLine>,
     loading: Option<Task<()>>,
     /// Show only the lines of the node selected on the canvas.
     pub(super) only_node: bool,
-    /// Scroll to the last line once there is one: the run was just put on show.
-    jump_to_end: bool,
+    /// Text views by line number, and the frame each was last drawn in.
+    texts: HashMap<u64, (Entity<Markdown>, u64)>,
+    frame: u64,
 }
 
 impl Default for LogState {
     fn default() -> Self {
-        Self { scroll: UniformListScrollHandle::new(), earlier: Vec::new(), loading: None, only_node: false, jump_to_end: true }
+        Self {
+            list: ListState::new(0, ListAlignment::Bottom, px(OVERDRAW)),
+            rows: Vec::new(),
+            earlier: Vec::new(),
+            loading: None,
+            only_node: false,
+            texts: HashMap::new(),
+            frame: 0,
+        }
     }
 }
 
-/// The list is scrolled to its end (or everything fits).
-fn at_bottom(scroll: &UniformListScrollHandle) -> bool {
-    let state = scroll.0.borrow();
-    let offset = -f32::from(state.base_handle.offset().y);
-    let max = f32::from(state.base_handle.max_offset().height);
-    offset >= max - LINE_HEIGHT
+impl LogState {
+    /// Tells the list how its rows changed from `rows` to `now`: lines dropped at the front,
+    /// earlier pages put before, new lines after. Anything else lays the list out anew.
+    fn sync(&mut self, now: Vec<u64>) {
+        if now == self.rows {
+            return;
+        }
+        let old = &self.rows;
+        let gone = now.first().map_or(old.len(), |first| old.iter().take_while(|seq| *seq < first).count());
+        let kept = &old[gone..];
+        let at = kept.first().and_then(|first| now.binary_search(first).ok());
+        match at {
+            Some(at) if now.get(at..at + kept.len()) == Some(kept) => {
+                // One splice per run of changed rows: one over the anchor resets the scroll.
+                if gone > 0 || at > 0 {
+                    self.list.splice(0..gone, at);
+                }
+                let end = at + kept.len();
+                if now.len() > end {
+                    self.list.splice(end..end, now.len() - end);
+                }
+            }
+            _ => self.list.reset(now.len()),
+        }
+        self.rows = now;
+    }
+
+    /// Drops the text views of rows not drawn lately once there are many.
+    fn forget_texts(&mut self, cx: &App) {
+        self.frame += 1;
+        if self.texts.len() <= KEEP_TEXTS {
+            return;
+        }
+        let recent = self.frame.saturating_sub(2);
+        self.texts.retain(|_, (view, drawn)| *drawn >= recent || view.read(cx).selected_text().is_some());
+    }
 }
 
 impl EditorView {
@@ -81,20 +134,25 @@ impl EditorView {
             .collect()
     }
 
+    /// The line numbered `seq`, from the earlier pages or the model.
+    fn log_line(&self, seq: u64, cx: &App) -> Option<RunLogLine> {
+        let shown = self.test.shown.as_ref()?;
+        let model = shown.model.read(cx).log();
+        if let Ok(ix) = model.binary_search_by_key(&seq, |line| line.seq) {
+            return model.get(ix).cloned();
+        }
+        let earlier = &self.test.log.earlier;
+        earlier.binary_search_by_key(&seq, |line| line.seq).ok().and_then(|ix| earlier.get(ix).cloned())
+    }
+
     /// Lines in the log of the run on show, for the tab's count.
     pub(crate) fn log_count(&self, cx: &App) -> usize {
         self.test.shown.as_ref().map_or(0, |shown| shown.model.read(cx).log().len() + self.test.log.earlier.len())
     }
 
-    /// New lines: keep the tail in view if it was in view.
+    /// New lines: the list takes them on the next frame and, at the bottom, follows them.
     pub(super) fn log_appended(&mut self, event: &RunLogEvent, cx: &mut Context<Self>) {
         let RunLogEvent::Appended { .. } = event;
-        if at_bottom(&self.test.log.scroll) {
-            let count = self.log_lines(cx).len();
-            if count > 0 {
-                self.test.log.scroll.scroll_to_item(count - 1, ScrollStrategy::Bottom);
-            }
-        }
         cx.notify();
     }
 
@@ -137,59 +195,69 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Rows `range` of the list.
-    fn log_rows(&self, range: Range<usize>, cx: &App) -> Vec<AnyElement> {
-        let draft = self.parts.draft.read(cx);
-        let name = |node: &Option<NodeId>| -> String {
-            match (node, draft.graph()) {
+    /// The text view of `line`, made on first use.
+    fn log_text(&mut self, line: &RunLogLine, cx: &mut Context<Self>) -> Entity<Markdown> {
+        let (color, style) = match line.level {
+            LogLevel::Info => (TEXT, LABEL),
+            // Mono, on the label's line height so every row keeps its height.
+            LogLevel::Tool => (TEXT_SECONDARY, TypeStyle { line: LABEL.line, ..MONO }),
+            LogLevel::Warn => (WARNING, LABEL),
+            LogLevel::Error => (DANGER, LABEL),
+        };
+        let frame = self.test.log.frame;
+        if let Some((view, drawn)) = self.test.log.texts.get_mut(&line.seq) {
+            *drawn = frame;
+            let view = view.clone();
+            view.update(cx, |view, cx| view.set_text(line.text.clone(), cx));
+            return view;
+        }
+        let view = cx.new(|cx| Markdown::verbatim(line.text.clone(), cx).type_style(style).color(color));
+        self.test.log.texts.insert(line.seq, (view.clone(), frame));
+        view
+    }
+
+    /// Row `ix` of the list: time, node, and the text at `text_width`.
+    fn log_row(&mut self, ix: usize, text_width: f32, cx: &mut Context<Self>) -> AnyElement {
+        let Some(line) = self.test.log.rows.get(ix).and_then(|seq| self.log_line(*seq, cx)) else {
+            return div().h(px(LINE_HEIGHT)).into_any_element();
+        };
+        let name = {
+            let draft = self.parts.draft.read(cx);
+            match (&line.node, draft.graph()) {
                 (Some(id), Some(graph)) => graph.node(id).map_or_else(|| id.to_string(), |n| n.name.clone()),
                 (Some(id), None) => id.to_string(),
                 (None, _) => "run".to_string(),
             }
         };
         let offset = base::time::utc_offset(base::time::now_ms());
-        let lines = self.log_lines(cx);
-        range
-            .filter_map(|ix| lines.get(ix).map(|line| (ix, *line)))
-            .map(|(ix, line)| {
-                let (color, mono) = match line.level {
-                    LogLevel::Info => (TEXT, false),
-                    LogLevel::Tool => (TEXT_SECONDARY, true),
-                    LogLevel::Warn => (WARNING, false),
-                    LogLevel::Error => (DANGER, false),
-                };
-                row()
-                    .id(("log-line", ix))
-                    .h(px(LINE_HEIGHT))
-                    .px(px(SPACE_5))
-                    .gap(px(SPACE_3))
-                    .child(
-                        div()
-                            .w(px(TIME_WIDTH))
-                            .flex_none()
-                            .type_style(MONO_SM)
-                            .text_color(TEXT_MUTED)
-                            .child(base::time::clock_time(line.at, offset)),
-                    )
-                    .child(
-                        div()
-                            .w(px(NODE_WIDTH))
-                            .flex_none()
-                            .type_style(LABEL)
-                            .text_color(TEXT_MUTED)
-                            .child(truncate_lh(name(&line.node), LABEL.line)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .type_style(if mono { MONO } else { LABEL })
-                            .text_color(color)
-                            .child(truncate_lh(line.text.clone(), LABEL.line)),
-                    )
-                    .into_any_element()
-            })
-            .collect()
+        let text = self.log_text(&line, cx);
+        row()
+            .id(("log-line", ix))
+            .w_full()
+            .items_start()
+            .min_h(px(LINE_HEIGHT))
+            .py(px((LINE_HEIGHT - LABEL.line) / 2.))
+            .px(px(SPACE_5))
+            .gap(px(SPACE_3))
+            .child(
+                div()
+                    .w(px(TIME_WIDTH))
+                    .flex_none()
+                    .mt(px((LABEL.line - MONO_SM.line) / 2.))
+                    .type_style(MONO_SM)
+                    .text_color(TEXT_MUTED)
+                    .child(base::time::clock_time(line.at, offset)),
+            )
+            .child(
+                div()
+                    .w(px(NODE_WIDTH))
+                    .flex_none()
+                    .type_style(LABEL)
+                    .text_color(TEXT_MUTED)
+                    .child(truncate_lh(name, LABEL.line)),
+            )
+            .child(div().w(px(text_width)).flex_none().debug_selector(move || format!("log-text-{ix}")).child(text))
+            .into_any_element()
     }
 
     pub(super) fn render_log(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -209,11 +277,10 @@ impl EditorView {
                 .probe("test-run-log")
                 .into_any_element();
         }
-        let count = self.log_lines(cx).len();
-        if self.test.log.jump_to_end && count > 0 {
-            self.test.log.jump_to_end = false;
-            self.test.log.scroll.scroll_to_item(count - 1, ScrollStrategy::Bottom);
-        }
+        let now: Vec<u64> = self.log_lines(cx).iter().map(|line| line.seq).collect();
+        let count = now.len();
+        self.test.log.sync(now);
+        self.test.log.forget_texts(cx);
         let first = self
             .test
             .log
@@ -232,10 +299,11 @@ impl EditorView {
             .gap(px(SPACE_2))
             .border_b_1()
             .border_color(LINE_SUBTLE)
-            .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(base::fmt::plural(count as u64, "line", "lines")))
+            .child(div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(base::fmt::plural(count as u64, "line", "lines")))
             .when(first > 1, |d| {
                 d.child(
                     div()
+                        .flex_none()
                         .child(
                             Link::new("log-earlier", if self.test.log.loading.is_some() { "Reading…" } else { "Show earlier lines" })
                                 .on_click(cx.listener(|this, _, _, cx| this.load_earlier(cx))),
@@ -247,8 +315,9 @@ impl EditorView {
             .when_some(selected, |d, name| {
                 d.child(
                     div()
+                        .flex_none()
                         .child(
-                            Chip::new("log-only-node", format!("Only {name}"))
+                            Chip::new("log-only-node", format!("Only {}", base::fmt::truncate_chars(&name, ONLY_NAME_CHARS)))
                                 .icon(IconName::Filter)
                                 .pressed(self.test.log.only_node)
                                 .on_click(cx.listener(|this, _, _, cx| this.toggle_only_node(cx))),
@@ -256,12 +325,12 @@ impl EditorView {
                         .probe("log-only-node"),
                 )
             });
-        let list = uniform_list(
-            "test-run-log-list",
-            count,
-            cx.processor(|this, range: Range<usize>, _window, cx| this.log_rows(range, cx)),
+        // A definite width for the wrapping text: the dock less the padding and the columns.
+        let text_width = (self.measured.left_width() - 2. * SPACE_5 - TIME_WIDTH - NODE_WIDTH - 2. * SPACE_3).max(0.);
+        let list = list(
+            self.test.log.list.clone(),
+            cx.processor(move |this, ix: usize, _window, cx| this.log_row(ix, text_width, cx)),
         )
-        .track_scroll(self.test.log.scroll.clone())
         .flex_1()
         .min_h_0()
         .py(px(SPACE_1));

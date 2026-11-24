@@ -15,12 +15,15 @@ use super::ops;
 
 /// Width of the fields inside a workdir card.
 const CARD_INNER: f32 = INNER - 2. * SPACE_3;
+/// The widest a workdir's id is drawn in its card's head before it ends in `…`, px.
+const WORKDIR_ID_MAX: f32 = 96.0;
 
 impl InspectorView {
     pub(super) fn pipeline_view(&mut self, graph: &GraphDef, window: &mut Window, cx: &mut Context<Self>) -> (AnyElement, Vec<AnyElement>) {
         let header = self.header(IconName::Pipelines, TileTone::Neutral, graph.name.clone(), "Pipeline".into(), false, window, cx);
         let mut sections = Vec::new();
-        if let Some(problems) = self.problem_list(self.problems_of(None, cx)) {
+        let problems = self.problems_of(None, cx);
+        if let Some(problems) = self.problem_list(problems, cx) {
             sections.push(problems);
         }
         let name = self.line(
@@ -123,16 +126,18 @@ impl InspectorView {
             .on_click(self.on_click(cx, move |this, _, cx| this.remove_workdir(index, cx)))
             .probe(format!("insp-wd-{index}-remove"));
         let head = row()
+            .debug_selector(move || format!("insp-wd-{index}-head"))
             .gap(px(SPACE_2))
             .child(icon(IconName::Folder, 14., TEXT_MUTED))
             .child(div().flex_shrink().min_w_0().type_style(BODY_STRONG).child(truncate(workdir.name.clone())))
-            .child(div().flex_none().type_style(MONO_SM).text_color(TEXT_MUTED).child(workdir.id.clone()))
+            .child(div().flex_shrink().min_w_0().max_w(px(WORKDIR_ID_MAX)).type_style(MONO_SM).text_color(TEXT_MUTED).child(truncate_lh(workdir.id.clone(), MONO_SM.line)))
             .child(grow())
             .child(div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(used))
             .child(toggle)
             .child(remove);
         let path = hub::display_path(&workdir.path, cx);
         let summary = row()
+            .debug_selector(move || format!("insp-wd-{index}-summary"))
             .gap(px(SPACE_2))
             .type_style(MONO_SM)
             .text_color(TEXT_SECONDARY)
@@ -149,7 +154,8 @@ impl InspectorView {
             .child(summary);
         if let Some((blocked, message)) = self.blocked_workdir.clone().filter(|(i, _)| *i == index) {
             let _ = blocked;
-            card = card.child(div().w(px(CARD_INNER)).type_style(LABEL).text_color(DANGER).child(message));
+            let message = self.texts.text("workdir-blocked", message, LABEL, DANGER, cx);
+            card = card.child(div().w(px(CARD_INNER)).child(message));
         }
         if open {
             card = card.child(self.workdir_fields(graph, index, workdir, path, window, cx));

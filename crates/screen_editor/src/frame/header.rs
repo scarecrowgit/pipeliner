@@ -1,6 +1,7 @@
 //! What the shell's header shows for the editor: after the name the draft's version, the live
 //! version, how far the draft is from it and whether it is saved; on the right undo and redo,
-//! "Replay last 100", "Test run" and "Deploy".
+//! "Replay last 100", "Test run" and "Deploy". A narrow editor leaves out "Replay last 100"
+//! (disabled until replays exist), so the actions that work keep their room.
 //!
 //! Probes: `editor-save-state` (its value is the words shown), `editor-undo`, `editor-redo`,
 //! `editor-replay`, `editor-test-run`, `editor-deploy`.
@@ -14,6 +15,9 @@ use ui::tooltip::Tooltip;
 
 use super::EditorView;
 use super::load_save::SaveState;
+
+/// The editor width below which the header leaves out "Replay last 100", px.
+const REPLAY_MIN_WIDTH: f32 = 1000.0;
 
 /// The versions the header and the deploy dialog name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +128,9 @@ impl EditorView {
                     .into_any_element(),
             );
         }
-        actions.push(
+        // Not built yet, so the first to go when the editor is narrow.
+        let wide = self.measured.width.get() >= REPLAY_MIN_WIDTH;
+        actions.extend(wide.then(|| {
             div()
                 .id("editor-replay-tip")
                 .tooltip(Tooltip::text("Coming soon"))
@@ -136,8 +142,8 @@ impl EditorView {
                         .disabled(true),
                 )
                 .probe("editor-replay")
-                .into_any_element(),
-        );
+                .into_any_element()
+        }));
         actions.push(
             Button::new("editor-test-run", "Test run")
                 .secondary()

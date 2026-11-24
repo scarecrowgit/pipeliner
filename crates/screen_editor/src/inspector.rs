@@ -38,6 +38,7 @@ use hub::{CatalogModel, RunModel};
 use ui::dev::Probe;
 use ui::prelude::*;
 
+use crate::selectable::Texts;
 use crate::{Draft, DraftEvent, Selection};
 use fields::Fields;
 
@@ -58,6 +59,8 @@ pub struct InspectorView {
     run: Option<(Entity<RunModel>, Subscription)>,
     scroll: ScrollHandle,
     focus_first: bool,
+    /// Problems and field messages, selectable.
+    texts: Texts,
     _subs: Vec<Subscription>,
 }
 
@@ -98,6 +101,7 @@ impl InspectorView {
             run: None,
             scroll: ScrollHandle::new(),
             focus_first: false,
+            texts: Texts::default(),
             _subs: subs,
         };
         view.follow_run(cx);
@@ -202,7 +206,8 @@ impl InspectorView {
     fn node_view(&mut self, graph: &GraphDef, node: &NodeDef, window: &mut Window, cx: &mut Context<Self>) -> (AnyElement, Vec<AnyElement>) {
         let header = self.header(form::kind_icon(&node.kind), form::kind_tone(&node.kind), node.name.clone(), kind_word(node), true, window, cx);
         let mut sections = Vec::new();
-        if let Some(problems) = self.problem_list(self.problems_of(Some(&node.id), cx)) {
+        let problems = self.problems_of(Some(&node.id), cx);
+        if let Some(problems) = self.problem_list(problems, cx) {
             sections.push(problems);
         }
         match &node.kind {
@@ -261,20 +266,24 @@ impl InspectorView {
             .into_any_element()
     }
 
-    /// The problems of what is shown, in a banner at the top.
-    fn problem_list(&self, problems: Vec<(Severity, String)>) -> Option<AnyElement> {
+    /// The problems of what is shown, in a banner at the top; they can be selected.
+    fn problem_list(&mut self, problems: Vec<(Severity, String)>, cx: &mut Context<Self>) -> Option<AnyElement> {
         if problems.is_empty() {
             return None;
         }
         let error = problems.iter().any(|(severity, _)| *severity == Severity::Error);
-        let lines = problems.into_iter().map(|(severity, message)| {
-            let color = if severity == Severity::Error { DANGER } else { WARNING };
-            row()
-                .items_start()
-                .gap(px(SPACE_2))
-                .child(div().flex_none().pt(px(SPACE_0_5)).child(icon(IconName::Alert, 14., color)))
-                .child(div().w(px(form::INNER - 54.)).type_style(LABEL).text_color(TEXT_SECONDARY).child(message))
-        });
+        let lines: Vec<_> = problems
+            .into_iter()
+            .map(|(severity, message)| {
+                let color = if severity == Severity::Error { DANGER } else { WARNING };
+                let message = self.texts.text("problem", message, LABEL, TEXT_SECONDARY, cx);
+                row()
+                    .items_start()
+                    .gap(px(SPACE_2))
+                    .child(div().flex_none().pt(px(SPACE_0_5)).child(icon(IconName::Alert, 14., color)))
+                    .child(div().w(px(form::INNER - 54.)).child(message))
+            })
+            .collect();
         Some(
             form::psec()
                 .child(
@@ -340,6 +349,7 @@ impl Render for InspectorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.follow_selection(cx);
         self.fields.begin_frame();
+        self.texts.begin_frame();
         let graph = self.draft.read(cx).graph().cloned();
         let (header, sections) = match (&graph, self.shown.clone()) {
             (None, _) => (
@@ -357,6 +367,7 @@ impl Render for InspectorView {
             (Some(graph), Selection::Edge(index)) => self.edge_view(graph, index, window, cx),
         };
         self.fields.end_frame();
+        self.texts.end_frame();
         if self.focus_first
             && let Some(editor) = self.fields.keys().first().and_then(|key| self.fields.editor(key))
         {
@@ -364,6 +375,7 @@ impl Render for InspectorView {
             window.on_next_frame(move |window, cx| editor.focus(window, cx));
         }
         col()
+            .debug_selector(|| "inspector".into())
             .flex_none()
             .w(px(PANEL_WIDTH))
             .h_full()

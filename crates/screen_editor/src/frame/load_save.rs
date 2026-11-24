@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{AnyElement, App, Context, IntoElement, SharedString, Task, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, IntoElement, SharedString, Task, Window, div, prelude::*, px};
 use hub::LoadState;
 use hub::api::{GraphChange, GraphDef, Origin, Place, PipelineVersion};
 use hub::model::{NodeId, RunnableRef};
@@ -18,6 +18,10 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use super::EditorView;
+use crate::selectable::text_width;
+
+/// The widest a reason for a failed load is laid out before it wraps, px.
+const PLACEHOLDER_TEXT_MAX: f32 = 480.0;
 
 /// How long after the last edit the draft is saved.
 pub(crate) const SAVE_DELAY: Duration = Duration::from_millis(800);
@@ -376,8 +380,51 @@ impl EditorView {
         }
     }
 
-    /// The notice over the canvas while the file changed under the edits.
-    pub(super) fn conflict_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The notices over the canvas: the file changed under the edits, the last save failed.
+    pub(super) fn file_banners(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let conflict = self.conflict_banner(cx);
+        let failed = self.save_failed_banner(cx);
+        if conflict.is_none() && failed.is_none() {
+            return None;
+        }
+        Some(
+            col()
+                .absolute()
+                .top(px(SPACE_3))
+                .left(px(SPACE_5))
+                .right(px(SPACE_5))
+                .gap(px(SPACE_2))
+                .children(conflict)
+                .children(failed)
+                .into_any_element(),
+        )
+    }
+
+    /// Why the last save failed, in words that can be copied, and a way to try again.
+    fn save_failed_banner(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let SaveState::Failed(why) = self.save_state(cx) else { return None };
+        let why = self.texts.text("save-error", why, LABEL, TEXT_SECONDARY, cx);
+        Some(
+            Banner::new()
+                .tone(BannerTone::Danger)
+                .child(icon(IconName::Alert, 16., DANGER))
+                .child(col().flex_1().min_w_0().child(div().type_style(BODY_STRONG).child("Not saved")).child(why))
+                .child(
+                    Button::new("editor-save-again", "Save again")
+                        .secondary()
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.keep_mine(cx);
+                            this.save_now(cx);
+                        }))
+                        .probe("editor-save-again"),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The notice while the file changed under the edits.
+    fn conflict_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.doc.conflict.as_ref()?;
         let banner = Banner::new()
             .tone(BannerTone::Warning)
@@ -407,15 +454,25 @@ impl EditorView {
                     .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx)))
                     .probe("editor-keep-mine"),
             );
-        Some(div().absolute().top(px(SPACE_3)).left(px(SPACE_5)).right(px(SPACE_5)).child(banner).into_any_element())
+        Some(banner.into_any_element())
     }
 
-    /// The content while the pipeline is loading, missing or failed.
-    pub(super) fn render_placeholder(&self, load: Load, cx: &mut Context<Self>) -> AnyElement {
+    /// The content while the pipeline is loading, missing or failed. Why it failed can be
+    /// selected and copied.
+    pub(super) fn render_placeholder(&mut self, load: Load, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (title, detail) = match load {
             Load::Loading | Load::Ready => ("Loading the pipeline…".to_string(), None),
-            Load::Missing => (format!("There is no pipeline {}", self.pipeline), Some("It may have been deleted or renamed.".to_string())),
-            Load::Failed(why) => ("Could not load the pipeline".to_string(), Some(why.to_string())),
+            Load::Missing => (
+                format!("There is no pipeline {}", self.pipeline),
+                Some(div().type_style(LABEL).text_color(TEXT_MUTED).child("It may have been deleted or renamed.").into_any_element()),
+            ),
+            Load::Failed(why) => {
+                // As wide as the words up to a cap, so a short reason stays centred.
+                let room = (self.measured.width.get() - 2. * SPACE_5).max(0.);
+                let width = (text_width(&why, LABEL, window) + 1.).min(PLACEHOLDER_TEXT_MAX).min(room);
+                let text = self.texts.text("load-error", why, LABEL, TEXT_MUTED, cx);
+                ("Could not load the pipeline".to_string(), Some(div().w(px(width)).child(text).probe("editor-load-error").into_any_element()))
+            }
         };
         let missing = self.doc.load != Load::Loading;
         col()
@@ -423,8 +480,9 @@ impl EditorView {
             .items_center()
             .justify_center()
             .gap(px(SPACE_2))
+            .px(px(SPACE_5))
             .child(div().type_style(HEADING).child(title))
-            .children(detail.map(|d| div().type_style(LABEL).text_color(TEXT_MUTED).child(d)))
+            .children(detail)
             .when(missing, |d| {
                 d.child(
                     div().mt(px(SPACE_2)).child(

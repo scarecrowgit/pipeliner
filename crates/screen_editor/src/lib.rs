@@ -17,6 +17,7 @@ pub mod canvas;
 pub mod draft;
 pub mod frame;
 pub mod inspector;
+mod selectable;
 
 pub use canvas::CanvasView;
 pub use draft::{Draft, DraftEvent, Selection};
