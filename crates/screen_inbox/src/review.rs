@@ -3,22 +3,15 @@
 
 use std::sync::Arc;
 
-use gpui::{
-    AnyElement, Context, ElementId, IntoElement, ObjectFit, SharedString, Window, div, img,
-    prelude::*, px,
-};
+use gpui::{AnyElement, Context, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::LoadState;
-use hub::api::{
-    Render as Shot, Review, ReviewDecision, ReviewState, SpanKind, Variant, variant_letter,
-};
+use hub::api::{Review, ReviewDecision, ReviewState, SpanKind, Variant, variant_letter};
 use ui::dev::Probe;
 use ui::prelude::*;
 
 use crate::texts::{Look, block, cell};
 use crate::view::InboxView;
 
-/// Height of a rendered mockup in the renders card.
-const SHOT_HEIGHT: f32 = 220.;
 /// Width of a line of text in the middle of the empty detail area.
 const PLACEHOLDER_WIDTH: f32 = 420.;
 /// Width of the hint under "Nothing waits for you".
@@ -179,16 +172,19 @@ impl InboxView {
     pub(crate) fn detail_column(&self, id: &'static str, content: Vec<AnyElement>) -> AnyElement {
         div()
             .id(id)
+            .debug_selector(move || id.into())
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
             .child(
+                // Padding, not a margin: the scroll range counts the child's box without its
+                // margins, which left the end of a long page out of reach.
                 col()
                     .flex_none()
-                    .w(px(self.content_width()))
-                    .m(px(SPACE_6))
+                    .w(px(self.content_width() + 2. * SPACE_6))
+                    .p(px(SPACE_6))
                     .children(content.into_iter().map(|el| div().flex_none().child(el))),
             )
             .into_any_element()
@@ -259,31 +255,8 @@ impl InboxView {
                     .into_any_element(),
             );
         }
-        let shots: Vec<Shot> = review
-            .renders
-            .iter()
-            .chain(variant.iter().flat_map(|v| v.renders.iter()))
-            .cloned()
-            .collect();
-        if !shots.is_empty() {
-            let paths: Vec<_> = shots
-                .iter()
-                .enumerate()
-                .map(|(ix, shot)| {
-                    self.texts.get(
-                        format!("shot-{ix}-path"),
-                        shot.path.clone(),
-                        Look::plain(MONO, TEXT),
-                        cx,
-                    )
-                })
-                .collect();
-            content.push(
-                div()
-                    .mt(px(SPACE_4))
-                    .child(render_shots(&shots, paths, cx))
-                    .into_any_element(),
-            );
+        if let Some(renders) = self.render_renders(&review, variant.as_ref(), cx) {
+            content.push(div().mt(px(SPACE_4)).child(renders).into_any_element());
         }
         if !review.feedback.is_empty() {
             let notes = self.render_notes(&review, cx);
@@ -444,19 +417,27 @@ impl InboxView {
             },
         };
         let index = variant.index;
+        // The summary gives way to the buttons: the tests end in "…", then the rest is cut.
         let summary = row()
+            .flex_1()
             .min_w_0()
-            .flex_shrink()
+            .overflow_hidden()
             .gap(px(SPACE_1))
             .type_style(LABEL)
             .text_color(TEXT_MUTED)
-            .child(format!("Variant {letter} ·"))
-            .child(div().type_style(MONO).child(format!(
+            .debug_selector(|| "review-summary".into())
+            .child(div().flex_none().child(format!("Variant {letter} ·")))
+            .child(div().flex_none().type_style(MONO).child(format!(
                 "{} · {}",
                 base::fmt::cost(variant.cost_usd),
                 base::fmt::duration(variant.secs)
             )))
-            .when_some(tests, |d, t| d.child(format!("· {t}")));
+            .when_some(tests, |d, t| {
+                d.child(
+                    truncate_lh(format!("· {t}"), LABEL.line)
+                        .debug_selector(|| "review-summary-tests".into()),
+                )
+            });
         row()
             .flex_none()
             .gap(px(SPACE_2))
@@ -467,7 +448,6 @@ impl InboxView {
             .border_color(LINE)
             .bg(BG_SIDEBAR)
             .child(summary)
-            .child(grow())
             .child(
                 Button::new("review-send-back", "Send back…")
                     .ghost()
@@ -519,75 +499,6 @@ fn provenance_line(steps: &[String]) -> AnyElement {
         .min_w_0()
         .debug_selector(|| "review-provenance".into())
         .child(truncate_styled(text, highlights, MONO.line).flex_initial())
-        .into_any_element()
-}
-
-/// Before and after pictures of rendered files, each under its path (`paths`, in order).
-fn render_shots(
-    shots: &[Shot],
-    paths: Vec<gpui::Entity<ui_rich::markdown::Markdown>>,
-    cx: &Context<InboxView>,
-) -> AnyElement {
-    let queries = hub::queries(cx);
-    let picture = |label: &'static str, blob: &hub::api::BlobId, shot: &Shot| {
-        let ratio = if shot.height > 0 {
-            shot.width as f32 / shot.height as f32
-        } else {
-            1.6
-        };
-        let width = (SHOT_HEIGHT * ratio).clamp(120., 520.);
-        col()
-            .flex_none()
-            .gap(px(SPACE_1_5))
-            .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(label))
-            .child(
-                div()
-                    .w(px(width))
-                    .h(px(SHOT_HEIGHT))
-                    .rounded(px(RADIUS_LG))
-                    .border_1()
-                    .border_color(LINE_STRONG)
-                    .bg(BG_SIDEBAR)
-                    .overflow_hidden()
-                    .child(
-                        img(queries.blob_path(blob))
-                            .size_full()
-                            .object_fit(ObjectFit::Contain),
-                    ),
-            )
-    };
-    let rows: Vec<AnyElement> = shots
-        .iter()
-        .zip(paths)
-        .enumerate()
-        .map(|(ix, (shot, path))| {
-            col()
-                .gap(px(SPACE_2))
-                .p(px(SPACE_4))
-                .when(ix > 0, |d| d.border_t_1().border_color(LINE_SUBTLE))
-                .child(block("review-shot-path", path))
-                .child(
-                    div()
-                        .id(ElementId::NamedInteger("review-shot".into(), ix as u64))
-                        .flex()
-                        .gap(px(SPACE_4))
-                        .overflow_x_scroll()
-                        .when_some(shot.before.as_ref(), |d, before| {
-                            d.child(picture("Before", before, shot))
-                        })
-                        .child(picture("After", &shot.after, shot)),
-                )
-                .into_any_element()
-        })
-        .collect();
-    div()
-        .debug_selector(|| "review-renders".into())
-        .child(
-            Card::new()
-                .flush()
-                .header(CardHeader::new("Renders").count(base::fmt::count(shots.len() as u64)))
-                .child(col().children(rows)),
-        )
         .into_any_element()
 }
 

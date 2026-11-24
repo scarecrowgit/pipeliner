@@ -6,6 +6,7 @@ mod markdown;
 mod review;
 mod select;
 mod send_back;
+mod shots;
 mod texts;
 mod waits;
 

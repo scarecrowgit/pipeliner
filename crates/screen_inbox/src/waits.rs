@@ -90,11 +90,14 @@ impl InboxView {
                 cx.subscribe(&answer, |this, _, event: &TextAreaEvent, cx| match event {
                     TextAreaEvent::Submit => this.send_answer(cx),
                     TextAreaEvent::Changed => cx.notify(),
+                    // Esc leaves the field: the queue's keys work again.
+                    TextAreaEvent::Cancel => this.take_keys(cx),
                     _ => {}
                 }),
                 cx.subscribe(&amount, |this, _, event: &TextInputEvent, cx| match event {
                     TextInputEvent::Submit => this.raise_budget(cx),
                     TextInputEvent::Changed => cx.notify(),
+                    TextInputEvent::Cancel => this.take_keys(cx),
                     _ => {}
                 }),
             ];
@@ -207,13 +210,11 @@ impl InboxView {
                     .gap(px(SPACE_2))
                     .debug_selector(|| "item-answered".into())
                     .child(
-                        div()
+                        truncate_lh("Answered. The agent is working again.", LABEL.line)
                             .type_style(LABEL)
-                            .text_color(TEXT_MUTED)
-                            .child("Answered. The agent is working again."),
+                            .text_color(TEXT_MUTED),
                     )
-                    .child(grow())
-                    .children(link)
+                    .children(link.map(|l| div().flex_none().child(l)))
                     .into_any_element(),
             );
         }
@@ -236,15 +237,15 @@ impl InboxView {
                 .child(
                     row()
                         .gap(px(SPACE_2))
+                        // The hint gives way to the buttons in a narrow column.
                         .child(
-                            div()
+                            truncate_lh("The agent waits until it is answered.", LABEL.line)
                                 .type_style(LABEL)
                                 .text_color(TEXT_MUTED)
-                                .child("The agent waits until it is answered."),
+                                .debug_selector(|| "item-answer-hint".into()),
                         )
-                        .child(grow())
-                        .children(link)
-                        .child(send),
+                        .children(link.map(|l| div().flex_none().child(l)))
+                        .child(div().flex_none().child(send)),
                 )
                 .into_any_element(),
         )

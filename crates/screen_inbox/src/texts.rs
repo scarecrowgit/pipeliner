@@ -87,7 +87,18 @@ impl Texts {
         }
         let view = cx.new(|cx| {
             let md = if look.markdown {
-                Markdown::new(text, cx).on_link(|url, _, cx| cx.open_url(url))
+                // A link to a local image opens the viewer on every local image of the text.
+                let this = cx.entity().downgrade();
+                Markdown::new(text, cx).on_link(move |url, window, cx| {
+                    let links: Vec<(String, String)> = this
+                        .upgrade()
+                        .map(|md| crate::links::markdown_links(md.read(cx).text()))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|url| (String::new(), url))
+                        .collect();
+                    crate::links::open(url, &links, window, cx);
+                })
             } else {
                 Markdown::verbatim(text, cx)
             };

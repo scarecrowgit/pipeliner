@@ -168,13 +168,11 @@ impl InboxView {
             row()
                 .gap(px(SPACE_2))
                 .child(
-                    div()
+                    truncate_lh("The agent waits until it is answered.", LABEL.line)
                         .type_style(LABEL)
-                        .text_color(TEXT_MUTED)
-                        .child("The agent waits until it is answered."),
+                        .text_color(TEXT_MUTED),
                 )
-                .child(grow())
-                .children(link(true))
+                .children(link(true).map(|l| div().flex_none().child(l)))
                 .into_any_element()
         });
         let card = Card::new()
@@ -400,8 +398,17 @@ impl InboxView {
                     .into_any_element(),
             );
         }
+        // A link to a local image opens the viewer on every local image link of the item.
+        let all: std::rc::Rc<Vec<(String, String)>> = std::rc::Rc::new(
+            item.links
+                .iter()
+                .map(|link| (link.label.clone(), link.url.clone()))
+                .collect(),
+        );
         for (ix, link) in item.links.iter().enumerate() {
             let url = link.url.clone();
+            let all = all.clone();
+            let image = crate::links::local_image(&url).is_some();
             buttons.push(
                 Button::new(
                     ElementId::NamedInteger("item-link".into(), ix as u64),
@@ -409,8 +416,12 @@ impl InboxView {
                 )
                 .ghost()
                 .small()
-                .icon(IconName::External)
-                .on_click(move |_, _, cx| cx.open_url(&url))
+                .icon(if image {
+                    IconName::Image
+                } else {
+                    IconName::External
+                })
+                .on_click(move |_, window, cx| crate::links::open(&url, &all, window, cx))
                 .into_any_element(),
             );
         }

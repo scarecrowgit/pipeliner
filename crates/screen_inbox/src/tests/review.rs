@@ -184,3 +184,23 @@ fn test_results_read_as_in_the_mockup() {
     };
     assert_eq!(label(&not_run), "Not run");
 }
+
+#[gpui::test]
+async fn the_action_bar_summary_gives_way_to_the_buttons(cx: &mut TestAppContext) {
+    let (_t, cx) = open(cx, review(REVIEW));
+    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(900.)));
+    cx.run_until_parked();
+    cx.run_until_parked();
+    let summary = cx
+        .debug_bounds("review-summary-tests")
+        .expect("the tests are drawn");
+    let send = cx
+        .debug_bounds("review-send-back")
+        .expect("the button is drawn");
+    assert!(
+        summary.right() <= send.left(),
+        "the summary ends at {:?}, the button starts at {:?}",
+        summary.right(),
+        send.left()
+    );
+}

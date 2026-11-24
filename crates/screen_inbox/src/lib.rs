@@ -8,11 +8,13 @@
 
 mod files;
 mod keys;
+mod links;
 mod list;
 mod other;
 mod review;
 mod select;
 mod send_back;
+mod shots;
 mod table;
 mod texts;
 mod view;

@@ -87,6 +87,8 @@ pub struct InboxView {
     pub(crate) detail_width: f32,
     /// A pinned clock for tests; the wall clock otherwise.
     pub(crate) now: Option<i64>,
+    /// The queue takes the keys back on the next frame (Esc in a field of the item).
+    refocus: bool,
     _ticker: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -135,6 +137,7 @@ impl InboxView {
             row: 0,
             detail_width: width.clamp(320., DETAIL_MAX),
             now: None,
+            refocus: false,
             _ticker: ticker,
             _subscriptions: subscriptions,
         };
@@ -369,6 +372,9 @@ impl InboxView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A text or field of the item left behind had the keys (a press on a text selects):
+        // the queue takes them back, as the item's texts and fields go with it.
+        let had_keys = self.texts.focused(window, cx) || self.typing(window, cx);
         self.focus = focus.clone();
         if route {
             let route = Route::Inbox {
@@ -385,9 +391,7 @@ impl InboxView {
         self.sync_review(cx);
         self.sync_item(cx);
         self.reconcile(cx);
-        // A text of the item left behind had the keys (a press on it selects): the queue
-        // takes them back, as the texts of the newly opened item are new views.
-        if self.texts.focused(window, cx) {
+        if had_keys {
             window.focus(&self.focus_handle);
         }
         cx.notify();
@@ -706,6 +710,12 @@ impl InboxView {
         );
     }
 
+    /// Gives the keys back to the queue on the next frame.
+    pub(crate) fn take_keys(&mut self, cx: &mut Context<Self>) {
+        self.refocus = true;
+        cx.notify();
+    }
+
     /// Follows the detail column's width; a new width lays the column out again.
     fn fit_detail(&mut self, width: f32, cx: &mut Context<Self>) {
         let width = width.clamp(0., DETAIL_MAX);
@@ -729,6 +739,9 @@ impl Focusable for InboxView {
 
 impl Render for InboxView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.refocus) {
+            window.focus(&self.focus_handle);
+        }
         let queue = self.render_queue(window, cx);
         let detail = self.render_detail(window, cx);
         let this = cx.entity().downgrade();

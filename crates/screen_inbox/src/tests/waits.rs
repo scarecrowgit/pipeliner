@@ -154,3 +154,64 @@ async fn the_raise_button_uses_the_default_amount(cx: &mut TestAppContext) {
     click(cx, "item-raise-budget");
     assert_eq!(calls(&t.api, "raise_run_budget"), ["run-1431 1"]);
 }
+
+#[gpui::test]
+async fn esc_in_the_answer_gives_the_keys_back_to_the_queue(cx: &mut TestAppContext) {
+    let (t, cx) = open_with(cx, item("inbox-1435"), asking);
+    let order = rows(&t, cx);
+    let at = order
+        .iter()
+        .position(|id| id == "inbox-1435")
+        .unwrap_or_default();
+    click(cx, "item-answer-field");
+    cx.simulate_input("j");
+    cx.run_until_parked();
+    assert_eq!(answer_text(&t, cx), "j", "a letter in the field");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("j");
+    cx.run_until_parked();
+    assert_eq!(
+        super::focus(&t, cx),
+        item(&order[at + 1]),
+        "J moved down the queue"
+    );
+}
+
+#[gpui::test]
+async fn another_row_clicked_while_typing_takes_the_keys(cx: &mut TestAppContext) {
+    let (t, cx) = open_with(cx, item("inbox-1435"), asking);
+    click(cx, "item-answer-field");
+    cx.simulate_input("stdout");
+    cx.run_until_parked();
+    click(cx, "inbox-row-0");
+    let first = rows(&t, cx)[0].clone();
+    assert_eq!(super::focus(&t, cx), item(&first));
+    cx.simulate_keystrokes("j");
+    cx.run_until_parked();
+    assert_eq!(
+        super::focus(&t, cx),
+        item(&rows(&t, cx)[1]),
+        "J works after the field went"
+    );
+}
+
+#[gpui::test]
+async fn the_send_button_stays_in_the_card_of_a_narrow_window(cx: &mut TestAppContext) {
+    let (_t, cx) = open_with(cx, item("inbox-1435"), asking);
+    cx.simulate_resize(gpui::size(gpui::px(780.), gpui::px(900.)));
+    cx.run_until_parked();
+    cx.run_until_parked();
+    let field = cx
+        .debug_bounds("item-answer-field")
+        .expect("the field is drawn");
+    let send = cx
+        .debug_bounds("item-answer-send")
+        .expect("the button is drawn");
+    assert!(
+        send.right() <= field.right() + gpui::px(0.5),
+        "the button ends at {:?}, the field at {:?}",
+        send.right(),
+        field.right()
+    );
+}
