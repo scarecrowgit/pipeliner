@@ -7,13 +7,14 @@ mod turn;
 
 pub(crate) use turn::mcp_view;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use agent::Input;
 use anyhow::{Result, anyhow, bail};
 use model::{
     Attachment, BlobId, ChatMode, Event, ModelRef, PermissionDecision, RequestId, RunnableKind, RunnableRef, Session,
-    SessionId, SessionOrigin, SessionState, StoredMessage,
+    SessionId, SessionOrigin, SessionState, StoredMessage, ToolDisplay,
 };
 
 use crate::api::{
@@ -65,6 +66,10 @@ impl ChatApi for Engine {
 
     fn messages(&self, id: &SessionId, from: u64, to: u64) -> Result<Vec<StoredMessage>> {
         self.inner.store.messages(id, from..to.min(TO_END))
+    }
+
+    fn tool_displays(&self, id: &SessionId, calls: &[String]) -> Result<HashMap<String, ToolDisplay>> {
+        self.inner.store.tool_displays(id, calls)
     }
 
     fn search_sessions(&self, query: &SessionQuery) -> Result<SearchResult> {
@@ -291,6 +296,7 @@ impl ChatApi for Engine {
         for message in messages {
             inner.store.append_message(&fork.id, message)?;
         }
+        inner.store.copy_tool_displays(id, &fork.id)?;
         if let Some(summary) = inner.store.marker(&summary_marker(id))? {
             inner.store.set_marker(&summary_marker(&fork.id), &summary)?;
         }
@@ -327,7 +333,8 @@ impl ChatApi for Engine {
     fn reconnect_mcp(&self, id: &SessionId, server: &str) -> Result<()> {
         let session = self.inner.session(id)?;
         let folder = session.workdir.as_ref().map(|w| w.path.clone());
-        if turn::mcp_view(&self.inner, folder.as_deref()).reconnect(server) {
+        // Only that server: the others stay as they are, not started ones too.
+        if turn::mcp_peek(&self.inner, folder.as_deref()).reconnect(server) {
             Ok(())
         } else {
             bail!("There is no MCP server {server} to reconnect")

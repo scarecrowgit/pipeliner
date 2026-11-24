@@ -139,6 +139,24 @@ impl OpsModel {
         }
     }
 
+    /// Reads again what Home shows, whatever state it is in (after a failed load, for a
+    /// "Try again"): needs-you and working-now, today's spend, and the stats and charts of
+    /// `period`. Settings and projects too, unless they are loaded. `ensure_*` never retry a
+    /// failed load; this does.
+    pub fn reload(&mut self, period: Period, cx: &mut Context<Self>) {
+        if !self.settings.started() {
+            self.ensure_loaded(cx);
+            self.ensure_period(period, cx);
+            return;
+        }
+        if !self.settings.is_ready() || !self.projects.is_ready() {
+            self.load_settings(cx);
+        }
+        self.load_live(false, cx);
+        self.load_spend_today(cx);
+        self.load_period(period, cx);
+    }
+
     /// Reads the current project's autopilots unless they are loaded or loading.
     pub fn ensure_autopilots(&mut self, cx: &mut Context<Self>) {
         if !self.autopilots.started() {

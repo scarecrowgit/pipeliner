@@ -8,10 +8,12 @@
 //! | Module | What it keeps |
 //! | --- | --- |
 //! | `sessions` | Chat sessions, their messages, todo lists and changed files |
+//! | `chat_extras` | Displays of finished tool calls; messages queued behind a running turn |
 //! | `search` | The chat palette's full-text search with facet counts |
 //! | `ledger` | One row per model call, and the spend sums of Home |
 //! | `issues` | Issues, their keys and activity feed |
 //! | `runs` | Pipeline runs, their logs and renders |
+//! | `run_state` | The graph and executor snapshot a run continues from |
 //! | `reviews`, `inbox` | Variants waiting for a person; the Inbox |
 //! | `catalog` | Deployed pipeline versions, spawned agents, permission rules, autopilots |
 //! | `settings` | Projects, app settings, one-off markers |
@@ -19,6 +21,7 @@
 
 mod blobs;
 mod catalog;
+mod chat_extras;
 mod codec;
 mod db;
 pub mod import_v1;
@@ -26,6 +29,7 @@ mod inbox;
 mod issues;
 mod ledger;
 mod reviews;
+mod run_state;
 mod runs;
 mod schema;
 mod search;
@@ -42,6 +46,7 @@ use base::paths::Paths;
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 pub use catalog::SpawnedRunnable;
+pub use chat_extras::QueuedMessage;
 pub use db::Db;
 pub use ledger::SpendTotal;
 pub use search::{FacetCounts, IndexStats, MessageSnippet, SearchResult, SessionHit, SessionQuery, StartedBy};

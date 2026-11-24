@@ -285,3 +285,27 @@ fn drop_stops_servers_even_while_starting() {
     assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
     assert!(gone(pid));
 }
+
+#[test]
+fn a_configured_supervisor_stays_idle_until_asked_to_start() {
+    let changes = Arc::new(AtomicUsize::new(0));
+    let counter = changes.clone();
+    let mut off = echo("off", &[]);
+    off.enabled = false;
+    let on_change: mcp::OnChange = Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    });
+    let f = Fixture { sup: Supervisor::configure_with(vec![echo("lazy", &[]), off], on_change, timeouts()), changes };
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.state("lazy").state, McpState::Idle, "nothing starts before it is asked to");
+    assert_eq!(f.state("off").state, McpState::Disabled);
+    assert!(f.sup.tools().is_empty());
+    let r = f.call("mcp__lazy__echo", json!({"text": "x"}));
+    assert!(r.is_error && r.text.contains("has not been started yet"), "{r:?}");
+
+    assert_eq!(f.sup.start_idle(), 1, "only the enabled idle server starts");
+    assert_eq!(f.wait("lazy", |s| s != McpState::Starting && s != McpState::Idle).state, McpState::Ready);
+    assert_eq!(f.sup.start_idle(), 0, "a started server is not started twice");
+    assert_eq!(f.state("off").state, McpState::Disabled);
+    assert!(f.changes.load(Ordering::SeqCst) >= 2, "the start and the ready state were reported");
+}

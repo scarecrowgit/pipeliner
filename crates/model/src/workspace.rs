@@ -93,6 +93,7 @@ impl Default for Settings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpState {
+    /// A start is in progress.
     #[default]
     Starting,
     Ready,
@@ -100,6 +101,8 @@ pub enum McpState {
     Failed,
     /// Switched off in the config.
     Disabled,
+    /// Configured, not started yet: servers start the first time a turn needs them.
+    Idle,
 }
 
 /// An MCP server as the chat's context panel shows it.

@@ -11,7 +11,7 @@ use model::{
 use pipeline::InstanceKey;
 use pipeline::exec::{Observer, Snapshot};
 
-use super::{question_inbox_id, review_inbox_id, snapshot_marker};
+use super::{question_inbox_id, review_inbox_id};
 use crate::engine::Inner;
 
 /// The observer of one run.
@@ -114,7 +114,7 @@ impl Observer for RunObserver {
             if inner.fail_snapshots.load(std::sync::atomic::Ordering::SeqCst) {
                 anyhow::bail!("the store refused the write (test)");
             }
-            inner.store.set_marker(&snapshot_marker(&snapshot.run.id), &text)
+            inner.store.set_run_snapshot(&snapshot.run.id, &text)
         });
         if let Err(error) = stored {
             let text = format!("{error:#}");

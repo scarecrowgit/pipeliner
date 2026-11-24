@@ -24,14 +24,8 @@ impl Engine {
     /// The base branch the reviewed agent's workdir measures changes against.
     fn review_base(&self, review: &Review) -> String {
         let inner = &self.inner;
-        let graph: Option<GraphDef> =
-            inner.store.marker(&pipelines::graph_marker(&review.run)).ok().flatten().and_then(|t| pipelines::parse_graph(&t).ok());
-        let snapshot = inner
-            .store
-            .marker(&pipelines::snapshot_marker(&review.run))
-            .ok()
-            .flatten()
-            .and_then(|t| serde_json::from_str::<pipeline::exec::Snapshot>(&t).ok());
+        let graph: Option<GraphDef> = pipelines::run_graph(inner, &review.run);
+        let snapshot = pipelines::run_snapshot(inner, &review.run);
         let agent = snapshot.and_then(|s| s.reviews.into_iter().find(|r| r.review.id == review.id)).and_then(|r| r.agent);
         let base = graph.as_ref().and_then(|graph| {
             let node = graph.node(agent.as_ref()?)?;
@@ -48,14 +42,7 @@ impl Engine {
 impl Engine {
     /// Whether an agent or orchestrator follows the review's node along route edges.
     fn agents_after(&self, review: &Review) -> bool {
-        let Some(graph) = self
-            .inner
-            .store
-            .marker(&pipelines::graph_marker(&review.run))
-            .ok()
-            .flatten()
-            .and_then(|t| pipelines::parse_graph(&t).ok())
-        else {
+        let Some(graph) = pipelines::run_graph(&self.inner, &review.run) else {
             return true;
         };
         let mut seen = std::collections::BTreeSet::new();

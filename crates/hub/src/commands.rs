@@ -263,6 +263,21 @@ impl Commands {
         self.fire("post the comment", cx, move |api| api.comment(&key, &text, images));
     }
 
+    /// Deletes one's own comment (the feed entry `seq`) and drops it from the loaded feed.
+    pub fn delete_comment(&self, key: &IssueKey, seq: u64, cx: &mut App) {
+        let issue = key.clone();
+        let done = self.call("delete the comment", cx, move |api| api.delete_comment(&issue, seq));
+        let (hub, key) = (self.hub.clone(), key.clone());
+        // The event stream says the issue changed, not which entry went away.
+        cx.spawn(async move |cx| {
+            if done.await.is_none() {
+                return;
+            }
+            hub.update(cx, |hub, cx| hub.issues.update(cx, |issues, cx| issues.forget_event(&key, seq, cx))).ok();
+        })
+        .detach();
+    }
+
     /// Attaches a runner to an issue, or detaches it with `None`.
     pub fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>, cx: &mut App) -> Task<Option<Issue>> {
         let key = key.clone();
@@ -291,5 +306,12 @@ impl Commands {
     pub fn delete_autopilot(&self, id: &AutopilotId, cx: &mut App) {
         let id = id.clone();
         self.fire("delete the autopilot", cx, move |api| api.delete_autopilot(&id));
+    }
+
+    /// Fires an autopilot now, as its schedule would; the new `last_run` arrives as
+    /// `AutopilotsChanged`.
+    pub fn run_autopilot(&self, id: &AutopilotId, cx: &mut App) {
+        let id = id.clone();
+        self.fire("run the autopilot", cx, move |api| api.run_autopilot(&id));
     }
 }

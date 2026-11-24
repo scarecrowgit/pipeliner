@@ -1,6 +1,7 @@
 //! Store tests: in-memory databases and temp directories only.
 
 mod catalog;
+mod extras;
 mod issues;
 mod ledger;
 mod open;

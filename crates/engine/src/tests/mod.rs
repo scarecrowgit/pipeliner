@@ -3,6 +3,7 @@
 
 mod cancel;
 mod chat;
+mod contract;
 mod other;
 mod permission;
 mod pipelines;

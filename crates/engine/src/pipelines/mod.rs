@@ -4,10 +4,10 @@
 //! What is kept where:
 //!
 //! - the run (`Run`) in the store's runs table, upserted on every change;
-//! - the executor's [`Snapshot`] as JSON in the marker `run-snapshot:<run id>` (there is no
-//!   store column for it), written before anything about a step is published;
-//! - the graph the run executes as JSON in the marker `run-graph:<run id>`, so a run stays on
-//!   its version also when the draft changes;
+//! - the executor's [`Snapshot`] as JSON in the store's run state, written before anything
+//!   about a step is published;
+//! - the graph the run executes as JSON next to it, so a run stays on its version also when
+//!   the draft changes;
 //! - which worktrees a run made under `v2/pipelines/runs/<run id>/places.json` (the runner's).
 //!
 //! On start every open run with a snapshot gets its driver back: runs that had jobs in flight
@@ -30,14 +30,14 @@ use crate::engine::Inner;
 
 pub(crate) use observer::resolve;
 
-/// The marker holding a run's executor state.
-pub(crate) fn snapshot_marker(run: &RunId) -> String {
-    format!("run-snapshot:{run}")
+/// The graph a run executes, when it was kept and can be read.
+pub(crate) fn run_graph(inner: &Inner, run: &RunId) -> Option<GraphDef> {
+    inner.store.run_graph(run).ok().flatten().and_then(|text| parse_graph(&text).ok())
 }
 
-/// The marker holding the graph a run executes.
-pub(crate) fn graph_marker(run: &RunId) -> String {
-    format!("run-graph:{run}")
+/// The executor's latest snapshot of a run, when it was kept and can be read.
+pub(crate) fn run_snapshot(inner: &Inner, run: &RunId) -> Option<Snapshot> {
+    inner.store.run_snapshot(run).ok().flatten().and_then(|text| serde_json::from_str(&text).ok())
 }
 
 /// The Inbox item of a review.
@@ -190,7 +190,7 @@ fn drive(inner: &Arc<Inner>, graph: GraphDef, machine: Machine) -> Result<Driver
 /// Starts `item` through `graph` as `run` (the engine's shell of it).
 pub(crate) fn launch(inner: &Arc<Inner>, graph: GraphDef, run: Run, item: Item) -> Result<Run> {
     check_limit(inner)?;
-    inner.store.set_marker(&graph_marker(&run.id), &graph_text(&graph)?)?;
+    inner.store.set_run_graph(&run.id, &graph_text(&graph)?)?;
     let machine = Machine::new(graph.clone(), run, item);
     let shell = machine.run().clone();
     inner.store.upsert_run(&shell)?;
@@ -201,12 +201,12 @@ pub(crate) fn launch(inner: &Arc<Inner>, graph: GraphDef, run: Run, item: Item) 
 
 /// A driver for a run that has none: from its stored snapshot.
 fn restore(inner: &Arc<Inner>, id: &RunId) -> Result<DriverHandle> {
-    let graph = inner.store.marker(&graph_marker(id))?.ok_or_else(|| anyhow!("The run {id} has no saved state to continue from"))?;
-    let snapshot = inner.store.marker(&snapshot_marker(id))?.ok_or_else(|| anyhow!("The run {id} has no saved state to continue from"))?;
+    let graph = inner.store.run_graph(id)?.ok_or_else(|| anyhow!("The run {id} has no saved state to continue from"))?;
+    let snapshot = inner.store.run_snapshot(id)?.ok_or_else(|| anyhow!("The run {id} has no saved state to continue from"))?;
     let graph = parse_graph(&graph)?;
     let snapshot: Snapshot = serde_json::from_str(&snapshot).context("reading the run's saved state")?;
     let machine = Machine::restore(graph.clone(), snapshot);
-    inner.store.set_marker(&snapshot_marker(id), &serde_json::to_string(machine.snapshot())?)?;
+    inner.store.set_run_snapshot(id, &serde_json::to_string(machine.snapshot())?)?;
     inner.store.upsert_run(machine.run())?;
     inner.publish(Event::RunChanged { run: machine.run().clone() });
     drive(inner, graph, machine)
@@ -301,7 +301,7 @@ pub(crate) fn recover(inner: &Arc<Inner>) {
     pipeline::runners::sweep_test_runs(&runner_config(inner), &keep);
     let Ok(runs) = inner.store.open_runs() else { return };
     for run in runs {
-        if inner.store.marker(&snapshot_marker(&run.id)).ok().flatten().is_none() {
+        if inner.store.run_snapshot(&run.id).ok().flatten().is_none() {
             continue;
         }
         if let Err(error) = restore(inner, &run.id) {

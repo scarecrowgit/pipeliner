@@ -11,7 +11,7 @@ use crate::api::{
     SkillInContext, StopReason, UserMessage,
 };
 use crate::load::{LoadState, failed, query};
-use crate::transcript::{Block, LiveEffect, Splice, Transcript};
+use crate::transcript::{Block, LiveEffect, Splice, Transcript, tool_call_ids};
 
 /// Messages per transcript page.
 pub const PAGE: u64 = 40;
@@ -161,6 +161,12 @@ impl SessionModel {
         self.detail.as_deref().map_or(&[], |detail| &detail.pending)
     }
 
+    /// Whether the tool call `id` was answered as interrupted (a stop, a crash, a restart)
+    /// instead of finishing. See [`Transcript::is_interrupted`].
+    pub fn is_interrupted(&self, id: &str) -> bool {
+        self.transcript.is_interrupted(id)
+    }
+
     /// Older messages exist above the first loaded one.
     pub fn has_older(&self) -> bool {
         self.has_older
@@ -190,8 +196,10 @@ impl SessionModel {
                 let detail = api.session_detail(&id)?.ok_or_else(|| anyhow!("This chat no longer exists"))?;
                 let from = u64::from(detail.session.message_count).saturating_sub(PAGE);
                 let messages = api.messages(&id, from, u64::MAX)?;
+                // Without kept displays, history derives them: never a reason to fail.
+                let displays = api.tool_displays(&id, &tool_call_ids(&messages)).unwrap_or_default();
                 let max_depth = spawn_depth(api, &detail.session);
-                Ok((detail, from, messages, max_depth))
+                Ok((detail, from, messages, displays, max_depth))
             },
             |this: &mut Self, result, cx| match result {
                 Err(error) => {
@@ -199,8 +207,9 @@ impl SessionModel {
                     this.buffer.clear();
                     cx.notify();
                 }
-                Ok((detail, from, messages, max_depth)) => {
+                Ok((detail, from, messages, displays, max_depth)) => {
                     this.transcript.set_max_depth(max_depth);
+                    this.transcript.keep_displays(displays);
                     this.oldest_seq = messages.first().map(|message| message.seq);
                     this.has_older = from > 0 && !messages.is_empty();
                     this.transcript.append_history(&messages);
@@ -232,10 +241,15 @@ impl SessionModel {
         query(
             cx,
             &self.api,
-            move |api| api.messages(&id, from, to),
+            move |api| {
+                let messages = api.messages(&id, from, to)?;
+                let displays = api.tool_displays(&id, &tool_call_ids(&messages)).unwrap_or_default();
+                Ok((messages, displays))
+            },
             move |this: &mut Self, result, cx| {
                 this.loading_older = false;
-                if let Ok(messages) = result {
+                if let Ok((messages, displays)) = result {
+                    this.transcript.keep_displays(displays);
                     if let Some(first) = messages.first() {
                         this.oldest_seq = Some(first.seq);
                     }

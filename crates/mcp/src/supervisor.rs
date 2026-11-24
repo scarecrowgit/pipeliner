@@ -97,13 +97,26 @@ impl Supervisor {
 
     /// [`Supervisor::start`] with other timeouts (tests use short ones).
     pub fn start_with(configs: Vec<ServerConfig>, on_change: OnChange, timeouts: Timeouts) -> Supervisor {
+        let supervisor = Self::configure_with(configs, on_change, timeouts);
+        supervisor.inner.start_idle();
+        supervisor
+    }
+
+    /// Takes over `configs` without starting anything: enabled servers stay
+    /// [`McpState::Idle`] until [`Supervisor::start_idle`] or a reconnect starts them.
+    pub fn configure(configs: Vec<ServerConfig>, on_change: OnChange) -> Supervisor {
+        Self::configure_with(configs, on_change, Timeouts::default())
+    }
+
+    /// [`Supervisor::configure`] with other timeouts.
+    pub fn configure_with(configs: Vec<ServerConfig>, on_change: OnChange, timeouts: Timeouts) -> Supervisor {
         let stop = CancelToken::new();
         let mut servers: Vec<Server> = Vec::new();
         for config in configs {
             if servers.iter().any(|s| s.config.name == config.name) {
                 continue;
             }
-            let state = if config.enabled { McpState::Starting } else { McpState::Disabled };
+            let state = if config.enabled { McpState::Idle } else { McpState::Disabled };
             servers.push(Server {
                 config,
                 state,
@@ -114,11 +127,6 @@ impl Supervisor {
                 cancel: stop.child(),
             });
         }
-        let starts: Vec<(String, CancelToken)> = servers
-            .iter()
-            .filter(|s| s.state == McpState::Starting)
-            .map(|s| (s.config.name.clone(), s.cancel.clone()))
-            .collect();
         let inner = Arc::new(Inner {
             state: Mutex::new(State { servers, shut_down: false }),
             on_change,
@@ -126,9 +134,6 @@ impl Supervisor {
             stop,
             threads: Mutex::new(Vec::new()),
         });
-        for (name, cancel) in starts {
-            inner.spawn_start(name, 0, cancel, None);
-        }
         let weak = Arc::downgrade(&inner);
         let stop = inner.stop.clone();
         let interval = timeouts.liveness;
@@ -144,6 +149,16 @@ impl Supervisor {
             lock(&inner.threads).push(handle);
         }
         Supervisor { inner }
+    }
+
+    /// Starts every server that is still [`McpState::Idle`], in parallel, returning at once.
+    /// Returns how many starts began; calls `on_change` when there was one.
+    pub fn start_idle(&self) -> usize {
+        let started = self.inner.start_idle();
+        if started > 0 {
+            (self.inner.on_change)();
+        }
+        started
     }
 
     /// Every configured server with its state, tool count and, for a failed one, the error
@@ -298,6 +313,31 @@ impl Drop for Supervisor {
 }
 
 impl Inner {
+    /// Moves every idle server to `Starting` and brings each up on its own thread. Returns
+    /// how many it started; nothing after shutdown.
+    fn start_idle(self: &Arc<Self>) -> usize {
+        let starts: Vec<(String, u64, CancelToken)> = {
+            let mut state = lock(&self.state);
+            if state.shut_down {
+                return 0;
+            }
+            state
+                .servers
+                .iter_mut()
+                .filter(|s| s.state == McpState::Idle)
+                .map(|s| {
+                    s.state = McpState::Starting;
+                    (s.config.name.clone(), s.generation, s.cancel.clone())
+                })
+                .collect()
+        };
+        let count = starts.len();
+        for (name, generation, cancel) in starts {
+            self.spawn_start(name, generation, cancel, None);
+        }
+        count
+    }
+
     /// Brings a server up on its own thread. `old` is the client it replaces, stopped first.
     fn spawn_start(self: &Arc<Self>, name: String, generation: u64, cancel: CancelToken, old: Option<Arc<Client>>) {
         let inner = self.clone();
@@ -468,6 +508,7 @@ fn not_available(state: &State, tool_id: &str) -> String {
     let name = &server.config.name;
     match server.state {
         McpState::Starting => format!("MCP server `{name}` is still starting; try again shortly."),
+        McpState::Idle => format!("MCP server `{name}` has not been started yet; try again shortly."),
         McpState::Disabled => format!("MCP server `{name}` is disabled in its config."),
         McpState::Failed => {
             let why = server.error.as_deref().map(base::fmt::first_line).unwrap_or("unknown error");

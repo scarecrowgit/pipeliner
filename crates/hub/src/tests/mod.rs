@@ -1,5 +1,6 @@
 //! Tests of the hub against the fixture backend.
 
+mod contract;
 mod fixtures;
 mod misc;
 mod models;

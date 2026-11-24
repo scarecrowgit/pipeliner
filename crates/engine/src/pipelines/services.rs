@@ -33,6 +33,7 @@ struct Tee<'a> {
 impl AgentSink for Tee<'_> {
     fn event(&mut self, session: &SessionId, event: AgentEvent) {
         (self.on_event)(session, &event);
+        self.inner.keep_tool_display(session, &event);
         self.inner.publish(Event::Agent { session: session.clone(), event });
     }
 }

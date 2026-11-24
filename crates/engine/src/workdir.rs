@@ -4,12 +4,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use base::cancel::CancelToken;
 use model::{Event, NoticeLevel, RepoHost, WorkMode, Workdir};
 use store::{ParentFilter, SessionFilter};
 
-use crate::api::{FolderInfo, RepoFacts, WorkdirApi, WorkdirChoice, WorkdirEntry};
+use crate::api::{ChildDir, FolderInfo, RepoFacts, WorkdirApi, WorkdirChoice, WorkdirEntry};
 use crate::engine::{Engine, Inner};
 
 /// Prefix of the branches chats get.
@@ -162,6 +162,15 @@ impl WorkdirApi for Engine {
 
     fn suggest_branch(&self, repo: &Path, hint: &str) -> String {
         vcs::unique_branch(repo, &vcs::branch_name(CHAT_BRANCH_PREFIX, hint), &CancelToken::new())
+    }
+
+    fn folder_exists(&self, path: &Path) -> bool {
+        self.inner.paths.expand(&path.to_string_lossy()).is_dir()
+    }
+
+    fn list_dir(&self, dir: &Path, prefix: &str, limit: usize) -> Result<Vec<ChildDir>> {
+        let dir = self.inner.paths.expand(&dir.to_string_lossy());
+        vcs::child_dirs(&dir, prefix, limit).with_context(|| format!("Could not read {}", self.inner.paths.display(&dir)))
     }
 
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<()> {

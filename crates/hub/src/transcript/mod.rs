@@ -6,7 +6,7 @@
 mod history;
 mod live;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use crate::api::{
     Attachment, Millis, ModelRef, PermissionRequest, RequestId, SessionId, TodoItem, ToolClass, ToolDisplay,
 };
 
+pub(crate) use history::tool_call_ids;
 pub(crate) use live::LiveEffect;
 
 /// Stable identity of a block, for element ids. Never reused within a transcript.
@@ -200,6 +201,11 @@ pub struct Transcript {
     compacted_run: u32,
     /// Whether the oldest loaded message was compacted.
     oldest_compacted: Option<bool>,
+    /// What finished calls showed live, kept by the engine: history draws these instead of
+    /// a display derived from the input. By tool-use id.
+    kept_displays: HashMap<String, ToolDisplay>,
+    /// Calls answered as interrupted (by a stop, a crash or a restart), by tool-use id.
+    interrupted: HashSet<String>,
 }
 
 impl Transcript {
@@ -221,6 +227,12 @@ impl Transcript {
     /// One row by index.
     pub fn get(&self, index: usize) -> Option<&Arc<Block>> {
         self.blocks.get(index)
+    }
+
+    /// Whether the call `id` never finished: it was answered as interrupted, by a stop or
+    /// after a restart. Its row keeps the look of its kind; the result is not its output.
+    pub fn is_interrupted(&self, id: &str) -> bool {
+        self.interrupted.contains(id)
     }
 
     /// The highest stored message seq in the transcript.

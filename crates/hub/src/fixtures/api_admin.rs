@@ -229,26 +229,32 @@ impl CatalogApi for FixtureApi {
 
 impl OpsApi for FixtureApi {
     fn home_stats(&self, period: Period) -> Result<HomeStats> {
+        self.fail_if_told("home_stats")?;
         Ok(self.world().ops.stats.get(&period).cloned().unwrap_or_default())
     }
 
     fn needs_you(&self) -> Result<Vec<Need>> {
+        self.fail_if_told("needs_you")?;
         Ok(self.world().ops.needs.clone())
     }
 
     fn working_now(&self) -> Result<Vec<Working>> {
+        self.fail_if_told("working_now")?;
         Ok(self.world().ops.working.clone())
     }
 
     fn spend_today(&self) -> Result<SpendToday> {
+        self.fail_if_told("spend_today")?;
         Ok(self.world().ops.spend_today.clone())
     }
 
     fn spend_buckets(&self, period: Period) -> Result<Vec<SpendBucket>> {
+        self.fail_if_told("spend_buckets")?;
         Ok(self.world().ops.buckets.get(&period).cloned().unwrap_or_default())
     }
 
     fn spend_by_runnable(&self, period: Period, top: usize) -> Result<Vec<SpendByRunnable>> {
+        self.fail_if_told("spend_by_runnable")?;
         let rows = self.world().ops.by_runnable.get(&period).cloned().unwrap_or_default();
         let (named, others): (Vec<SpendByRunnable>, Vec<SpendByRunnable>) =
             rows.into_iter().partition(|row| row.runnable.as_str() != "others");
@@ -277,6 +283,7 @@ impl OpsApi for FixtureApi {
     }
 
     fn settings(&self) -> Result<Settings> {
+        self.fail_if_told("settings")?;
         Ok(self.world().settings.clone())
     }
 
@@ -288,6 +295,7 @@ impl OpsApi for FixtureApi {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
+        self.fail_if_told("projects")?;
         Ok(self.world().projects.clone())
     }
 

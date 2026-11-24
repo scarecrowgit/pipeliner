@@ -195,12 +195,24 @@ impl Store {
         self.write(|tx| append_issue_event_in(tx, key, event))
     }
 
+    /// Removes one entry from an issue's activity feed. Its `seq` stays taken, so the next
+    /// entry never reuses it. Returns whether there was such an entry.
+    pub fn delete_issue_event(&self, key: &IssueKey, seq: u64) -> Result<bool> {
+        let seq = crate::codec::int(seq)?;
+        self.write(|tx| {
+            Ok(tx.execute(
+                "UPDATE issue_events SET deleted = 1 WHERE issue = ?1 AND seq = ?2 AND deleted = 0",
+                params![key.as_str(), seq],
+            )? > 0)
+        })
+    }
+
     /// An issue's activity feed, oldest first.
     pub fn issue_events(&self, key: &IssueKey) -> Result<Vec<IssueEvent>> {
         self.read(|conn| {
             query_all(
                 conn,
-                "SELECT issue, seq, at, data FROM issue_events WHERE issue = ?1 ORDER BY seq",
+                "SELECT issue, seq, at, data FROM issue_events WHERE issue = ?1 AND deleted = 0 ORDER BY seq",
                 [key.as_str()],
                 "issue_events",
                 &["issue", "seq"],

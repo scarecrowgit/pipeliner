@@ -36,7 +36,7 @@ pub(crate) fn session_detail(inner: &Arc<Inner>, id: &SessionId) -> Result<Optio
         skills.push(SkillInContext { name: name.clone(), forced: is_forced, loaded: is_forced || loaded.contains(name), tokens });
     }
 
-    let mcp = crate::chat::turn::mcp_view(inner, folder.as_deref()).servers();
+    let mcp = crate::chat::turn::mcp_peek(inner, folder.as_deref()).servers();
     let repo = folder.as_deref().and_then(|f| vcs::facts(f, &CancelToken::new()));
     Ok(Some(SessionDetail {
         todos: inner.store.todos(id)?,

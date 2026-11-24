@@ -74,7 +74,7 @@ fn the_inbox_loads_items_and_reviews_and_follows_events(cx: &mut TestAppContext)
         let inbox = inbox.read(cx);
         assert_eq!(inbox.items().len(), items - 2);
         assert!(inbox.items().windows(2).all(|pair| pair[0].created >= pair[1].created), "newest first");
-        assert!(inbox.waiting_items().windows(2).all(|pair| pair[0].created <= pair[1].created), "queue oldest first");
+        assert!(inbox.waiting_items().windows(2).all(|pair| pair[0].created >= pair[1].created), "queue newest first");
     });
 }
 

@@ -17,8 +17,10 @@
 //! | `pipelines` | Pipeline runs: drivers, the node runner's services, the observer, recovery |
 //! | `runs`, `reviews` | [`api::RunApi`] and [`api::InboxApi`] over the drivers and the store |
 //! | `issues`, `catalog`, `ops` | The other parts of the API |
+//! | `autopilots` | Firing an autopilot: its target starts on its prompt |
 
 pub mod api;
+mod autopilots;
 mod bus;
 mod catalog;
 mod chat;

@@ -33,11 +33,11 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 
 use crate::api::{
-    AgentEvent, Api, Autopilot, Event, GraphDef, HomeStats, InboxItem, Issue, IssueEvent, IssueKey, McpServerInfo,
+    AgentEvent, Api, Autopilot, ChildDir, Event, GraphDef, HomeStats, InboxItem, Issue, IssueEvent, IssueKey, McpServerInfo,
     Millis, Need, Period, PermissionRequest, PermissionRule, PipelineId, PipelineVersion, Project, RepoFacts, Review,
     Run, RunId, RunLogLine, Runnable, RunnableActivity, RunnableRef, Runtime, Session, SessionId, Settings,
-    SkillInContext, Skill, SpendBucket, SpendByRunnable, SpendToday, StoredMessage, TodoItem, FileChange, UserMessage,
-    WorkdirEntry, Working,
+    SkillInContext, Skill, SpendBucket, SpendByRunnable, SpendToday, StoredMessage, TodoItem, ToolDisplay, FileChange,
+    UserMessage, WorkdirEntry, Working,
 };
 use crate::router::{InboxFocus, Overlay, Route};
 
@@ -128,12 +128,16 @@ pub struct World {
     pub sessions: Vec<Session>,
     pub extras: HashMap<SessionId, Extras>,
     pub messages: HashMap<SessionId, Vec<StoredMessage>>,
+    /// What finished tool calls showed live, by session and tool-use id.
+    pub tool_displays: HashMap<SessionId, HashMap<String, ToolDisplay>>,
     pub permissions: Vec<PermissionRequest>,
     pub rules: Vec<PermissionRule>,
     pub projects: Vec<Project>,
     pub settings: Settings,
     pub issues: Vec<Issue>,
     pub issue_events: HashMap<IssueKey, Vec<IssueEvent>>,
+    /// The highest seq deleted from each feed, so it is not handed out again.
+    pub deleted_seqs: HashMap<IssueKey, u64>,
     pub autopilots: Vec<Autopilot>,
     pub pipelines: Vec<GraphDef>,
     pub versions: HashMap<PipelineId, Vec<PipelineVersion>>,
@@ -148,6 +152,8 @@ pub struct World {
     pub runtimes: Vec<Runtime>,
     pub workdirs: Vec<WorkdirEntry>,
     pub worktrees: Vec<WorkdirEntry>,
+    /// Folders path completion finds, anywhere: `list_dir` returns the children of a folder.
+    pub dirs: Vec<ChildDir>,
     pub next_id: u64,
 }
 
@@ -162,6 +168,7 @@ impl World {
         data_inbox::fill(&mut world);
         data_catalog::fill(&mut world);
         data_ops::fill(&mut world);
+        data_sessions::dirs(&mut world);
         // Headers count what is stored, as the engine's do.
         for session in &mut world.sessions {
             session.message_count = world.messages.get(&session.id).map_or(0, |messages| messages.len() as u32);

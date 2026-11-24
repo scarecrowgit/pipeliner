@@ -127,11 +127,8 @@ impl RunApi for Engine {
         let inner = &self.inner;
         let run = inner.run_or_fail(id)?;
         let reviews = inner.store.reviews_for_run(id)?;
-        let snapshot = inner
-            .store
-            .marker(&pipelines::snapshot_marker(id))?
-            .and_then(|text| serde_json::from_str::<pipeline::exec::Snapshot>(&text).ok());
-        let graph = inner.store.marker(&pipelines::graph_marker(id))?.and_then(|text| pipelines::parse_graph(&text).ok());
+        let snapshot = pipelines::run_snapshot(inner, id);
+        let graph = pipelines::run_graph(inner, id);
         Ok(RunStats {
             agents_running: run
                 .nodes

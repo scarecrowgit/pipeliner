@@ -140,6 +140,7 @@ impl Engine {
             shut_down: AtomicBool::new(false),
         };
         let engine = Engine { inner: Arc::new(inner) };
+        engine.inner.keep_queues()?;
         engine.inner.recover()?;
         crate::pipelines::recover(&engine.inner);
         Ok(engine)
@@ -238,6 +239,25 @@ impl Inner {
     /// Shows an error as a toast.
     pub fn notice_error(&self, text: &str) {
         self.publish(Event::Notice { level: model::NoticeLevel::Error, text: text.to_string() });
+    }
+
+    /// Saves every queue change to the store and puts back the queues kept before the last
+    /// process ended; they are delivered with the session's next message.
+    fn keep_queues(self: &Arc<Self>) -> Result<()> {
+        let weak = Arc::downgrade(self);
+        self.live.save_queues_with(Box::new(move |id, queue| {
+            let Some(inner) = weak.upgrade() else { return };
+            let queue: Vec<store::QueuedMessage> =
+                queue.iter().map(|m| store::QueuedMessage { text: m.text.clone(), images: m.images.clone() }).collect();
+            if let Err(error) = inner.store.set_queued_messages(id, &queue) {
+                inner.notice_error(&format!("Could not keep the queued messages: {error:#}"));
+            }
+        }));
+        for (id, queue) in self.store.queued_messages()? {
+            let messages = queue.into_iter().map(|m| crate::api::UserMessage { text: m.text, images: m.images }).collect();
+            self.live.restore(&id, messages);
+        }
+        Ok(())
     }
 
     /// Sessions that were running when the last process ended become failed, so they can be

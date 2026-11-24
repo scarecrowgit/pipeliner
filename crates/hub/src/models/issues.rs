@@ -131,6 +131,15 @@ impl IssuesModel {
         );
     }
 
+    /// Drops the entry `seq` from a loaded feed (a deleted comment).
+    pub(crate) fn forget_event(&mut self, key: &IssueKey, seq: u64, cx: &mut Context<Self>) {
+        if let Some(feed) = self.activity.get_mut(key)
+            && feed.edit(|events| events.retain(|event| event.seq != seq))
+        {
+            cx.notify();
+        }
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.started = true;
         self.state = LoadState::Loading;

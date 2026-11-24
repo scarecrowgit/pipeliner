@@ -8,7 +8,7 @@ use anyhow::Result;
 use gpui::{App, AppContext as _, Task};
 
 use crate::api::{
-    Api, BlobId, Estimate, FolderInfo, GraphChange, GraphDef, InboxItem, Issue, IssueEvent, IssueKey, PermissionRule,
+    Api, BlobId, ChildDir, Estimate, FolderInfo, GraphChange, GraphDef, InboxItem, Issue, IssueEvent, IssueKey, PermissionRule,
     PipelineId, Problem, ProviderModels, PullRequest, RepoFacts, ReviewId, Run, RunId, RunLogLine, RunStats,
     RunnableRef, Session, SessionFilter, SessionId, SlashCommand, StartFrom, Template, UsedBy, WorkdirEntry,
 };
@@ -83,6 +83,20 @@ impl Queries {
     pub fn folder_info(&self, path: &Path, cx: &App) -> Task<FolderInfo> {
         let path = path.to_path_buf();
         self.ask(cx, move |api| api.folder_info(&path))
+    }
+
+    /// Whether a path is an existing folder: a missing folder, as opposed to an empty or
+    /// non-git one.
+    pub fn folder_exists(&self, path: &Path, cx: &App) -> Task<bool> {
+        let path = path.to_path_buf();
+        self.ask(cx, move |api| api.folder_exists(&path))
+    }
+
+    /// Folders inside `dir` whose name starts with `prefix`, for path completion: visible ones
+    /// by name, then hidden ones.
+    pub fn list_dir(&self, dir: &Path, prefix: &str, limit: usize, cx: &App) -> Task<Result<Vec<ChildDir>>> {
+        let (dir, prefix) = (dir.to_path_buf(), prefix.to_string());
+        self.ask(cx, move |api| api.list_dir(&dir, &prefix, limit))
     }
 
     /// A free branch name for a new chat.

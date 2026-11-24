@@ -1,6 +1,6 @@
 //! Blocks from the live agent stream.
 
-use crate::api::{AgentEvent, ContentBlock, Millis, Role, StopReason, StoredMessage};
+use crate::api::{AgentEvent, ContentBlock, Millis, Role, StopReason, StoredMessage, ToolDisplay};
 
 use super::history::{ToolRole, tool_role};
 use super::{
@@ -14,6 +14,16 @@ pub(crate) enum LiveEffect {
     TurnStarted,
     TurnFinished(StopReason),
     Failed(String),
+}
+
+/// The text a finished call's display carries as its result.
+fn display_text(display: &ToolDisplay) -> &str {
+    match display {
+        ToolDisplay::Text { body, .. } => body,
+        ToolDisplay::Command { output, .. } => output,
+        ToolDisplay::Line { result, .. } => result,
+        ToolDisplay::Diff(_) => "",
+    }
 }
 
 impl Transcript {
@@ -65,6 +75,7 @@ impl Transcript {
                 }
             }
             AgentEvent::ToolFinished { id, display, is_error } => {
+                self.note_interrupted(id, *is_error, display_text(display));
                 if let Some(index) = self.tool_index(id) {
                     self.edit(index, |kind| {
                         if let BlockKind::Tool(tool) = kind {

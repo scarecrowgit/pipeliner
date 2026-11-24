@@ -26,5 +26,5 @@ pub mod worktree;
 
 pub use changes::{MergeOutcome, changed_files, commit_all, file_diff, merge_into_base, parse_unified, push};
 pub use facts::{RepoFacts, branches, facts, host_of, status_line};
-pub use scan::{FolderInfo, folder, repos_under};
+pub use scan::{ChildDir, FolderInfo, child_dirs, folder, repos_under};
 pub use worktree::{Worktree, branch_name, default_dir, unique_branch};

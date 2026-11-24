@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::api::{
-    ChatMode, FileChange, IssueKey, McpServerInfo, McpState, ModelRef, PermissionRequest, PermissionRule, RepoFacts,
+    ChatMode, ChildDir, FileChange, IssueKey, McpServerInfo, McpState, ModelRef, PermissionRequest, PermissionRule, RepoFacts,
     RepoHost, RequestId, RuleDecision, RuleScope, RunnableRef, Session, SessionId, SessionOrigin, SessionState,
     SkillInContext, TodoItem, TodoStatus, ToolClass, ToolDisplay, Usage, WorkMode, Workdir,
 };
@@ -21,6 +21,25 @@ pub fn path(rest: &str) -> PathBuf {
 
 pub fn model(name: &str) -> ModelRef {
     ModelRef::new("anthropic", name)
+}
+
+/// The folders under home that path completion finds: the Acme checkouts and a few others.
+pub fn dirs(world: &mut World) {
+    let dir = |rest: &str, is_repo: bool| {
+        let path = path(rest);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        ChildDir { name, path, is_repo }
+    };
+    world.dirs = vec![
+        dir("code", false),
+        dir("code/acme", false),
+        dir("code/acme/payments-api", true),
+        dir("code/acme/checkout-web", true),
+        dir("code/acme/ledger", true),
+        dir("code/acme/.archive", false),
+        dir("notes", false),
+        dir(".config", false),
+    ];
 }
 
 /// A top-level chat with the defaults of this world.

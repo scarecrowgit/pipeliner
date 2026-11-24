@@ -15,8 +15,11 @@ impl FixtureApi {
     /// Appends an activity entry and returns its event.
     fn activity(world: &mut World, key: &IssueKey, actor: Actor, kind: IssueEventKind) -> Event {
         let at = world.now;
+        // Above every entry, deleted ones too: seqs are never reused.
+        let deleted = world.deleted_seqs.get(key).copied().unwrap_or(0);
         let feed = world.issue_events.entry(key.clone()).or_default();
-        let event = IssueEvent { seq: feed.len() as u64 + 1, at, actor, kind };
+        let seq = feed.iter().map(|e| e.seq).max().unwrap_or(0).max(deleted) + 1;
+        let event = IssueEvent { seq, at, actor, kind };
         feed.push(event.clone());
         Event::IssueActivity { key: key.clone(), event }
     }
@@ -176,6 +179,31 @@ impl IssueApi for FixtureApi {
         Ok(())
     }
 
+    fn delete_comment(&self, key: &IssueKey, seq: u64) -> Result<()> {
+        self.record("delete_comment", format!("{key} {seq}"))?;
+        let issue = {
+            let mut world = self.world();
+            let feed = world.issue_events.get(key).ok_or_else(|| anyhow!("{key} has no comment {seq}"))?;
+            let index = feed.iter().position(|e| e.seq == seq).ok_or_else(|| anyhow!("{key} has no comment {seq}"))?;
+            match &feed[index] {
+                IssueEvent { actor: Actor::Me, kind: IssueEventKind::Comment { .. }, .. } => {}
+                IssueEvent { kind: IssueEventKind::Comment { .. }, .. } => bail!("Only your own comments can be deleted"),
+                _ => bail!("Only comments can be deleted"),
+            }
+            if let Some(feed) = world.issue_events.get_mut(key) {
+                feed.remove(index);
+            }
+            let highest = world.deleted_seqs.entry(key.clone()).or_default();
+            *highest = (*highest).max(seq);
+            let now = world.now;
+            let issue = world.issue_mut(key)?;
+            issue.updated = now;
+            issue.clone()
+        };
+        self.emit(Event::IssueChanged { issue });
+        Ok(())
+    }
+
     fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>) -> Result<Issue> {
         self.record("attach_runner", format!("{key} {runner:?}"))?;
         let (issue, event) = {
@@ -231,6 +259,19 @@ impl IssueApi for FixtureApi {
     fn delete_autopilot(&self, id: &AutopilotId) -> Result<()> {
         self.record("delete_autopilot", id.to_string())?;
         self.world().autopilots.retain(|known| &known.id != id);
+        self.emit(Event::AutopilotsChanged);
+        Ok(())
+    }
+
+    fn run_autopilot(&self, id: &AutopilotId) -> Result<()> {
+        self.record("run_autopilot", id.to_string())?;
+        {
+            let mut world = self.world();
+            let now = world.now;
+            let autopilot = world.autopilots.iter_mut().find(|known| &known.id == id).ok_or_else(|| anyhow!("There is no autopilot {id}"))?;
+            autopilot.last_run = Some(now);
+            autopilot.last_result = "started a run".to_string();
+        }
         self.emit(Event::AutopilotsChanged);
         Ok(())
     }

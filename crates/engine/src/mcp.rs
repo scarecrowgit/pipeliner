@@ -1,6 +1,6 @@
 //! The MCP servers: one supervisor for the servers of `config.toml` (and `~/.claude.json`),
-//! shared by every session, plus one per workspace for its `.mcp.json`. Each starts the first
-//! time a session needs it.
+//! shared by every session, plus one per workspace for its `.mcp.json`. Servers start the first
+//! time a turn needs them; until then they are reported as idle ("not started").
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,14 +26,24 @@ impl McpHub {
         Self { paths, global: Mutex::new(None), local: Mutex::new(HashMap::new()) }
     }
 
-    /// The servers a session in `workspace` uses, starting their supervisors when needed.
+    /// The servers a session in `workspace` uses, starting the ones not started yet.
     /// `on_change` is called whenever one of them changes state.
     pub fn view(&self, workspace: Option<&Path>, on_change: &OnChange) -> McpView {
+        let view = self.peek(workspace, on_change);
+        for supervisor in &view.supervisors {
+            supervisor.start_idle();
+        }
+        view
+    }
+
+    /// The servers a session in `workspace` uses, without starting any: what the context
+    /// panel shows before a turn needed them.
+    pub fn peek(&self, workspace: Option<&Path>, on_change: &OnChange) -> McpView {
         let env = |name: &str| std::env::var(name).ok();
         let global = lock(&self.global)
             .get_or_insert_with(|| {
                 let loaded = mcp::load_server_configs(&self.paths, None, &env);
-                Arc::new(Supervisor::start(loaded.servers, on_change.clone()))
+                Arc::new(Supervisor::configure(loaded.servers, on_change.clone()))
             })
             .clone();
         let local = workspace.map(|ws| {
@@ -43,7 +53,7 @@ impl McpHub {
                     let loaded = mcp::load_server_configs(&self.paths, Some(ws), &env);
                     let own: Vec<_> =
                         loaded.servers.into_iter().filter(|s| s.source == ServerSource::McpJson).collect();
-                    Arc::new(Supervisor::start(own, on_change.clone()))
+                    Arc::new(Supervisor::configure(own, on_change.clone()))
                 })
                 .clone()
         });

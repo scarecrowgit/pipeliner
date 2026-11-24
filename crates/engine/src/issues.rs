@@ -146,6 +146,24 @@ impl IssueApi for Engine {
         self.wake(&issue, &Happening::Comment { text: text.to_string(), mentions })
     }
 
+    fn delete_comment(&self, key: &IssueKey, seq: u64) -> Result<()> {
+        let inner = &self.inner;
+        let mut issue = inner.issue_or_fail(key)?;
+        let events = inner.store.issue_events(key)?;
+        let event = events.iter().find(|e| e.seq == seq).ok_or_else(|| anyhow!("{key} has no comment {seq}"))?;
+        if !matches!(event.kind, IssueEventKind::Comment { .. }) {
+            bail!("Only comments can be deleted");
+        }
+        if event.actor != Actor::Me {
+            bail!("Only your own comments can be deleted");
+        }
+        if !inner.store.delete_issue_event(key, seq)? {
+            bail!("{key} has no comment {seq}");
+        }
+        issue.updated = inner.now();
+        inner.save_issue(&issue)
+    }
+
     fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>) -> Result<Issue> {
         let inner = &self.inner;
         let mut issue = inner.issue_or_fail(key)?;
@@ -200,5 +218,16 @@ impl IssueApi for Engine {
         }
         self.inner.publish(Event::AutopilotsChanged);
         Ok(())
+    }
+
+    fn run_autopilot(&self, id: &AutopilotId) -> Result<()> {
+        let autopilot = self
+            .inner
+            .store
+            .autopilots(None)?
+            .into_iter()
+            .find(|a| &a.id == id)
+            .ok_or_else(|| anyhow!("There is no autopilot {id}"))?;
+        self.fire_autopilot(autopilot)
     }
 }

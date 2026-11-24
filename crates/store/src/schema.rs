@@ -271,4 +271,34 @@ pub(crate) const MIGRATIONS: &[&str] = &[
 
     CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL) STRICT;
     ",
+    // 5: deleted comments stay as tombstones so a seq is never handed out twice; what a tool
+    // call showed (its `ToolDisplay`) next to its stored result; messages queued behind a
+    // running turn; a run's graph and executor snapshot, moved out of the `meta` markers
+    // `run-graph:<id>` and `run-snapshot:<id>`.
+    "
+    ALTER TABLE issue_events ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE tool_displays (
+        session TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        call TEXT NOT NULL,
+        display TEXT NOT NULL,
+        PRIMARY KEY (session, call)
+    ) STRICT, WITHOUT ROWID;
+
+    CREATE TABLE queued_messages (
+        session TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        images TEXT NOT NULL,
+        PRIMARY KEY (session, position)
+    ) STRICT, WITHOUT ROWID;
+
+    CREATE TABLE run_state (run TEXT PRIMARY KEY, graph TEXT, snapshot TEXT) STRICT;
+    INSERT INTO run_state (run, graph)
+        SELECT substr(key, 11), value FROM meta WHERE key LIKE 'run-graph:%';
+    INSERT INTO run_state (run, snapshot)
+        SELECT substr(key, 14), value FROM meta WHERE key LIKE 'run-snapshot:%'
+        ON CONFLICT (run) DO UPDATE SET snapshot = excluded.snapshot;
+    DELETE FROM meta WHERE key LIKE 'run-graph:%' OR key LIKE 'run-snapshot:%';
+    ",
 ];

@@ -1,7 +1,11 @@
 //! Blocks from stored messages: the initial page, older pages, and messages committed live.
 //!
-//! Stored messages carry raw tool inputs, not the [`ToolDisplay`] the live stream sends, so tool
-//! rows of history get a display derived from common input shapes (`command`, `path`, edits).
+//! Stored messages carry raw tool inputs, not the [`ToolDisplay`] the live stream sends. The
+//! engine keeps the display of each finished call beside its result ([`Transcript::keep_displays`]
+//! hands them in); calls without one (older ones, imported ones) get a display derived from
+//! common input shapes (`command`, `path`, edits).
+
+use std::collections::HashMap;
 
 use crate::api::{
     Attachment, ContentBlock, DiffHunk, DiffLine, DiffLineKind, FileDiff, Role, Session, StoredMessage, TodoItem,
@@ -31,7 +35,40 @@ pub(crate) fn tool_role(name: &str) -> ToolRole {
     }
 }
 
+/// How the engine words the result of a call cut off by a stop, a crash or a restart.
+const INTERRUPTED_PREFIX: &str = "Interrupted before the tool finished";
+
+/// A result text that says the call was interrupted.
+pub(crate) fn says_interrupted(text: &str) -> bool {
+    text.trim_start().starts_with(INTERRUPTED_PREFIX)
+}
+
+/// The tool-use ids of the calls in `messages`, for asking which displays were kept.
+pub(crate) fn tool_call_ids(messages: &[StoredMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .flat_map(|stored| stored.message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 impl Transcript {
+    /// Hands in the displays the engine kept for finished calls; used for the history
+    /// applied from now on.
+    pub(crate) fn keep_displays(&mut self, displays: HashMap<String, ToolDisplay>) {
+        self.kept_displays.extend(displays);
+    }
+
+    /// Notes a finished call whose result says it was interrupted.
+    pub(crate) fn note_interrupted(&mut self, id: &str, is_error: bool, text: &str) {
+        if is_error && says_interrupted(text) {
+            self.interrupted.insert(id.to_string());
+        }
+    }
+
     /// Appends stored messages, oldest first. Messages already applied are skipped.
     pub(crate) fn append_history(&mut self, messages: &[StoredMessage]) {
         for message in messages {
@@ -41,7 +78,12 @@ impl Transcript {
 
     /// Puts an older page in front of what is loaded.
     pub(crate) fn prepend_history(&mut self, messages: &[StoredMessage]) -> Splice {
-        let mut older = Transcript { orphans: std::mem::take(&mut self.orphans), ..Transcript::default() };
+        let mut older = Transcript {
+            orphans: std::mem::take(&mut self.orphans),
+            kept_displays: std::mem::take(&mut self.kept_displays),
+            interrupted: std::mem::take(&mut self.interrupted),
+            ..Transcript::default()
+        };
         for message in messages {
             older.push_stored(message);
         }
@@ -50,6 +92,8 @@ impl Transcript {
             older.push(BlockKind::Compaction(CompactionBlock { summarised: older.compacted_run, running: false }));
         }
         older.touched = None;
+        self.kept_displays = std::mem::take(&mut older.kept_displays);
+        self.interrupted = std::mem::take(&mut older.interrupted);
         self.prepend(older)
     }
 
@@ -174,14 +218,24 @@ impl Transcript {
     /// loaded.
     fn tool_result(&mut self, id: &str, content: &str, is_error: bool, at: Option<i64>) {
         if let Some(index) = self.tool_index(id) {
+            let kept = self.kept_displays.get(id).cloned();
+            self.note_interrupted(id, is_error, content);
             self.edit(index, |kind| {
                 if let BlockKind::Tool(tool) = kind
                     && !matches!(tool.state, ToolState::Finished { .. })
                 {
                     tool.state = ToolState::Finished { is_error };
                     tool.finished = tool.finished.or(at);
-                    if let Some(display) = tool.display.as_mut() {
-                        finish_display(display, content, is_error);
+                    // A failed call's generic error card would hide the look of its kind:
+                    // the derived display with the error as its output reads better.
+                    let generic = |d: &ToolDisplay| is_error && matches!(d, ToolDisplay::Text { title, .. } if *title == tool.name);
+                    match kept.filter(|d| !generic(d)) {
+                        Some(kept) => tool.display = Some(kept),
+                        None => {
+                            if let Some(display) = tool.display.as_mut() {
+                                finish_display(display, content, is_error);
+                            }
+                        }
                     }
                 }
             });
@@ -291,7 +345,8 @@ fn verb(name: &str) -> &str {
     }
 }
 
-/// Every old line removed, every new line added: enough to draw an edit from history.
+/// Every old line removed, every new line added: enough to draw an edit from history when the
+/// engine kept no display for it (calls stored before it did, imported ones).
 fn naive_diff(path: &str, old: &str, new: &str) -> FileDiff {
     let line = |kind, text: &str| DiffLine { kind, old_no: None, new_no: None, text: text.to_string(), no_newline: false };
     let mut lines: Vec<DiffLine> = old.lines().map(|text| line(DiffLineKind::Del, text)).collect();

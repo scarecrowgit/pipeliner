@@ -1,7 +1,12 @@
 //! Stored messages: the "Fix double charge on retry" transcript of the chat mockup, a long
 //! ledger conversation for paging, and short exchanges for the other chats.
 
-use crate::api::{BlobId, ContentBlock, Message, ModelRef, Role, SessionId, StoredMessage, Usage};
+use std::collections::HashMap;
+
+use crate::api::{
+    BlobId, ContentBlock, DiffHunk, DiffLine, DiffLineKind, FileDiff, Message, ModelRef, Role, SessionId, StoredMessage,
+    ToolDisplay, Usage,
+};
 
 use super::data_sessions::{FIX_1423, LEDGER, model};
 use super::{HOUR, MINUTE, World};
@@ -35,6 +40,7 @@ pub fn tool_result(id: &str, content: &str) -> ContentBlock {
 pub fn fill(world: &mut World) {
     let now = world.now;
     world.messages.insert(SessionId::new(FIX_1423), fix_1423(now));
+    world.tool_displays.insert(SessionId::new(FIX_1423), HashMap::from([("t7".to_string(), retry_edit())]));
     world.messages.insert(SessionId::new(LEDGER), ledger(now));
     let short = [
         ("chat-split-checkout", "Plan how to split the checkout service into cart and payment.", "Two seams look clean: the cart API and the payment intent flow. I would start with the cart."),
@@ -63,6 +69,34 @@ pub fn fill(world: &mut World) {
 
 const OLD_RETRY: &str = r#"export async function retryCharge(charge: Charge) {\n  const res = await gateway.charge(charge.amount, charge.card);\n  if (res.status === 'timeout') {\n    return retryCharge(charge);\n  }"#;
 const NEW_RETRY: &str = r#"export async function retryCharge(charge: Charge) {\n  const key = charge.idempotencyKey ?? deriveKey(charge);\n  const res = await gateway.charge(charge.amount, charge.card, { idempotencyKey: key });\n  if (res.status === 'timeout') {\n    return retryCharge({ ...charge, idempotencyKey: key });\n  }"#;
+
+/// The edit of `t7` as the live stream showed it: three lines in, two out, with line numbers
+/// and the unchanged lines around them.
+fn retry_edit() -> ToolDisplay {
+    use DiffLineKind::{Add, Context, Del};
+    let rows: [(DiffLineKind, Option<u32>, Option<u32>, &str); 9] = [
+        (Context, Some(44), Some(44), "export async function retryCharge(charge: Charge) {"),
+        (Del, Some(45), None, "  const res = await gateway.charge(charge.amount, charge.card);"),
+        (Add, None, Some(45), "  const key = charge.idempotencyKey ?? deriveKey(charge);"),
+        (Add, None, Some(46), "  const res = await gateway.charge(charge.amount, charge.card, { idempotencyKey: key });"),
+        (Context, Some(46), Some(47), "  if (res.status === 'timeout') {"),
+        (Del, Some(47), None, "    return retryCharge(charge);"),
+        (Add, None, Some(48), "    return retryCharge({ ...charge, idempotencyKey: key });"),
+        (Context, Some(48), Some(49), "  }"),
+        (Context, Some(49), Some(50), "  return res;"),
+    ];
+    let lines = rows
+        .into_iter()
+        .map(|(kind, old_no, new_no, text)| DiffLine { kind, old_no, new_no, text: text.to_string(), no_newline: false })
+        .collect();
+    ToolDisplay::Diff(FileDiff {
+        path: "src/charges/retry.ts".to_string(),
+        added: 3,
+        removed: 2,
+        hunks: vec![DiffHunk { lines }],
+        ..FileDiff::default()
+    })
+}
 
 fn fix_1423(now: i64) -> Vec<StoredMessage> {
     let opus = Some(model("opus-5.5"));

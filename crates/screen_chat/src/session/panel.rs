@@ -352,6 +352,7 @@ fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> A
     let el = match server.state {
         McpState::Ready => cell.text_color(TEXT_MUTED).child(base::fmt::plural(u64::from(server.tools), "tool", "tools")),
         McpState::Starting => cell.text_color(TEXT_MUTED).child(mcp_starting_word()),
+        McpState::Idle => cell.text_color(TEXT_MUTED).child("not started"),
         McpState::Disabled => cell.text_color(TEXT_MUTED).child("off"),
         McpState::Failed => {
             let (v, server_name) = (view.clone(), server.name.clone());

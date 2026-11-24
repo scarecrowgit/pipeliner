@@ -103,10 +103,94 @@ pub fn repos_under(root: &Path, max_depth: u32, limit: usize, cancel: &CancelTok
     found
 }
 
+/// A folder inside another, as path completion offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChildDir {
+    /// The folder's own name.
+    pub name: String,
+    /// `dir` joined with `name`.
+    pub path: PathBuf,
+    /// It is a git checkout (it has a `.git` folder or file).
+    pub is_repo: bool,
+}
+
+/// The folders directly inside `dir` whose name starts with `prefix` (ignoring case), at most
+/// `limit`: visible ones by name, then hidden ones. Symlinks to folders count; folders that
+/// cannot be read are left out. Fails when `dir` itself cannot be read.
+pub fn child_dirs(dir: &Path, prefix: &str, limit: usize) -> std::io::Result<Vec<ChildDir>> {
+    let wanted = prefix.to_lowercase();
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.to_lowercase().starts_with(&wanted))
+        .collect();
+    names.sort_by_key(|name| (name.starts_with('.'), name.to_lowercase(), name.clone()));
+    let mut out = Vec::new();
+    for name in names {
+        if out.len() >= limit {
+            break;
+        }
+        let path = dir.join(&name);
+        // `metadata` follows a symlink; reading the folder proves it can be entered.
+        if !std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) || std::fs::read_dir(&path).is_err() {
+            continue;
+        }
+        let is_repo = path.join(".git").exists();
+        out.push(ChildDir { name, path, is_repo });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutil::{Sandbox, git, write};
+
+    #[test]
+    fn child_dirs_list_matching_folders_visible_first() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.path().join("code");
+        for dir in ["beta", "Alpha", "alps", ".hidden-a", "other"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        write(&root, "a-file.txt", "not a folder");
+        git(&root.join("alps"), &["init", "-q"]);
+        let names = |prefix: &str, limit: usize| -> Vec<String> {
+            child_dirs(&root, prefix, limit).unwrap().into_iter().map(|c| c.name).collect()
+        };
+        assert_eq!(names("", 10), ["Alpha", "alps", "beta", "other", ".hidden-a"]);
+        assert_eq!(names("al", 10), ["Alpha", "alps"], "case is ignored and files are left out");
+        assert_eq!(names("", 2), ["Alpha", "alps"]);
+        assert_eq!(names(".h", 10), [".hidden-a"]);
+        let alps = child_dirs(&root, "alps", 1).unwrap().remove(0);
+        assert_eq!((alps.path, alps.is_repo), (root.join("alps"), true));
+        assert!(!child_dirs(&root, "beta", 1).unwrap()[0].is_repo);
+        assert!(child_dirs(&root.join("missing"), "", 5).is_err());
+        assert!(child_dirs(&root.join("a-file.txt"), "", 5).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_dirs_follow_symlinks_but_skip_unreadable_folders() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let sandbox = Sandbox::new();
+        let root = sandbox.path().join("root");
+        std::fs::create_dir_all(root.join("open")).unwrap();
+        std::fs::create_dir_all(root.join("locked")).unwrap();
+        std::fs::create_dir_all(sandbox.path().join("target-dir")).unwrap();
+        std::os::unix::fs::symlink(sandbox.path().join("target-dir"), root.join("link")).unwrap();
+        std::os::unix::fs::symlink(sandbox.path().join("gone"), root.join("dangling")).unwrap();
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root can read anything; the check only means something for an ordinary user.
+        let unreadable = std::fs::read_dir(root.join("locked")).is_err();
+        let names: Vec<String> = child_dirs(&root, "", 10).unwrap().into_iter().map(|c| c.name).collect();
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        if unreadable {
+            assert_eq!(names, ["link", "open"]);
+        } else {
+            assert_eq!(names, ["link", "locked", "open"]);
+        }
+    }
 
     fn cancel() -> CancelToken {
         CancelToken::new()

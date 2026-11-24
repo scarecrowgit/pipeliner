@@ -1,8 +1,9 @@
 //! What is running right now: one entry per chat session with a turn in progress or messages
-//! waiting, and the slot limit every turn passes through.
+//! waiting, and the slot limit every turn passes through. Every change of a queue is handed to
+//! a saver (the store), so queued messages survive a restart.
 
 use std::collections::HashMap;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use base::cancel::CancelToken;
@@ -31,13 +32,38 @@ pub(crate) enum Sent {
     Queued,
 }
 
+/// Keeps a session's queue somewhere that outlives the process; called with the whole queue
+/// after every change, under the registry's lock so saves land in order.
+pub(crate) type QueueSaver = Box<dyn Fn(&SessionId, &[UserMessage]) + Send + Sync>;
+
 /// The running sessions, their cancel tokens and queues.
 #[derive(Default)]
 pub(crate) struct Live {
     sessions: Mutex<HashMap<SessionId, LiveSession>>,
+    saver: OnceLock<QueueSaver>,
 }
 
 impl Live {
+    /// Sets where queues are kept. Only the first call counts.
+    pub fn save_queues_with(&self, saver: QueueSaver) {
+        let _ = self.saver.set(saver);
+    }
+
+    /// Puts back a queue kept from before a restart, behind anything queued since. Not saved
+    /// again: it is what the saver holds.
+    pub fn restore(&self, id: &SessionId, messages: Vec<UserMessage>) {
+        let mut sessions = lock(&self.sessions);
+        let live = sessions.entry(id.clone()).or_default();
+        let newer = std::mem::replace(&mut live.queued, messages);
+        live.queued.extend(newer);
+    }
+
+    fn save(&self, id: &SessionId, queued: &[UserMessage]) {
+        if let Some(saver) = self.saver.get() {
+            saver(id, queued);
+        }
+    }
+
     /// Queues `message`, or claims the session for a new turn when nothing runs. A session
     /// with older queued messages starts with the oldest; the rest stay queued for the loop.
     pub fn send(&self, id: &SessionId, message: UserMessage) -> Sent {
@@ -45,12 +71,14 @@ impl Live {
         let live = sessions.entry(id.clone()).or_default();
         live.queued.push(message);
         if live.running {
+            self.save(id, &live.queued);
             return Sent::Queued;
         }
         let cancel = CancelToken::new();
         live.running = true;
         live.cancel = Some(cancel.clone());
         let first = live.queued.remove(0);
+        self.save(id, &live.queued);
         Sent::Start { cancel, first }
     }
 
@@ -72,7 +100,12 @@ impl Live {
     pub fn next(&self, id: &SessionId) -> Option<UserMessage> {
         let mut sessions = lock(&self.sessions);
         let live = sessions.get_mut(id)?;
-        (!live.queued.is_empty()).then(|| live.queued.remove(0))
+        if live.queued.is_empty() {
+            return None;
+        }
+        let next = live.queued.remove(0);
+        self.save(id, &live.queued);
+        Some(next)
     }
 
     /// Releases the session, unless a message arrived since [`Live::next`] said there was
@@ -81,7 +114,9 @@ impl Live {
         let mut sessions = lock(&self.sessions);
         let live = sessions.get_mut(id)?;
         if deliver && !live.queued.is_empty() {
-            return Some(live.queued.remove(0));
+            let next = live.queued.remove(0);
+            self.save(id, &live.queued);
+            return Some(next);
         }
         live.running = false;
         live.cancel = None;
@@ -90,7 +125,13 @@ impl Live {
 
     /// Takes every queued message, oldest first, for the agent loop.
     pub fn take_queued(&self, id: &SessionId) -> Vec<UserMessage> {
-        lock(&self.sessions).get_mut(id).map(|live| std::mem::take(&mut live.queued)).unwrap_or_default()
+        let mut sessions = lock(&self.sessions);
+        let Some(live) = sessions.get_mut(id) else { return Vec::new() };
+        let taken = std::mem::take(&mut live.queued);
+        if !taken.is_empty() {
+            self.save(id, &[]);
+        }
+        taken
     }
 
     /// Puts messages back at the front of the queue (the loop could not store them).
@@ -99,6 +140,7 @@ impl Live {
         let live = sessions.entry(id.clone()).or_default();
         let rest = std::mem::replace(&mut live.queued, messages);
         live.queued.extend(rest);
+        self.save(id, &live.queued);
     }
 
     /// A copy of the queue.
@@ -135,7 +177,8 @@ impl Live {
         lock(&self.sessions).iter().filter(|(_, live)| live.running).map(|(id, _)| id.clone()).collect()
     }
 
-    /// Forgets a deleted session, cancelling what it runs.
+    /// Forgets a deleted session, cancelling what it runs. Its kept queue goes with the
+    /// session's row.
     pub fn forget(&self, id: &SessionId) {
         if let Some(live) = lock(&self.sessions).remove(id)
             && let Some(cancel) = live.cancel

@@ -52,10 +52,11 @@ impl InboxModel {
         self.items.iter().filter(|item| item.needs_person()).count()
     }
 
-    /// The review queue: items waiting for a person, oldest first.
+    /// The review queue: items waiting for a person, newest first as the Inbox lists them;
+    /// items of the same time in the order of their ids.
     pub fn waiting_items(&self) -> Vec<Arc<InboxItem>> {
         let mut items: Vec<Arc<InboxItem>> = self.items.iter().filter(|item| item.needs_person()).cloned().collect();
-        items.sort_by_key(|item| item.created);
+        items.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.id.as_str().cmp(b.id.as_str())));
         items
     }
 

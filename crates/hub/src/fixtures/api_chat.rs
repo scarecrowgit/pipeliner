@@ -1,14 +1,15 @@
 //! The fixture's chat and workdir commands and queries.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
 use crate::api::{
-    AgentEvent, Attachment, BlobId, ChatApi, ChatMode, Event, ExportFormat, ExportOptions, FolderInfo, Message,
+    AgentEvent, Attachment, BlobId, ChatApi, ChatMode, ChildDir, Event, ExportFormat, ExportOptions, FolderInfo, Message,
     McpState, ModelRef, NewSession, PermissionDecision, ProviderInfo, ProviderModels, RepoFacts, RequestId, Role,
     RunnableRef, SearchResult, Session, SessionDetail, SessionFilter, SessionId, SessionOrigin, SessionQuery,
-    SessionState, SkillInContext, SlashCommand, StoredMessage, UserMessage, WorkMode, Workdir, WorkdirApi, WorkdirChoice, WorkdirEntry,
+    SessionState, SkillInContext, SlashCommand, StoredMessage, ToolDisplay, UserMessage, WorkMode, Workdir, WorkdirApi, WorkdirChoice, WorkdirEntry,
 };
 
 use super::data_sessions::{FIX_1423, chat, repo_facts};
@@ -52,6 +53,12 @@ impl ChatApi for FixtureApi {
             pending: world.permissions.iter().filter(|request| &request.session == id).cloned().collect(),
             queued: extras.queued,
         }))
+    }
+
+    fn tool_displays(&self, id: &SessionId, calls: &[String]) -> Result<HashMap<String, ToolDisplay>> {
+        let world = self.world();
+        let Some(kept) = world.tool_displays.get(id) else { return Ok(HashMap::new()) };
+        Ok(calls.iter().filter_map(|call| Some((call.clone(), kept.get(call)?.clone()))).collect())
     }
 
     fn messages(&self, id: &SessionId, from: u64, to: u64) -> Result<Vec<StoredMessage>> {
@@ -368,6 +375,30 @@ impl WorkdirApi for FixtureApi {
 
     fn suggest_branch(&self, _repo: &Path, hint: &str) -> String {
         format!("chat/{}", base::id::slug(hint, 40))
+    }
+
+    fn folder_exists(&self, path: &Path) -> bool {
+        let world = self.world();
+        path == Path::new(super::data_sessions::HOME)
+            || world.dirs.iter().any(|dir| dir.path == path || dir.path.starts_with(path))
+    }
+
+    fn list_dir(&self, dir: &Path, prefix: &str, limit: usize) -> Result<Vec<ChildDir>> {
+        self.fail_if_told("list_dir")?;
+        if !self.folder_exists(dir) {
+            bail!("Could not read {}", dir.display());
+        }
+        let wanted = prefix.to_lowercase();
+        let mut children: Vec<ChildDir> = self
+            .world()
+            .dirs
+            .iter()
+            .filter(|child| child.path.parent() == Some(dir) && child.name.to_lowercase().starts_with(&wanted))
+            .cloned()
+            .collect();
+        children.sort_by_key(|child| (child.name.starts_with('.'), child.name.to_lowercase()));
+        children.truncate(limit);
+        Ok(children)
     }
 
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<()> {

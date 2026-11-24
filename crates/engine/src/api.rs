@@ -10,6 +10,7 @@
 //!
 //! Every method is safe to call from any thread.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -21,7 +22,7 @@ pub use store::{
     FacetCounts, IndexStats, MessageSnippet, ParentFilter, SearchResult, SessionFilter, SessionHit, SessionQuery,
     StartedBy,
 };
-pub use vcs::{FolderInfo, RepoFacts};
+pub use vcs::{ChildDir, FolderInfo, RepoFacts};
 
 /// Everything the app can do. Implemented by the engine, and by a fixture backend for previews.
 pub trait Api: ChatApi + WorkdirApi + IssueApi + RunApi + InboxApi + CatalogApi + OpsApi + Send + Sync {
@@ -131,6 +132,10 @@ pub trait ChatApi {
     fn session_detail(&self, id: &SessionId) -> Result<Option<SessionDetail>>;
     /// Stored messages with `seq` in `from..to`, oldest first, compacted ones included.
     fn messages(&self, id: &SessionId, from: u64, to: u64) -> Result<Vec<StoredMessage>>;
+    /// What the finished tool calls `calls` (tool-use ids) of the session showed live, for
+    /// drawing them in history as they were drawn then. Calls stored before displays were
+    /// kept (and imported ones) are left out.
+    fn tool_displays(&self, id: &SessionId, calls: &[String]) -> Result<HashMap<String, ToolDisplay>>;
     fn search_sessions(&self, query: &SessionQuery) -> Result<SearchResult>;
 
     /// Creates the session and, for worktree mode, the worktree. Nothing runs until a message
@@ -205,7 +210,15 @@ pub trait WorkdirApi {
     fn folder_info(&self, path: &Path) -> FolderInfo;
     /// A free branch name for a new chat in this repo: `chat/<slug of the hint>`.
     fn suggest_branch(&self, repo: &Path, hint: &str) -> String;
-    /// Clones into `dest` on a worker. Progress and the result arrive as notices.
+    /// Whether `path` (`~` allowed) is an existing folder: tells a missing folder from an
+    /// empty or non-git one, which [`WorkdirApi::folder_info`] reports alike.
+    fn folder_exists(&self, path: &Path) -> bool;
+    /// Folders directly inside `dir` (`~` allowed) whose name starts with `prefix`, for path
+    /// completion: at most `limit`, visible ones by name, then hidden ones. Unreadable folders
+    /// are left out; an unreadable `dir` is an error.
+    fn list_dir(&self, dir: &Path, prefix: &str, limit: usize) -> Result<Vec<ChildDir>>;
+    /// Clones into `dest` on a worker. `url` is a URL, a local path or a GitHub `owner/name`.
+    /// Progress and the result arrive as notices.
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<()>;
 }
 
@@ -252,6 +265,10 @@ pub trait IssueApi {
     fn delete_issue(&self, key: &IssueKey) -> Result<()>;
     /// Posts a comment and wakes whoever the triggers and mentions say.
     fn comment(&self, key: &IssueKey, text: &str, images: Vec<Attachment>) -> Result<()>;
+    /// Deletes one's own comment, the feed entry with this `seq`. Publishes the issue as
+    /// changed; the entry disappears from [`IssueApi::issue_events`] and its seq is never
+    /// reused. Wake-ups it caused stay.
+    fn delete_comment(&self, key: &IssueKey, seq: u64) -> Result<()>;
     /// Attaches a runner (and starts it when `on_assign` is set), or detaches with `None`.
     fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>) -> Result<Issue>;
     /// Starts the attached runner on the issue now, whatever the triggers say.
@@ -262,6 +279,9 @@ pub trait IssueApi {
     fn autopilots(&self, project: &ProjectId) -> Result<Vec<Autopilot>>;
     fn save_autopilot(&self, autopilot: Autopilot) -> Result<()>;
     fn delete_autopilot(&self, id: &AutopilotId) -> Result<()>;
+    /// Fires the autopilot now, as a tick of its schedule would (also when it is switched
+    /// off): its target starts on its prompt. Records `last_run` and `last_result`.
+    fn run_autopilot(&self, id: &AutopilotId) -> Result<()>;
 }
 
 // ---------------------------------------------------------------- runs

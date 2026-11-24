@@ -140,7 +140,7 @@ fn run_once(inner: &Arc<Inner>, id: &SessionId, input: Input, cancel: &CancelTok
         clock: &*inner.clock,
         tools: ToolRegistry::new(),
     };
-    let mut sink = BusSink::new(&inner.bus, id.clone());
+    let mut sink = BusSink::new(inner, id.clone());
     let outcome = agent::run(&spec, &env, &deps, input, &mut sink, cancel);
     Ok((outcome, sink.notes))
 }
@@ -172,18 +172,27 @@ pub(crate) fn spec_for(inner: &Inner, session: &Session, catalog: &catalog::Cata
     Ok(spec)
 }
 
-/// The MCP servers of a session's folder; their state changes refresh running sessions.
+/// The MCP servers of a session's folder, started; their state changes refresh running
+/// sessions.
 pub(crate) fn mcp_view(inner: &Arc<Inner>, folder: Option<&std::path::Path>) -> McpView {
+    inner.mcp.view(folder, &mcp_on_change(inner))
+}
+
+/// The MCP servers of a session's folder, without starting any.
+pub(crate) fn mcp_peek(inner: &Arc<Inner>, folder: Option<&std::path::Path>) -> McpView {
+    inner.mcp.peek(folder, &mcp_on_change(inner))
+}
+
+fn mcp_on_change(inner: &Arc<Inner>) -> OnChange {
     let weak = Arc::downgrade(inner);
-    let on_change: OnChange = Arc::new(move || {
+    Arc::new(move || {
         let Some(inner) = weak.upgrade() else { return };
         for id in inner.live.running() {
             if let Ok(Some(session)) = inner.store.session(&id) {
                 inner.publish(Event::SessionChanged { session });
             }
         }
-    });
-    inner.mcp.view(folder, &on_change)
+    })
 }
 
 impl Inner {
