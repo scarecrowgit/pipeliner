@@ -61,6 +61,9 @@ pub enum StreamEvent {
 pub enum LlmError {
     /// The key is missing or rejected.
     Auth(String),
+    /// A gateway took the key but its own sign-in to the model's provider failed. Nothing in
+    /// this app's config fixes it.
+    UpstreamAuth(String),
     RateLimited { retry_after: Option<Duration>, message: String },
     /// The provider is overloaded or returned a 5xx.
     Overloaded(String),
@@ -88,6 +91,10 @@ impl fmt::Display for LlmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LlmError::Auth(m) => write!(f, "the provider rejected the API key: {m}"),
+            LlmError::UpstreamAuth(m) => write!(
+                f,
+                "the gateway accepted your key, but its own sign-in to the model's provider failed; sign in again on the gateway or pick another model: {m}"
+            ),
             LlmError::RateLimited { message, .. } => write!(f, "rate limited: {message}"),
             LlmError::Overloaded(m) => write!(f, "the provider is overloaded: {m}"),
             LlmError::ContextTooLong(m) => write!(f, "the conversation no longer fits the model's context: {m}"),

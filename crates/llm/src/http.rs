@@ -111,8 +111,8 @@ pub(crate) fn classify(status: Option<u16>, kind: Option<&str>, message: String,
         Some(429) => LlmError::RateLimited { retry_after, message },
         Some(408) => LlmError::Network(message),
         // A gateway that relays an upstream rejection of its own credentials answers 5xx with
-        // the upstream's 401 inside; retrying that never helps.
-        Some(s) if s >= 500 && relays_auth_failure(&message) => LlmError::Auth(message),
+        // the upstream's 401 inside; retrying that never helps, and the person's key is fine.
+        Some(s) if s >= 500 && relays_auth_failure(&message) => LlmError::UpstreamAuth(message),
         Some(s) if s >= 500 => LlmError::Overloaded(message),
         Some(_) if context => LlmError::ContextTooLong(message),
         Some(_) => LlmError::BadRequest(message),
@@ -266,7 +266,9 @@ mod tests {
         assert!(matches!(status_error(529, None, &anthropic("overloaded_error", "Overloaded")), LlmError::Overloaded(_)));
         assert!(matches!(status_error(502, None, "<html>bad gateway</html>"), LlmError::Overloaded(m) if m.contains("bad gateway")));
         let relayed = r#"[claude/claude-opus-5-5] [401]: {"type":"error","error":{"type":"authentication_error","message":"x"}}"#;
-        assert!(matches!(status_error(502, None, relayed), LlmError::Auth(_)), "a relayed 401 is not retried");
+        let error = status_error(502, None, relayed);
+        assert!(matches!(error, LlmError::UpstreamAuth(_)) && !error.is_retryable(), "a relayed 401 is not retried");
+        assert!(error.to_string().starts_with("the gateway accepted your key"), "{error}");
         assert!(matches!(
             status_error(400, None, &anthropic("invalid_request_error", "prompt is too long: 250000 tokens > 200000 maximum")),
             LlmError::ContextTooLong(_)
