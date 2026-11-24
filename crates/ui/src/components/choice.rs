@@ -3,27 +3,45 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
-    prelude::*, px,
+    AnyElement, App, ClickEvent, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window,
+    div, prelude::*, px,
 };
 
 use super::{ClickHandler, ValueHandler, child_id};
 use crate::focus;
 use crate::assets::{IconName, icon};
+use crate::dev::Probe;
 use crate::motion::{self, Look};
 use crate::theme::*;
 
 /// Underline tabs directly under a page header: Flow, Runs, Spawned agents. 44px tall, 20px
 /// apart; the selected tab has a 2px accent underline and `text`, the others `text-muted`.
 /// Use them to switch views of the same object; 2 to 5 tabs; a count follows the label in
-/// muted text.
+/// muted text. A tab can lead with a 14px icon (`tab_icon`), end in any element
+/// (`tab_trailing`, e.g. a [`CountBadge`](super::CountBadge)) and carry a dev-driver probe
+/// (`tab_probe`); those three apply to the tab added last.
 #[derive(IntoElement)]
 pub struct Tabs {
     id: ElementId,
-    tabs: Vec<(SharedString, Option<SharedString>)>,
+    tabs: Vec<TabSpec>,
     selected: usize,
     flush: bool,
     on_select: Option<ValueHandler<usize>>,
+}
+
+/// One tab of a [`Tabs`] bar.
+struct TabSpec {
+    label: SharedString,
+    count: Option<SharedString>,
+    icon: Option<IconName>,
+    trailing: Option<AnyElement>,
+    probe: Option<SharedString>,
+}
+
+impl TabSpec {
+    fn new(label: SharedString, count: Option<SharedString>) -> Self {
+        Self { label, count, icon: None, trailing: None, probe: None }
+    }
 }
 
 impl Tabs {
@@ -34,13 +52,37 @@ impl Tabs {
 
     /// Add a tab.
     pub fn tab(mut self, label: impl Into<SharedString>) -> Self {
-        self.tabs.push((label.into(), None));
+        self.tabs.push(TabSpec::new(label.into(), None));
         self
     }
 
     /// Add a tab with a count after its label ("Templates 4").
     pub fn tab_n(mut self, label: impl Into<SharedString>, count: impl Into<SharedString>) -> Self {
-        self.tabs.push((label.into(), Some(count.into())));
+        self.tabs.push(TabSpec::new(label.into(), Some(count.into())));
+        self
+    }
+
+    /// A 14px icon before the label of the tab added last (Board, List).
+    pub fn tab_icon(mut self, name: IconName) -> Self {
+        if let Some(t) = self.tabs.last_mut() {
+            t.icon = Some(name);
+        }
+        self
+    }
+
+    /// Something after the label (and count) of the tab added last: a count badge.
+    pub fn tab_trailing(mut self, el: impl IntoElement) -> Self {
+        if let Some(t) = self.tabs.last_mut() {
+            t.trailing = Some(el.into_any_element());
+        }
+        self
+    }
+
+    /// The dev-driver probe name of the tab added last (`inbox-tab-waiting`).
+    pub fn tab_probe(mut self, name: impl Into<SharedString>) -> Self {
+        if let Some(t) = self.tabs.last_mut() {
+            t.probe = Some(name.into());
+        }
         self
     }
 
@@ -66,11 +108,11 @@ impl Tabs {
 impl RenderOnce for Tabs {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let handles = focus::roving_handles(&self.id, self.tabs.len(), self.selected, window, cx);
-        let tabs: Vec<_> = self
+        let tabs: Vec<AnyElement> = self
             .tabs
             .into_iter()
             .enumerate()
-            .map(|(ix, (label, count))| {
+            .map(|(ix, tab)| {
                 let selected = ix == self.selected;
                 let id = child_id(&self.id, ix);
                 let selector = id.to_string();
@@ -82,6 +124,7 @@ impl RenderOnce for Tabs {
                     window,
                     cx,
                 );
+                let color = faded.fg.unwrap_or(fg);
                 let el = div().id(id).debug_selector(move || selector);
                 let el = focus::track(el, &handles[ix], cx)
                     .flex()
@@ -95,15 +138,21 @@ impl RenderOnce for Tabs {
                     .whitespace_nowrap()
                     .cursor_pointer();
                 let on_select = self.on_select.clone();
-                faded
+                let el = faded
                     .apply(el)
-                    .child(label)
-                    .when_some(count, |d, n| {
+                    .when_some(tab.icon, |d, i| d.child(icon(i, 14., color)))
+                    .child(tab.label)
+                    .when_some(tab.count, |d, n| {
                         d.child(
                             div().text_color(TEXT_MUTED).font_weight(FontWeight::NORMAL).tabular().child(n),
                         )
                     })
-                    .when_some(on_select, |d, f| d.on_click(move |_, w, cx| f(ix, w, cx)))
+                    .children(tab.trailing)
+                    .when_some(on_select, |d, f| d.on_click(move |_, w, cx| f(ix, w, cx)));
+                match tab.probe {
+                    Some(name) => el.probe(name).into_any_element(),
+                    None => el.into_any_element(),
+                }
             })
             .collect();
         // The bar's hairline sits behind the tabs so the selected underline covers it.
@@ -225,7 +274,7 @@ impl RenderOnce for Chip {
 #[derive(IntoElement)]
 pub struct Segmented {
     id: ElementId,
-    options: Vec<(Option<IconName>, SharedString)>,
+    options: Vec<(Option<IconName>, SharedString, Option<SharedString>)>,
     selected: usize,
     small: bool,
     full: bool,
@@ -247,13 +296,21 @@ impl Segmented {
 
     /// Add an option.
     pub fn option(mut self, label: impl Into<SharedString>) -> Self {
-        self.options.push((None, label.into()));
+        self.options.push((None, label.into(), None));
         self
     }
 
     /// Add an option with a 14px icon before its label.
     pub fn icon_option(mut self, icon: IconName, label: impl Into<SharedString>) -> Self {
-        self.options.push((Some(icon), label.into()));
+        self.options.push((Some(icon), label.into(), None));
+        self
+    }
+
+    /// The dev-driver probe name of the option added last (`insp-tools-access-read`).
+    pub fn option_probe(mut self, name: impl Into<SharedString>) -> Self {
+        if let Some(o) = self.options.last_mut() {
+            o.2 = Some(name.into());
+        }
         self
     }
 
@@ -294,7 +351,7 @@ impl RenderOnce for Segmented {
             .options
             .into_iter()
             .enumerate()
-            .map(|(ix, (ic, label))| {
+            .map(|(ix, (ic, label, probe))| {
                 let selected = ix == self.selected;
                 let id = child_id(&self.id, ix);
                 let selector = id.to_string();
@@ -321,11 +378,15 @@ impl RenderOnce for Segmented {
                     .when(self.full, |d| d.flex_1())
                     .when(!self.full, |d| d.flex_none());
                 let on_select = self.on_select.clone();
-                faded
+                let el = faded
                     .apply(el)
                     .when_some(ic, |d, i| d.child(icon(i, 14., color)))
                     .child(label)
-                    .when_some(on_select, |d, f| d.on_click(move |_, w, cx| f(ix, w, cx)))
+                    .when_some(on_select, |d, f| d.on_click(move |_, w, cx| f(ix, w, cx)));
+                match probe {
+                    Some(name) => el.probe(name).into_any_element(),
+                    None => el.into_any_element(),
+                }
             })
             .collect();
         let root = div().id(self.id);

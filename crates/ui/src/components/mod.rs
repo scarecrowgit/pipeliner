@@ -30,12 +30,12 @@ pub use containers::{
 pub use controls::{Checkbox, Radio, RadioGroup, SelectBox, Stepper, Toggle};
 pub use fields::{Field, InputFrame};
 pub use identity::{Avatar, Code, Tile, TileTone};
-pub use lists::{ListItem, MenuItem, NavItem, PopLabel, PopSeparator};
+pub use lists::{HintTone, ListItem, MenuItem, NavItem, PopLabel, PopSeparator};
 pub use status::{
     Badge, BadgeTone, CountBadge, CountTone, KeyHints, Kbd, Progress, ProgressTone, RuleChip,
     SpawnChip, Status, StatusDot, Tag, TagTone,
 };
-pub use table::{Align, Column, Table, TableRow};
+pub use table::{Align, Column, SortDirection, Table, TableRow, next_sort};
 pub use crate::tooltip::Tooltip;
 pub(crate) use controls::radio_dot;
 

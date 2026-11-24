@@ -192,8 +192,8 @@ fn compact() -> Div {
         .child(div().mt(px(SPACE_4)).child(heading("Compact, in a popover", "with a spawned row")))
         .child(
             ValueBars::new([
-                ValueRow::new("Payments lead", 1.12),
-                ValueRow::new("Migration checker", 0.44).spawn(),
+                ValueRow::new("Payments lead", 1.12).probe("spend-payments-lead"),
+                ValueRow::new("Migration checker", 0.44).spawn().probe("spend-migration-checker"),
                 ValueRow::new("Log digger", 0.02).spawn(),
                 ValueRow::new("Build", 0.62),
             ])
@@ -338,6 +338,8 @@ fn pipeline_canvas() -> Div {
         Edge::new(out("analyst", 0), input("spec")),
         Edge::new(out("spec", 0), input("review")),
         Edge::new(out("review", 0), input("pr")),
+        // Sent back, on the selected path: the back edge's loop and dots, in accent.
+        Edge::new(out("review", 0), input("fixer")).kind(EdgeKind::SelectedBack),
     ]);
     // Open PR to Update Jira: straight down from the middle of one to the middle of the other.
     let pr = frames.iter().find(|(i, _)| *i == "pr").map(|(_, f)| f.shape());

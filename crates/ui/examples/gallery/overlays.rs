@@ -10,6 +10,36 @@ use super::{Gallery, caption, group, variants};
 /// Builds a dialog's content each frame.
 type BuildFn = dyn Fn(&mut Window, &mut App) -> AnyElement;
 
+/// A view the caller owns, opened as a dialog layer: its `Dialog` closes itself, and the
+/// owner hears about it.
+struct ViewDialog {
+    closes: usize,
+}
+
+impl gpui::Render for ViewDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Dialog::new("ov-view-dlg", "Search chats")
+            .subtitle(format!("A caller-owned view · closed {} times", self.closes))
+            .width(480.)
+            .child(div().type_style(BODY).text_color(TEXT_SECONDARY).child("The close button, Escape and Cancel close this layer."))
+            .cancel_button()
+    }
+}
+
+fn open_view_dialog(window: &mut Window, cx: &mut App) {
+    let view = cx.new(|_| ViewDialog { closes: 0 });
+    let owner = view.downgrade();
+    overlays(window, cx).open_dialog_view(
+        "ov-view-dlg",
+        view,
+        move |_, cx| {
+            owner.update(cx, |v, _| v.closes += 1).ok();
+        },
+        window,
+        cx,
+    );
+}
+
 fn new_menu(_: &mut Window, _: &mut App) -> Menu {
     let it = |id: &'static str, icon: IconName, tone: TileTone, name: &'static str, desc: &'static str, key: &'static str| {
         MenuItem::new(id, name).tile(Tile::new(icon).tone(tone).medium()).subline(desc).kbd(key)
@@ -321,7 +351,8 @@ impl Gallery {
             .child(dialog_button("ov-send", "Send back…", Box::new(send_back_dialog(me.clone()))))
             .child(dialog_button("ov-issue", "New issue…", Box::new(new_issue_dialog)))
             .child(dialog_button("ov-deploy", "Deploy v15…", Box::new(deploy_dialog(me.clone()))))
-            .child(Button::new("ov-delete", "Delete…").danger().on_click(|_, window, cx| delete_dialog(window, cx)).probe("ov-delete"));
+            .child(Button::new("ov-delete", "Delete…").danger().on_click(|_, window, cx| delete_dialog(window, cx)).probe("ov-delete"))
+            .child(Button::new("ov-view", "Dialog view…").ghost().on_click(|_, window, cx| open_view_dialog(window, cx)).probe("ov-view"));
         let toast = {
             let me = me.clone();
             row()

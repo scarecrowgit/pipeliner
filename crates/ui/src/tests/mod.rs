@@ -1,5 +1,6 @@
 //! Tests of the kit: the GPUI test harness itself, and clicks on every interactive component.
 
+mod additions;
 mod interactions;
 mod keyboard;
 mod overlays;

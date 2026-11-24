@@ -35,7 +35,9 @@ mod tests;
 #[cfg(test)]
 mod window_tests;
 
-pub use edges::{Edge, EdgeKind, EdgeLabel, EdgeShape, Edges, hit_edge};
+pub use edges::{
+    BACK_DASH, EDGE_STROKE, Edge, EdgeKind, EdgeLabel, EdgeShape, Edges, SPAWN_DASH, hit_edge, paint_curve,
+};
 pub use geometry::{
     BODY_PADDING, Cubic, Curve, GRID_UNIT, HEADER_HEIGHT, HEADER_PORT_Y, NODE_WIDTH, NodePorts,
     NodeShape, Outputs, PORT_HIT_RADIUS, PORT_SIZE, PortHit, PortSide, ROW_HEIGHT, back_curve,

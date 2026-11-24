@@ -6,7 +6,7 @@
 //!   `LABEL`…) applied with `.type_style(BODY)`.
 //! - [`assets`]: the embedded icons and [`icon`](assets::icon).
 //! - [`layout`]: `row`, `col`, `hr`, `vr`, `grow`, `truncate`: the layout traps of this GPUI
-//!   version fixed once.
+//!   version fixed once; [`truncate`](mod@truncate): styled and middle-cut one-line text.
 //! - [`motion`]: hover fades, popup presence, reduced motion.
 //! - [`components`]: the Graphite components as `RenderOnce` builders.
 //! - [`overlay`]: the overlay host at the root of each window and the [`overlays`] handle
@@ -31,6 +31,7 @@ pub mod popover;
 pub mod theme;
 pub mod toast;
 pub mod tooltip;
+pub mod truncate;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +52,10 @@ pub mod prelude {
     pub use crate::components::*;
     pub use crate::dialog::{ConfirmInput, Dialog, OptionCard, OptionGroup};
     pub use crate::keys;
-    pub use crate::layout::{col, grow, hr, row, truncate, truncate_block, truncate_lh, vr};
+    pub use crate::layout::{
+        col, grow, hr, row, truncate, truncate_block, truncate_lh, truncate_middle, truncate_styled,
+        truncate_styled_block, vr,
+    };
     pub use crate::menu::Menu;
     pub use crate::motion;
     pub use crate::overlay::{Anchor, Placement, PopoverAnchorExt, overlays};

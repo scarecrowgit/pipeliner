@@ -58,6 +58,18 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+/// Tests: record probes in this process, as dev mode does.
+#[cfg(test)]
+pub(crate) fn enable_for_tests() {
+    ENABLED.store(true, Ordering::SeqCst);
+}
+
+/// Tests: a probe named `name` was drawn in the last frame.
+#[cfg(test)]
+pub(crate) fn probe_drawn(name: &str) -> bool {
+    probe::find(name, None).is_some()
+}
+
 /// Start the dev driver if [`SOCKET_ENV`] is set; otherwise do nothing. Call once after
 /// `ui::init`. A second call is a no-op.
 pub fn install(cx: &mut App) {

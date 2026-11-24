@@ -14,7 +14,7 @@ use crate::keys::{self, Confirm, MoveDown, MoveFirst, MoveLast, MoveUp};
 use crate::overlay::{LayerId, current_layer, overlays};
 
 enum Entry {
-    Item(MenuItem),
+    Item(Box<MenuItem>),
     Label(PopLabel),
     Separator,
     Other(AnyElement),
@@ -53,13 +53,13 @@ impl Menu {
 
     /// Add a row.
     pub fn item(mut self, item: MenuItem) -> Self {
-        self.entries.push(Entry::Item(item));
+        self.entries.push(Entry::Item(Box::new(item)));
         self
     }
 
     /// Add rows.
     pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
-        self.entries.extend(items.into_iter().map(Entry::Item));
+        self.entries.extend(items.into_iter().map(|i| Entry::Item(Box::new(i))));
         self
     }
 
@@ -264,9 +264,12 @@ impl RenderOnce for Menu {
                         let activate = activate.clone();
                         item.on_click = Some(Rc::new(move |_, w, cx| activate(i, w, cx)));
                     }
-                    // A dev-driver probe named after the row's id, so scripts can click it.
-                    let name = item.id.to_string();
-                    crate::dev::Probe::probe(item, name).into_any_element()
+                    // A dev-driver probe named after the row's id (unless the row names one),
+                    // so scripts can click it.
+                    if item.probe.is_none() {
+                        item.probe = Some(item.id.to_string().into());
+                    }
+                    (*item).into_any_element()
                 }
                 Entry::Label(l) => l.into_any_element(),
                 Entry::Separator => PopSeparator.into_any_element(),

@@ -16,7 +16,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub use card::DiffCard;
+pub use card::{DiffCard, DiffCardState};
 pub use highlight::{MAX_EMPHASIS_LINE, Marks, emphasis};
 pub use model::{
     DiffEmpty, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffRow, MAX_LINE, diff_rows,

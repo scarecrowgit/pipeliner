@@ -8,9 +8,44 @@ use gpui::{
 };
 
 use super::{ClickHandler, child_id};
+use crate::assets::{IconName, icon};
+use crate::dev::Probe;
+use crate::focus;
 use crate::layout::{col, row, truncate_lh};
 use crate::motion::{self, Look};
 use crate::theme::*;
+
+/// Which way a sorted column runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SortDirection {
+    /// Smallest first: an up arrow.
+    #[default]
+    Ascending,
+    /// Largest first: a down arrow.
+    Descending,
+}
+
+impl SortDirection {
+    /// The other direction.
+    pub fn flip(self) -> Self {
+        match self {
+            SortDirection::Ascending => SortDirection::Descending,
+            SortDirection::Descending => SortDirection::Ascending,
+        }
+    }
+}
+
+/// The sort a click on the header of `column` asks for, given the `current` one: the sorted
+/// column flips its direction, another column starts ascending.
+pub fn next_sort(current: Option<(usize, SortDirection)>, column: usize) -> (usize, SortDirection) {
+    match current {
+        Some((c, dir)) if c == column => (column, dir.flip()),
+        _ => (column, SortDirection::Ascending),
+    }
+}
+
+/// A sort request from a [`Table`]: the column index and the direction.
+type SortHandler = Rc<dyn Fn(usize, SortDirection, &mut Window, &mut App) + 'static>;
 
 /// Horizontal alignment of a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -34,12 +69,19 @@ pub struct Column {
     header: SharedString,
     width: Width,
     align: Align,
+    sortable: bool,
 }
 
 impl Column {
     /// A flexible column (ratio 1) headed `header`.
     pub fn new(header: impl Into<SharedString>) -> Self {
-        Self { header: header.into(), width: Width::Flex(1.), align: Align::Left }
+        Self { header: header.into(), width: Width::Flex(1.), align: Align::Left, sortable: false }
+    }
+
+    /// A click on the header asks the table's `on_sort` to sort by this column.
+    pub fn sortable(mut self) -> Self {
+        self.sortable = true;
+        self
     }
 
     /// A fixed width in px.
@@ -118,18 +160,44 @@ enum Entry {
 /// A list of records in a card frame: `surface`, `line` border, `radius-xl`. A 36px header of
 /// 12px muted labels, 48px rows divided by `line-subtle` hairlines, optional group header
 /// rows. Right-align money and counts; put keys and costs in mono columns.
+///
+/// Sorting: headers of [`Column::sortable`] columns are buttons; the sorted one
+/// ([`Table::sorted`]) is in `text` with an arrow for its direction. A click calls
+/// [`Table::on_sort`] with the sort it asks for ([`next_sort`]); the caller sorts the rows.
+/// Header `ix` is probed `<table id>-head-<ix>`.
 #[derive(IntoElement)]
 pub struct Table {
     id: ElementId,
     columns: Vec<Column>,
     entries: Vec<Entry>,
     frameless: bool,
+    sorted: Option<(usize, SortDirection)>,
+    on_sort: Option<SortHandler>,
 }
 
 impl Table {
     /// A table with no columns.
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into(), columns: Vec::new(), entries: Vec::new(), frameless: false }
+        Self {
+            id: id.into(),
+            columns: Vec::new(),
+            entries: Vec::new(),
+            frameless: false,
+            sorted: None,
+            on_sort: None,
+        }
+    }
+
+    /// The rows are sorted by `column` (an index) in `direction`: its header shows the arrow.
+    pub fn sorted(mut self, column: usize, direction: SortDirection) -> Self {
+        self.sorted = Some((column, direction));
+        self
+    }
+
+    /// Called when a sortable header is clicked, with the column and direction to sort by.
+    pub fn on_sort(mut self, f: impl Fn(usize, SortDirection, &mut Window, &mut App) + 'static) -> Self {
+        self.on_sort = Some(Rc::new(f));
+        self
     }
 
     /// Add a column.
@@ -184,6 +252,12 @@ fn cell_box(column: &Column, ix: usize, count: usize, content: AnyElement) -> gp
 impl RenderOnce for Table {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let count = self.columns.len();
+        let heads: Vec<AnyElement> = self
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(ix, c)| head_cell(&self.id, c, ix, count, self.sorted, self.on_sort.clone(), window, cx))
+            .collect();
         let head = row()
             .flex_none()
             .h(px(TABLE_HEAD_HEIGHT))
@@ -192,9 +266,7 @@ impl RenderOnce for Table {
             .type_style(LABEL)
             .text_color(TEXT_MUTED)
             .whitespace_nowrap()
-            .children(self.columns.iter().enumerate().map(|(ix, c)| {
-                cell_box(c, ix, count, div().child(c.header.clone()).into_any_element())
-            }));
+            .children(heads);
         let last = self.entries.len().saturating_sub(1);
         let body: Vec<AnyElement> = self
             .entries
@@ -230,6 +302,46 @@ impl RenderOnce for Table {
             .child(head)
             .children(body)
     }
+}
+
+/// A header cell: a muted label, or for a sortable column a button with the sort arrow.
+#[allow(clippy::too_many_arguments)]
+fn head_cell(
+    table: &ElementId,
+    column: &Column,
+    ix: usize,
+    count: usize,
+    sorted: Option<(usize, SortDirection)>,
+    on_sort: Option<SortHandler>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let label = div().child(column.header.clone());
+    if !column.sortable {
+        return cell_box(column, ix, count, label.into_any_element()).into_any_element();
+    }
+    let direction = sorted.filter(|(c, _)| *c == ix).map(|(_, d)| d);
+    let id = child_id(table, format!("head-{ix}"));
+    let selector = id.to_string();
+    let rest = if direction.is_some() { TEXT } else { TEXT_MUTED };
+    let faded = motion::hover_fade_state(id.clone(), Look::bg(TRANSPARENT).fg(rest), Look::bg(TRANSPARENT).fg(TEXT), window, cx);
+    let color = faded.fg.unwrap_or(rest);
+    let arrow = direction.map(|d| {
+        let name = match d {
+            SortDirection::Ascending => IconName::ArrowUp,
+            SortDirection::Descending => IconName::ArrowDown,
+        };
+        icon(name, 12., color)
+    });
+    let content = row().gap(px(SPACE_1)).child(label).children(arrow).into_any_element();
+    let el = cell_box(column, ix, count, content).id(id).debug_selector(move || selector);
+    let el = faded.apply(focus::tab_stop(el, false, cx)).cursor_pointer().when_some(on_sort, |d, f| {
+        d.on_click(move |_, window, cx| {
+            let (column, direction) = next_sort(sorted, ix);
+            f(column, direction, window, cx)
+        })
+    });
+    el.probe(format!("{table}-head-{ix}")).into_any_element()
 }
 
 fn render_row(

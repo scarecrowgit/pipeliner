@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gpui::{App, Context, Entity, IntoElement, Render, SharedString, Window, div, prelude::*, px};
 use ui::prelude::*;
-use ui_rich::diff_view::{DiffCard, DiffFile, DiffHunk, DiffLine, DiffLineKind};
+use ui_rich::diff_view::{DiffCard, DiffCardState, DiffFile, DiffHunk, DiffLine, DiffLineKind};
 use ui_rich::markdown::{self, Markdown};
 
 const MESSAGE: &str = r#"# Fix double charge on retry
@@ -182,6 +182,8 @@ struct Demo {
     files: Vec<Arc<DiffFile>>,
     page: usize,
     log: Option<SharedString>,
+    /// The long edit's fold state, kept here as a virtualised list would keep it.
+    long_edit: DiffCardState,
 }
 
 impl Demo {
@@ -221,6 +223,7 @@ impl Demo {
             files,
             page: 0,
             log: None,
+            long_edit: DiffCardState::default(),
         }
     }
 }
@@ -273,13 +276,21 @@ impl Render for Demo {
                             .collapse_after(12)
                             .footer(lsp),
                     )
-                    .child(
+                    .child({
+                        let me = cx.entity();
                         DiffCard::new("long-edit", self.files[4].clone())
                             .label("edit")
                             .compact()
                             .collapsible()
-                            .collapse_after(8),
-                    )
+                            .collapse_after(8)
+                            // The state lives in the demo, not the card.
+                            .state(self.long_edit, move |next, _, cx| {
+                                me.update(cx, |d, cx| {
+                                    d.long_edit = next;
+                                    cx.notify();
+                                })
+                            })
+                    })
                     .child(div().type_style(HEADING).child("Review card (Inbox)"))
                     .child(
                         DiffCard::new("review", reviewed)

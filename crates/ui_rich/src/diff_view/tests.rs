@@ -299,3 +299,57 @@ fn cards_render_collapse_and_expand(cx: &mut TestAppContext) {
     let collapsed = next_y(cx);
     assert!(collapsed < limited, "collapsed: {limited} -> {collapsed}");
 }
+
+/// A list row that may scroll away: the card's state lives here, not in the card.
+struct HeldHost {
+    file: Arc<DiffFile>,
+    state: DiffCardState,
+    shown: bool,
+}
+
+impl Render for HeldHost {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let card = self.shown.then(|| {
+            let me = cx.entity();
+            DiffCard::new("held", self.file.clone())
+                .collapsible()
+                .collapse_after(12)
+                .state(self.state, move |next, _, cx| {
+                    me.update(cx, |h, cx| {
+                        h.state = next;
+                        cx.notify();
+                    })
+                })
+        });
+        ui::root().child(div().w(px(720.)).flex().flex_col().children(card))
+    }
+}
+
+#[gpui::test]
+fn a_card_can_leave_its_fold_state_with_the_caller(cx: &mut TestAppContext) {
+    ui::motion::set_reduced(true);
+    cx.update(ui::init);
+    let file = Arc::new(big_file(300));
+    let (host, cx) = cx.add_window_view(move |_, _| HeldHost { file, state: DiffCardState::default(), shown: true });
+    cx.run_until_parked();
+    let click = |cx: &mut gpui::VisualTestContext, selector: &'static str| {
+        let b = cx.debug_bounds(selector).unwrap_or_else(|| panic!("no `{selector}`"));
+        cx.simulate_click(b.center(), Modifiers::none());
+        cx.run_until_parked();
+    };
+    click(cx, "held-show-all");
+    assert_eq!(host.read_with(cx, |h, _| h.state), DiffCardState { open: true, expanded: true });
+    // The row scrolls out and back: the card is new, the state is the caller's.
+    host.update(cx, |h, cx| {
+        h.shown = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    host.update(cx, |h, cx| {
+        h.shown = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    click(cx, "held-toggle");
+    assert_eq!(host.read_with(cx, |h, _| h.state), DiffCardState { open: false, expanded: true });
+}

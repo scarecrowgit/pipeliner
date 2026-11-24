@@ -1,6 +1,7 @@
 //! Text editing preview: a `TextArea` in each submit mode, a `TextInput` in an input frame,
-//! disabled fields, a long pre-filled text, and a live readout of events, selection and the
-//! `@` / `/` token before the caret.
+//! disabled fields, a long pre-filled text, form fields that Tab through, a literal-tab
+//! area, styled ranges, and a live readout of events, selection and the `@` / `/` token
+//! before the caret.
 //!
 //! `cargo run -p ui_rich --example text`
 
@@ -9,6 +10,7 @@ use gpui::{
     px,
 };
 use ui::prelude::*;
+use ui_rich::text::StyledRange;
 use ui_rich::{
     SubmitOn, TextArea, TextAreaEvent, TextInput, TextInputEvent, text_area_field, text_field,
 };
@@ -51,6 +53,15 @@ impl Demo {
         let search = cx.new(|cx| TextInput::new(cx).placeholder("Search issues"));
         let off = cx.new(|cx| TextInput::new(cx).with_text("Disabled input"));
         off.update(cx, |i, cx| i.set_disabled(true, cx));
+        // Form fields: Tab moves on instead of completing.
+        let title = cx.new(|cx| TextInput::new(cx).placeholder("Title (Tab moves on)").tab_moves_focus(true));
+        let branch = cx.new(|cx| TextInput::new(cx).with_text("fix/PAY-1423-gone").tab_moves_focus(true));
+        let code = cx.new(|cx| TextArea::new(cx).rows(2, 6).literal_tabs(true).placeholder("Tab types a tab here"));
+        let styled = cx.new(|cx| TextArea::new(cx).rows(1, 4).with_text("Ask @Fixer to batch by 50, then @Reviewer."));
+        styled.update(cx, |a, cx| {
+            let mention = |r: std::ops::Range<usize>| StyledRange::new(r).color(ACCENT_TEXT).background(ACCENT_SOFT);
+            a.set_styles(vec![mention(4..10), mention(32..41)], cx);
+        });
 
         let areas = vec![
             ("composer", composer),
@@ -58,8 +69,10 @@ impl Demo {
             ("notes", notes),
             ("long", long),
             ("disabled area", disabled),
+            ("code", code),
+            ("styled", styled),
         ];
-        let inputs = vec![("search", search), ("disabled input", off)];
+        let inputs = vec![("search", search), ("disabled input", off), ("title", title), ("branch", branch)];
         let mut subs = Vec::new();
         for (name, a) in &areas {
             let name = *name;
@@ -158,6 +171,8 @@ impl Render for Demo {
             "Notes: never sends",
             "Long text: 3 to 8 rows",
             "Disabled",
+            "Literal tabs (Shift+Tab leaves)",
+            "Styled ranges: accepted mentions",
         ];
         let areas = self
             .areas
@@ -190,6 +205,8 @@ impl Render for Demo {
                         ),
                     )
                     .child(Field::new("Disabled input").child(text_field("off", &self.inputs[1].1)))
+                    .child(Field::new("Form field: Tab moves focus").child(text_field("title", &self.inputs[2].1)))
+                    .child(Field::new("Mono, invalid").child(text_field("branch", &self.inputs[3].1).mono().danger(true)))
                     .children(areas),
             )
             .child(

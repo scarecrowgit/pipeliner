@@ -4,12 +4,13 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, Font, Hsla, Pixels, Point, SharedString, TextAlign, TextRun, UnderlineStyle,
-    Window, WrappedLine, point, px, size,
+    App, Bounds, Font, Hsla, Pixels, Point, SharedString, TextAlign, Window, WrappedLine, point,
+    px, size,
 };
 
 use super::buffer::VisualLines;
 use super::segment as seg;
+use super::styles::{StyledRange, runs_for};
 
 /// One logical line (between `\n`s) after shaping.
 struct Logical {
@@ -50,15 +51,17 @@ pub(crate) struct Shaped {
 }
 
 impl Shaped {
-    /// Shape `text` with `look`, wrapping at `wrap_width` when given, underlining `marked`.
+    /// Shape `text` with `look` and its `styles`, wrapping at `wrap_width` when given,
+    /// underlining `marked`.
     pub fn new(
         text: SharedString,
         look: &TextLook,
         marked: Option<Range<usize>>,
+        styles: &[StyledRange],
         wrap_width: Option<Pixels>,
         window: &Window,
     ) -> Self {
-        let runs = runs_for(&text, look, marked);
+        let runs = runs_for(&text, look, marked, styles);
         let lines = window
             .text_system()
             .shape_text(text.clone(), look.font_size, &runs, wrap_width, None)
@@ -229,13 +232,28 @@ impl Shaped {
         out
     }
 
-    /// Paint the text with its top-left at `origin`, only the lines inside `clip`.
-    pub fn paint(
+    /// Paint the backgrounds of styled ranges, with the text's top-left at `origin`, only the
+    /// lines inside `clip`. Before the selection and the text.
+    pub fn paint_background(
         &self,
         origin: Point<Pixels>,
         clip: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
+    ) {
+        self.each_visible_line(origin, clip, |line, at, lh| {
+            // A paint error means a quad could not be drawn; skip the line.
+            let _ = line.paint_background(at, lh, TextAlign::Left, None, window, cx);
+        });
+    }
+
+    /// Calls `f` with each logical line that shows inside `clip`, its top-left and the line
+    /// height.
+    fn each_visible_line(
+        &self,
+        origin: Point<Pixels>,
+        clip: Bounds<Pixels>,
+        mut f: impl FnMut(&WrappedLine, Point<Pixels>, Pixels),
     ) {
         let lh = self.line_height;
         for (ix, l) in self.logical.iter().enumerate() {
@@ -249,16 +267,22 @@ impl Shaped {
             if bottom < clip.top() || top > clip.bottom() {
                 continue;
             }
-            // A paint error means a glyph could not be rasterised; skip the line.
-            let _ = l.line.paint(
-                point(origin.x, top),
-                px(lh),
-                TextAlign::Left,
-                None,
-                window,
-                cx,
-            );
+            f(&l.line, point(origin.x, top), px(lh));
         }
+    }
+
+    /// Paint the text with its top-left at `origin`, only the lines inside `clip`.
+    pub fn paint(
+        &self,
+        origin: Point<Pixels>,
+        clip: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.each_visible_line(origin, clip, |line, at, lh| {
+            // A paint error means a glyph could not be rasterised; skip the line.
+            let _ = line.paint(at, lh, TextAlign::Left, None, window, cx);
+        });
     }
 }
 
@@ -295,33 +319,5 @@ impl VisualLines for Shaped {
             at = seg::prev_grapheme(&self.text, v.range.end).max(v.range.start);
         }
         seg::floor_grapheme(&self.text, at)
-    }
-}
-
-/// One run for the whole text, split to underline the IME composition.
-fn runs_for(text: &str, look: &TextLook, marked: Option<Range<usize>>) -> Vec<TextRun> {
-    let run = |len: usize, underline: bool| TextRun {
-        len,
-        font: look.font.clone(),
-        color: look.color,
-        background_color: None,
-        underline: underline.then_some(UnderlineStyle {
-            color: Some(look.color),
-            thickness: px(1.),
-            wavy: false,
-        }),
-        strikethrough: None,
-    };
-    let len = text.len();
-    match marked {
-        Some(m) if m.start < m.end && m.end <= len => [
-            run(m.start, false),
-            run(m.end - m.start, true),
-            run(len - m.end, false),
-        ]
-        .into_iter()
-        .filter(|r| r.len > 0)
-        .collect(),
-        _ => vec![run(len, false)],
     }
 }

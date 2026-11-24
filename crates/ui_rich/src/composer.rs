@@ -43,8 +43,9 @@ use gpui::{
 use gpui::AppContext as _;
 use ui::overlay::{Anchor, Placement, overlays};
 
-use crate::text::Token;
+use crate::text::{StyledRange, Token};
 use crate::{SubmitOn, TextArea, TextAreaEvent};
+use ui::theme::{ACCENT_SOFT, ACCENT_TEXT};
 
 pub use spans::AttachmentLimits;
 pub use types::{
@@ -228,6 +229,18 @@ impl Composer {
         self.placement = placement;
         self.menu_width = width;
         self
+    }
+
+    /// Builder: the text area grows from `min` to `max` lines, then scrolls (default 1 to 12
+    /// in the chat, 1 to 10 in the issue panel).
+    pub fn rows(self, min: usize, max: usize, cx: &mut Context<Self>) -> Self {
+        self.area.update(cx, |a, cx| a.set_rows(min, max, cx));
+        self
+    }
+
+    /// Change how many lines the text area grows to (see [`rows`](Self::rows)).
+    pub fn set_rows(&mut self, min: usize, max: usize, cx: &mut Context<Self>) {
+        self.area.update(cx, |a, cx| a.set_rows(min, max, cx));
     }
 
     /// Builder: keep text and attachments after a submit (the screen clears them).
@@ -532,9 +545,23 @@ impl Composer {
         cx.notify();
     }
 
+    /// Draw the accepted mentions in the text as the mockups' `.mention`: `accent-text` on
+    /// `accent-soft`.
+    fn style_mentions(&mut self, cx: &mut Context<Self>) {
+        let styles: Vec<StyledRange> = self
+            .mentions
+            .iter()
+            .map(|m| StyledRange::new(m.range.clone()).color(ACCENT_TEXT).background(ACCENT_SOFT))
+            .collect();
+        if self.area.read(cx).styles() != styles.as_slice() {
+            self.area.update(cx, |a, cx| a.set_styles(styles, cx));
+        }
+    }
+
     /// Catch up with the area after any change or caret move: text, then the trigger.
     fn sync(&mut self, cx: &mut Context<Self>) {
         self.sync_text(cx);
+        self.style_mentions(cx);
         let chars: Vec<char> = self.triggers.iter().map(|k| k.char()).collect();
         let token = self.area.read(cx).token_before_cursor(&chars);
         let trigger = token

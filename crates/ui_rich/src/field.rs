@@ -7,11 +7,13 @@ use gpui::{
 };
 use ui::assets::IconName;
 use ui::components::InputFrame;
+use ui::theme::{MONO, TextStyleExt};
 
 use crate::{TextArea, TextInput};
 
 /// A [`TextInput`] in an [`InputFrame`]: leading icon, trailing key cap, accent border and
-/// glow while focused. A press anywhere on the frame focuses the input.
+/// glow while focused, `danger` for an invalid value, `mono` for machine text. A press
+/// anywhere on the frame focuses the input, and nothing behind the frame takes focus back.
 #[derive(IntoElement)]
 pub struct TextField {
     id: ElementId,
@@ -19,6 +21,8 @@ pub struct TextField {
     icon: Option<IconName>,
     kbd: Option<SharedString>,
     small: bool,
+    danger: bool,
+    mono: bool,
 }
 
 /// [`TextField`] for `input`; `id` must be unique among its siblings.
@@ -29,6 +33,8 @@ pub fn text_field(id: impl Into<ElementId>, input: &Entity<TextInput>) -> TextFi
         icon: None,
         kbd: None,
         small: false,
+        danger: false,
+        mono: false,
     }
 }
 
@@ -50,6 +56,36 @@ impl TextField {
         self.small = true;
         self
     }
+
+    /// The `danger` border and halo: the value is invalid.
+    pub fn danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
+    }
+
+    /// The text in mono (ids, paths, expressions).
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+}
+
+/// `editor` as it is, or in a mono wrapper.
+fn mono_wrap(mono: bool, editor: gpui::AnyElement) -> gpui::AnyElement {
+    if mono {
+        div().w_full().min_w_0().type_style(MONO).child(editor).into_any_element()
+    } else {
+        editor
+    }
+}
+
+/// Focus `focus` on a press, and keep the press from reaching the window's fallback focus
+/// (the overlay host) behind the frame, which would take focus straight back.
+fn focus_on_press(el: gpui::Div, focus: impl Fn(&mut Window, &mut App) + 'static) -> gpui::Div {
+    el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+        focus(window, cx);
+        window.prevent_default();
+    })
 }
 
 impl RenderOnce for TextField {
@@ -59,25 +95,28 @@ impl RenderOnce for TextField {
         let disabled = input.is_disabled();
         let frame = InputFrame::new(self.id)
             .focused(focused)
+            .danger(self.danger)
             .when(self.small, |f| f.small())
             .when_some(self.icon, |f, i| f.icon(i))
             .when_some(self.kbd, |f, k| f.kbd(k))
-            .child(self.input.clone());
+            .child(mono_wrap(self.mono, self.input.clone().into_any_element()));
         let target = self.input.clone();
         div().w_full().child(frame).when(!disabled, |d| {
-            d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                target.read(cx).focus(window)
-            })
+            focus_on_press(d, move |window, cx| target.read(cx).focus(window))
         })
     }
 }
 
 /// A [`TextArea`] in a multi-line [`InputFrame`] (the `.textarea` look): at least 72px tall,
-/// text from the top, accent border and glow while focused.
+/// text from the top, accent border and glow while focused, `danger` for an invalid value,
+/// `mono` for machine text. A press anywhere on the frame, the empty space under the text
+/// included, focuses the area.
 #[derive(IntoElement)]
 pub struct TextAreaField {
     id: ElementId,
     area: Entity<TextArea>,
+    danger: bool,
+    mono: bool,
 }
 
 /// [`TextAreaField`] for `area`; `id` must be unique among its siblings.
@@ -85,6 +124,22 @@ pub fn text_area_field(id: impl Into<ElementId>, area: &Entity<TextArea>) -> Tex
     TextAreaField {
         id: id.into(),
         area: area.clone(),
+        danger: false,
+        mono: false,
+    }
+}
+
+impl TextAreaField {
+    /// The `danger` border and halo: the value is invalid.
+    pub fn danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
+    }
+
+    /// The text in mono (prompts with code, expressions).
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
+        self
     }
 }
 
@@ -96,12 +151,11 @@ impl RenderOnce for TextAreaField {
         let frame = InputFrame::new(self.id)
             .multiline()
             .focused(focused)
-            .child(self.area.clone());
+            .danger(self.danger)
+            .child(mono_wrap(self.mono, self.area.clone().into_any_element()));
         let target = self.area.clone();
         div().w_full().child(frame).when(!disabled, |d| {
-            d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                target.read(cx).focus(window)
-            })
+            focus_on_press(d, move |window, cx| target.read(cx).focus(window))
         })
     }
 }

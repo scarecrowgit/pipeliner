@@ -94,6 +94,8 @@ pub(crate) struct Layer {
     pub restore: Option<FocusHandle>,
     pub presence: Presence,
     pub open: bool,
+    /// Called once when the layer closes (any way but being replaced by a reopen).
+    pub on_close: Option<Callback>,
 }
 
 impl Layer {
@@ -187,6 +189,18 @@ impl OverlayHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> LayerId {
+        self.open_layer_with(key, kind, build, None, window, cx)
+    }
+
+    fn open_layer_with(
+        &mut self,
+        key: ElementId,
+        kind: Kind,
+        build: Build,
+        on_close: Option<Callback>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> LayerId {
         let restore = self.restore_target(window, cx);
         // One popover at a time; a dialog also closes open popovers.
         for l in self.layers.iter_mut().filter(|l| l.open && l.is_popover()) {
@@ -203,7 +217,7 @@ impl OverlayHost {
         let mut presence = Presence::default();
         presence.set(true);
         window.focus(&focus);
-        self.layers.push(Layer { id, key, kind, build, focus, restore, presence, open: true });
+        self.layers.push(Layer { id, key, kind, build, focus, restore, presence, open: true, on_close });
         cx.notify();
         id
     }
@@ -218,6 +232,10 @@ impl OverlayHost {
         l.presence.set(false);
         let inside = l.focus.contains_focused(window, cx) || window.focused(cx).is_none();
         let restore = l.restore.take();
+        if let Some(f) = l.on_close.take() {
+            // After this update: the callback may reach the host again (close, reopen).
+            window.defer(cx, move |window, cx| f(window, cx));
+        }
         if inside {
             window.focus(restore.as_ref().unwrap_or(&self.focus));
         }
@@ -442,6 +460,27 @@ impl Overlays {
     ) -> Option<LayerId> {
         let key = id.into();
         self.update(cx, |host, cx| host.open_layer(key, Kind::Dialog, Rc::new(build), window, cx))
+    }
+
+    /// Open a view the caller owns as a dialog layer over the scrim. The view's render
+    /// usually returns a [`Dialog`](crate::dialog::Dialog), which then knows its layer: its
+    /// close button, Escape and Cancel close it. `on_close` runs once the layer closes, however
+    /// that happens (Escape, the close button, a press on the scrim, [`Overlays::close`]), so
+    /// the owner can drop the view or tell its router; it does not run when the same `id` is
+    /// opened again and replaces the layer.
+    pub fn open_dialog_view(
+        &self,
+        id: impl Into<ElementId>,
+        view: impl Into<AnyView>,
+        on_close: impl Fn(&mut Window, &mut App) + 'static,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<LayerId> {
+        let key = id.into();
+        let view: AnyView = view.into();
+        let build: Build = Rc::new(move |_, _| view.clone().into_any_element());
+        let on_close: Callback = Rc::new(on_close);
+        self.update(cx, |host, cx| host.open_layer_with(key, Kind::Dialog, build, Some(on_close), window, cx))
     }
 
     /// Show `toast` at the bottom centre, replacing the one that is up.

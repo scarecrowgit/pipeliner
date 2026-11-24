@@ -39,13 +39,14 @@ pub enum TextInputEvent {
     Up,
     /// Down: move a list selection.
     Down,
-    /// Tab: complete.
+    /// Tab: complete. Not emitted with [`TextInput::tab_moves_focus`]: Tab then moves focus.
     Tab,
 }
 
 /// A single-line editable text field. See the module docs.
 pub struct TextInput {
     core: EditCore,
+    tab_moves_focus: bool,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -55,7 +56,20 @@ impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             core: EditCore::new(Buffer::single_line(""), false, cx),
+            tab_moves_focus: false,
         }
+    }
+
+    /// Builder: Tab moves focus to the next field (as Shift-Tab always moves it back)
+    /// instead of being emitted as [`TextInputEvent::Tab`] for completion. For form fields.
+    pub fn tab_moves_focus(mut self, on: bool) -> Self {
+        self.tab_moves_focus = on;
+        self
+    }
+
+    /// Whether Tab moves focus (see the builder [`tab_moves_focus`](Self::tab_moves_focus)).
+    pub fn set_tab_moves_focus(&mut self, on: bool) {
+        self.tab_moves_focus = on;
     }
 
     /// Builder: muted text shown while empty.
@@ -243,7 +257,14 @@ impl Render for TextInput {
             .on_action(cx.listener(|this, _: &t::SelectDown, _, cx| {
                 core::motion(this, t::Motion::DocEnd, true, cx)
             }))
-            .on_action(cx.listener(|_, _: &t::Tab, _, cx| cx.emit(TextInputEvent::Tab)))
+            .on_action(cx.listener(|this, _: &t::Tab, _, cx| {
+                if this.tab_moves_focus {
+                    // The kit's Tab binding moves focus to the next tab stop.
+                    cx.propagate();
+                } else {
+                    cx.emit(TextInputEvent::Tab);
+                }
+            }))
             .on_action(cx.listener(|_, _: &t::Cancel, _, cx| cx.emit(TextInputEvent::Cancel)))
             .on_action(cx.listener(Self::paste))
             .child(TextElement::new(cx.entity()))

@@ -443,7 +443,8 @@ impl Typed {
 
 /// The closed trigger of a select: the value, a chevron and an optional leading icon. The
 /// popup that opens from it is the view's job (a menu popover); this is only the box. 32px
-/// tall, or `small` 28px.
+/// tall, or `small` 28px. `mono` shows machine values (a model id, a branch) in mono;
+/// `danger` is the invalid state (a value that no longer exists).
 #[derive(IntoElement)]
 pub struct SelectBox {
     id: ElementId,
@@ -452,6 +453,8 @@ pub struct SelectBox {
     small: bool,
     placeholder: bool,
     open: bool,
+    mono: bool,
+    danger: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -465,8 +468,22 @@ impl SelectBox {
             small: false,
             placeholder: false,
             open: false,
+            mono: false,
+            danger: false,
             on_click: None,
         }
+    }
+
+    /// The value in mono (`.select .v.mono`): ids, branches, models.
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+
+    /// The invalid state: a `danger` border, open or not.
+    pub fn danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
     }
 
     /// A 14px muted icon before the value.
@@ -509,7 +526,11 @@ impl RenderOnce for SelectBox {
         };
         let border = motion::fade_color(
             child_id(&self.id, "border"),
-            if self.open { ACCENT } else { LINE_STRONG },
+            match (self.danger, self.open) {
+                (true, _) => DANGER,
+                (false, true) => ACCENT,
+                (false, false) => LINE_STRONG,
+            },
             window,
             cx,
         );
@@ -528,7 +549,7 @@ impl RenderOnce for SelectBox {
             .type_style(text)
             .cursor_pointer()
             .when_some(self.icon, |d, i| d.child(icon(i, 14., TEXT_MUTED)))
-            .child(truncate_lh(self.value, lh))
+            .child(truncate_lh(self.value, lh).when(self.mono, |d| d.type_style(TypeStyle { line: lh, ..MONO })))
             .child(icon(IconName::ChevronDown, 12., TEXT_MUTED))
             .when_some(self.on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
     }

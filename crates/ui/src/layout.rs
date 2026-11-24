@@ -11,6 +11,10 @@ use gpui::{Div, SharedString, Styled, div, prelude::*, px};
 
 use crate::theme::{BODY, LINE};
 
+pub use crate::truncate::{
+    clamp_styled, clean_highlights, middle_cut, truncate_middle, truncate_styled, truncate_styled_block,
+};
+
 /// A horizontal flex row with vertically centred children that may shrink.
 ///
 /// Unlike the CSS `.row` it has no gap; set `.gap(px(SPACE_2))` where one is wanted.

@@ -26,6 +26,7 @@ struct Gallery {
     dlg_option: usize,
     dlg_steps: i32,
     dlg_rollout: usize,
+    sort: (usize, SortDirection),
 }
 
 impl Render for Gallery {
@@ -47,7 +48,7 @@ impl Render for Gallery {
                         .child(self.containers())
                         .child(self.identity())
                         .child(self.lists())
-                        .child(self.table())
+                        .child(self.table(cx))
                         .child(self.fields()),
                 ),
         )
@@ -119,6 +120,8 @@ impl Gallery {
             ("kbd", btn("b-kbd", "Ship A").primary().kbd("⌘↵").into_any_element()),
             ("disabled", btn("b-disabled", "Deploy v15").primary().disabled(true).into_any_element()),
             ("selected", btn("b-selected", "Pinned").selected(true).into_any_element()),
+            ("trailing icon", btn("b-trailing", "New").primary().icon(IconName::Plus).trailing_icon(IconName::ChevronDown).into_any_element()),
+            ("keeps focus", btn("b-keep", "Undo").ghost().icon(IconName::Undo).focus_on_click(false).into_any_element()),
         ]);
         let small = variants(vec![
             ("sm primary", btn("s-primary", "Add rule").primary().small().icon(IconName::Plus).into_any_element()),
@@ -137,6 +140,8 @@ impl Gallery {
             ("rail current", IconButton::new("i-rail-cur", IconName::Inbox).rail().current(true).count("4").into_any_element()),
             ("rail pip", IconButton::new("i-rail-pip", IconName::Chat).rail().pip(WARNING).into_any_element()),
             ("disabled", IconButton::new("i-dis", IconName::Trash).disabled(true).into_any_element()),
+            ("keeps focus", IconButton::new("i-redo", IconName::Redo).focus_on_click(false).tooltip("Redo").into_any_element()),
+            ("new icons", row().gap(px(SPACE_2)).children([IconName::Undo, IconName::Redo, IconName::Stop, IconName::ArrowUp, IconName::ArrowDown].map(|i| icon(i, 16., TEXT_SECONDARY))).into_any_element()),
         ]);
         let links = row()
             .gap(px(SPACE_4))
@@ -144,7 +149,7 @@ impl Gallery {
             .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(format!("{} clicks on buttons", self.clicks)));
         group(
             "Actions",
-            "Button, IconButton, Link: primary once per view; ghost, secondary, then danger last.",
+            "Button, IconButton, Link: primary once per view; ghost, secondary, then danger last. Trailing icons for menu buttons; `focus_on_click(false)` for header and toolbar buttons.",
             col().gap(px(SPACE_4)).child(buttons).child(small).child(icons).child(links),
         )
     }
@@ -167,6 +172,7 @@ fn main() {
             dlg_option: 0,
             dlg_steps: 2,
             dlg_rollout: 0,
+            sort: (0, SortDirection::Ascending),
         })
     });
 }

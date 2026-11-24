@@ -25,9 +25,25 @@ impl Gallery {
             .tab("Settings")
             .selected(self.tab)
             .on_select(set(|g, ix| g.tab = ix));
+        let icon_tabs = Tabs::new("tabs-icons")
+            .tab("Board")
+            .tab_icon(IconName::Issues)
+            .tab_probe("tabs-board")
+            .tab("List")
+            .tab_icon(IconName::Filter)
+            .tab("Problems")
+            .tab_trailing(CountBadge::new("2").tone(CountTone::Danger))
+            .selected(self.tab.min(2))
+            .on_select(set(|g, ix| g.tab = ix));
 
         let seg = |id: &'static str, selected: usize, f: fn(&mut Gallery, usize)| {
-            Segmented::new(id).option("Day").option("Week").option("Month").selected(selected).on_select(set(f))
+            Segmented::new(id)
+                .option("Day")
+                .option_probe(format!("{id}-day"))
+                .option("Week")
+                .option("Month")
+                .selected(selected)
+                .on_select(set(f))
         };
         let segs = variants(vec![
             ("default", seg("seg", self.seg, |g, ix| g.seg = ix).into_any_element()),
@@ -104,14 +120,17 @@ impl Gallery {
             ("small", col().w(px(180.)).child(SelectBox::new("sel-sm", "Any priority").small()).into_any_element()),
             ("placeholder", col().w(px(220.)).child(SelectBox::new("sel-ph", "Choose a repo").placeholder(true)).into_any_element()),
             ("open", col().w(px(220.)).child(SelectBox::new("sel-open", "Claude Sonnet").open(true)).into_any_element()),
+            ("mono", col().w(px(180.)).child(SelectBox::new("sel-mono", "opus-5.5").mono().small()).into_any_element()),
+            ("danger", col().w(px(220.)).child(SelectBox::new("sel-danger", "main-old").icon(IconName::Branch).mono().danger(true)).into_any_element()),
         ]);
         group(
             "Choice",
-            "Tabs (with counts), Chip, Segmented, Toggle, Checkbox, Radio, Stepper, SelectBox.",
+            "Tabs (with counts, icons, trailing badges, per-tab probes), Chip, Segmented (per-option probes), Toggle, Checkbox, Radio, Stepper, SelectBox (mono, danger).",
             col()
                 .gap(px(SPACE_4))
                 .child(caption("Tabs"))
                 .child(tabs)
+                .child(icon_tabs)
                 .child(caption("Segmented"))
                 .child(segs)
                 .child(caption("Chips"))
@@ -144,7 +163,19 @@ impl Gallery {
             .child(row().w(px(320.)).child(div_fill(
                 Field::new("Model").child(SelectBox::new("f-2", "Claude Sonnet")).into_any_element(),
             )));
-        group("Fields", "Field (label above a control) and InputFrame (the static look of `.input`; the editable input goes inside it).", col().gap(px(SPACE_4)).child(inputs).child(fields))
+        let mark = gpui::HighlightStyle { color: Some(ACCENT_TEXT), background_color: Some(ACCENT_SOFT), ..Default::default() };
+        let strong = gpui::HighlightStyle { font_weight: Some(gpui::FontWeight::MEDIUM), color: Some(TEXT), ..Default::default() };
+        let cut = |el: AnyElement| row().w(px(220.)).px(px(SPACE_2)).border_1().border_color(LINE).rounded(px(RADIUS_MD)).child(el).into_any_element();
+        let truncation = variants(vec![
+            ("truncate_middle", cut(truncate_middle("~/code/acme/services/payments-api/fix-PAY-1423", BODY.line).font_family(FONT_MONO).text_color(TEXT_SECONDARY).into_any_element())),
+            ("middle, no slash", cut(truncate_middle("run-2026-11-24-0f3a9c1e-replay-of-nightly-audit", BODY.line).into_any_element())),
+            ("truncate_styled", cut(truncate_styled("Retry the charge once the gateway is back", [(0..5, mark), (10..16, strong)], BODY.line).text_color(TEXT_SECONDARY).into_any_element())),
+        ]);
+        group(
+            "Fields",
+            "Field (label above a control) and InputFrame (the static look of `.input`; the editable input goes inside it). One-line text: middle-cut paths and styled text that ends in an ellipsis.",
+            col().gap(px(SPACE_4)).child(inputs).child(fields).child(truncation),
+        )
     }
 }
 

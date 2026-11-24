@@ -10,11 +10,12 @@ use super::geometry::{Curve, back_curve, is_finite, route_curve};
 use super::viewport::Viewport;
 
 /// Stroke width of an edge, in canvas units.
-const STROKE: f32 = 1.5;
+pub const EDGE_STROKE: f32 = 1.5;
+const STROKE: f32 = EDGE_STROKE;
 /// Dash and gap of a spawn edge, in canvas units (`stroke-dasharray="5 4"`).
-const SPAWN_DASH: [f32; 2] = [5.0, 4.0];
-/// Dash and gap of a back edge.
-const BACK_DASH: [f32; 2] = [2.0, 3.0];
+pub const SPAWN_DASH: [f32; 2] = [5.0, 4.0];
+/// Dash and gap of a back edge, in canvas units.
+pub const BACK_DASH: [f32; 2] = [2.0, 3.0];
 /// Opacity of a dimmed edge (`opacity=".6"`).
 const DIM_OPACITY: f32 = 0.6;
 /// Label pill: height, side padding and the width of the box it is centred in (units).
@@ -37,6 +38,8 @@ pub enum EdgeKind {
     /// Work sent back (a review that rejects): the curve loops round below the nodes,
     /// drawn dotted.
     Back,
+    /// A back edge on the selected path: the back edge's loop and dots, in accent.
+    SelectedBack,
 }
 
 impl EdgeKind {
@@ -44,7 +47,7 @@ impl EdgeKind {
     pub fn color(self) -> Hsla {
         match self {
             EdgeKind::Route | EdgeKind::Back => LINE_STRONG,
-            EdgeKind::Selected => ACCENT,
+            EdgeKind::Selected | EdgeKind::SelectedBack => ACCENT,
             EdgeKind::Spawn => SPAWN_LINE,
             EdgeKind::Dim => LINE_STRONG.opacity(DIM_OPACITY),
         }
@@ -54,7 +57,7 @@ impl EdgeKind {
     pub fn dash(self) -> Option<[f32; 2]> {
         match self {
             EdgeKind::Spawn => Some(SPAWN_DASH),
-            EdgeKind::Back => Some(BACK_DASH),
+            EdgeKind::Back | EdgeKind::SelectedBack => Some(BACK_DASH),
             _ => None,
         }
     }
@@ -66,7 +69,7 @@ impl EdgeKind {
             EdgeKind::Route => 1,
             EdgeKind::Back => 2,
             EdgeKind::Spawn => 3,
-            EdgeKind::Selected => 4,
+            EdgeKind::Selected | EdgeKind::SelectedBack => 4,
         }
     }
 }
@@ -124,7 +127,9 @@ impl Edge {
     pub fn curve(&self) -> Curve {
         match (self.shape, self.kind) {
             (EdgeShape::Vertical, _) => Curve::Line(self.from, self.to),
-            (EdgeShape::Curve, EdgeKind::Back) => Curve::Cubic(back_curve(self.from, self.to)),
+            (EdgeShape::Curve, EdgeKind::Back | EdgeKind::SelectedBack) => {
+                Curve::Cubic(back_curve(self.from, self.to))
+            }
             (EdgeShape::Curve, _) => Curve::Cubic(route_curve(self.from, self.to)),
         }
     }
@@ -223,7 +228,7 @@ impl RenderOnce for EdgeLabel {
     }
 }
 
-/// Stroke `curve` through `viewport` into the window, relative to `origin` on screen.
+/// Stroke `edge` through `viewport` into the window, relative to `origin` on screen.
 fn paint_edge(
     window: &mut Window,
     viewport: Viewport,
@@ -233,15 +238,29 @@ fn paint_edge(
     if !is_finite(edge.from) || !is_finite(edge.to) {
         return;
     }
+    paint_curve(window, viewport, origin, edge.curve(), edge.kind.color(), edge.kind.dash());
+}
+
+/// Stroke `curve` (canvas units) through `viewport` into the window, relative to `origin` on
+/// screen, `EDGE_STROKE` wide, solid or with `dash` and gap (canvas units): an edge drawn
+/// over the others, such as the one being connected. Call it from a `canvas` paint.
+pub fn paint_curve(
+    window: &mut Window,
+    viewport: Viewport,
+    origin: Point<gpui::Pixels>,
+    curve: Curve,
+    color: Hsla,
+    dash: Option<[f32; 2]>,
+) {
     let at = |p: Point<f32>| {
         let s = viewport.to_screen(p);
         point(origin.x + px(s.x), origin.y + px(s.y))
     };
     let mut path = PathBuilder::stroke(viewport.z(STROKE));
-    if let Some([dash, gap]) = edge.kind.dash() {
+    if let Some([dash, gap]) = dash {
         path = path.dash_array(&[viewport.z(dash), viewport.z(gap)]);
     }
-    match edge.curve() {
+    match curve {
         Curve::Cubic(c) => {
             path.move_to(at(c.p0));
             path.cubic_bezier_to(at(c.p3), at(c.p1), at(c.p2));
@@ -253,7 +272,7 @@ fn paint_edge(
     }
     // A path with no length fails to build; there is nothing to draw then.
     if let Ok(path) = path.build() {
-        window.paint_path(path, edge.kind.color());
+        window.paint_path(path, color);
     }
 }
 

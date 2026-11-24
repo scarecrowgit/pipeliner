@@ -5,6 +5,7 @@
 mod composer;
 mod composer_spans;
 mod geometry;
+mod tab_stops;
 mod text_area;
 mod text_input;
 

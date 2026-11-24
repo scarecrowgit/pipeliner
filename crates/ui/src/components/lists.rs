@@ -3,13 +3,15 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, IntoElement, RenderOnce, SharedString, Window,
-    div, prelude::*, px,
+    AnyElement, App, ClickEvent, ElementId, FontWeight, HighlightStyle, Hsla, IntoElement, RenderOnce,
+    SharedString, Window, div, prelude::*, px,
 };
 
-use super::{ClickHandler, CountBadge, Kbd, Status, StatusDot, Tag};
+use super::{ClickHandler, CountBadge, Kbd, Status, StatusDot, Tag, child_id};
 use crate::assets::{IconName, icon};
-use crate::layout::{col, grow, row, truncate_block, truncate_lh};
+use crate::dev::Probe;
+use crate::layout::{col, grow, row, truncate_block, truncate_lh, truncate_styled_block};
+use crate::tooltip::Tooltip;
 use crate::motion::{self, Look};
 use crate::theme::*;
 
@@ -108,6 +110,7 @@ pub struct ListItem {
     meta: Option<SharedString>,
     current: bool,
     spawned: bool,
+    actions: Option<AnyElement>,
     on_click: Option<ClickHandler>,
 }
 
@@ -121,8 +124,17 @@ impl ListItem {
             meta: None,
             current: false,
             spawned: false,
+            actions: None,
             on_click: None,
         }
+    }
+
+    /// Controls shown at the right while the pointer is over the row, in place of the meta
+    /// (the sidebar chat's pin and archive buttons: small [`IconButton`](super::IconButton)s).
+    /// A click on them does not reach the row's `on_click`.
+    pub fn hover_actions(mut self, actions: impl IntoElement) -> Self {
+        self.actions = Some(actions.into_any_element());
+        self
     }
 
     /// A status dot before the label.
@@ -168,6 +180,18 @@ impl RenderOnce for ListItem {
         };
         let selector = self.id.to_string();
         let faded = motion::hover_fade_state(self.id.clone(), rest, hover, window, cx);
+        let actions_id = child_id(&self.id, "actions");
+        let actions = self.actions.filter(|_| motion::hovered(self.id.clone(), window, cx)).map(|a| {
+            // Clicks on the controls stop here, so the row does not open as well.
+            div()
+                .id(actions_id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(a)
+        });
+        let meta = if actions.is_some() { None } else { self.meta };
         let (h, lh, text) = if spawned {
             (LIST_ITEM_CHILD_HEIGHT, LABEL.line, LABEL)
         } else {
@@ -202,7 +226,8 @@ impl RenderOnce for ListItem {
             })
             .when_some(self.dot, |d, s| d.child(div().mx(px(1.)).child(StatusDot::new(s))))
             .child(truncate_lh(self.label, lh))
-            .when_some(self.meta, |d, m| {
+            .children(actions)
+            .when_some(meta, |d, m| {
                 d.child(
                     div()
                         .flex_none()
@@ -214,6 +239,42 @@ impl RenderOnce for ListItem {
                 )
             })
             .when_some(self.on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
+    }
+}
+
+/// The colour of a [`MenuItem`]'s hint: muted, or one of the status text tones
+/// (`.t-info`, `.t-success`…), e.g. "running" in info blue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HintTone {
+    /// `text-muted`.
+    #[default]
+    Muted,
+    /// `info`: running, live.
+    Info,
+    /// `success`.
+    Success,
+    /// `warning`: waiting, needs you.
+    Warning,
+    /// `danger`: failed.
+    Danger,
+    /// `spawn-text`: made by an agent.
+    Spawn,
+    /// `accent-text`.
+    Accent,
+}
+
+impl HintTone {
+    /// The text colour of the tone.
+    pub fn color(self) -> Hsla {
+        match self {
+            HintTone::Muted => TEXT_MUTED,
+            HintTone::Info => INFO,
+            HintTone::Success => SUCCESS,
+            HintTone::Warning => WARNING,
+            HintTone::Danger => DANGER,
+            HintTone::Spawn => SPAWN_TEXT,
+            HintTone::Accent => ACCENT_TEXT,
+        }
     }
 }
 
@@ -230,7 +291,11 @@ pub struct MenuItem {
     icon: Option<IconName>,
     tile: Option<AnyElement>,
     hint: Option<SharedString>,
+    hint_tone: HintTone,
+    matched: usize,
     kbd: Option<SharedString>,
+    tooltip: Option<SharedString>,
+    pub(crate) probe: Option<SharedString>,
     check_column: bool,
     pub(crate) checked: bool,
     pub(crate) selected: bool,
@@ -252,7 +317,11 @@ impl MenuItem {
             icon: None,
             tile: None,
             hint: None,
+            hint_tone: HintTone::Muted,
+            matched: 0,
             kbd: None,
+            tooltip: None,
+            probe: None,
             check_column: false,
             checked: false,
             selected: false,
@@ -289,9 +358,36 @@ impl MenuItem {
         self
     }
 
+    /// The colour of the hint (muted by default).
+    pub fn hint_tone(mut self, tone: HintTone) -> Self {
+        self.hint_tone = tone;
+        self
+    }
+
+    /// The first `bytes` of the label are what was typed (the matched part of a completion):
+    /// drawn in `accent-text`. A length that does not fall on a character is ignored.
+    pub fn matched(mut self, bytes: usize) -> Self {
+        self.matched = bytes;
+        self
+    }
+
     /// A key cap at the right.
     pub fn kbd(mut self, keys: impl Into<SharedString>) -> Self {
         self.kbd = Some(keys.into());
+        self
+    }
+
+    /// A tooltip on the row; it shows on disabled rows too (why the row is off).
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+
+    /// The row's dev-driver probe name. Rows in a [`Menu`](crate::menu::Menu) are probed by
+    /// their id unless this names them otherwise; disabled rows keep their probe. (Named so,
+    /// not `probe`, to leave the [`Probe`] trait's wrapper as it was.)
+    pub fn probe_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.probe = Some(name.into());
         self
     }
 
@@ -367,7 +463,16 @@ impl RenderOnce for MenuItem {
         let sub_color = if disabled { TEXT_DISABLED } else { TEXT_MUTED };
         // Rows that lead with a tile (agents, projects) name things: the label is medium.
         let strong = self.tile.is_some();
-        faded
+        let matched = self.matched.min(self.label.len());
+        let label = if matched > 0 && self.label.is_char_boundary(matched) && !disabled {
+            let mark = HighlightStyle { color: Some(ACCENT_TEXT), ..HighlightStyle::default() };
+            truncate_styled_block(self.label, [(0..matched, mark)], BODY.line)
+        } else {
+            truncate_block(self.label, BODY.line)
+        };
+        let hint_color = if disabled { TEXT_DISABLED } else { self.hint_tone.color() };
+        let probe = self.probe;
+        let el = faded
             .apply(el)
             .when(self.check_column, |d| {
                 d.child(
@@ -385,7 +490,7 @@ impl RenderOnce for MenuItem {
                     .flex_grow()
                     .flex_shrink()
                     .min_w_0()
-                    .child(truncate_block(self.label, BODY.line).when(strong, |d| d.font_weight(FontWeight::MEDIUM)))
+                    .child(label.when(strong, |d| d.font_weight(FontWeight::MEDIUM)))
                     .when_some(self.sub, |d, s| {
                         d.child(truncate_block(s, LABEL.line).type_style(LABEL).text_color(sub_color))
                     }),
@@ -395,17 +500,22 @@ impl RenderOnce for MenuItem {
                     div()
                         .flex_none()
                         .type_style(LABEL)
-                        .text_color(TEXT_MUTED)
+                        .text_color(hint_color)
                         .whitespace_nowrap()
                         .child(h),
                 )
             })
             .when_some(self.kbd, |d, k| d.child(Kbd::new(k)))
             .when(self.coming_soon, |d| d.child(Tag::new("Coming soon")))
+            .when_some(self.tooltip, |d, t| d.tooltip(Tooltip::text(t)))
             .when_some(self.on_move, |d, f| d.on_mouse_move(move |_, w, cx| f(w, cx)))
             .when_some(self.on_click.filter(|_| !disabled), |d, f| {
                 d.on_click(move |e, w, cx| f(e, w, cx))
-            })
+            });
+        match probe {
+            Some(name) => el.probe(name).into_any_element(),
+            None => el.into_any_element(),
+        }
     }
 }
 

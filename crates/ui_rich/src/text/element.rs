@@ -79,6 +79,7 @@ impl<V: EditorView> Element for TextElement<V> {
         }
         let text: SharedString = core.buffer.text().to_string().into();
         let placeholder = core.placeholder.clone();
+        let styles = core.styles.clone();
         let (min, max) = (
             core.min_rows.max(1),
             core.max_rows.max(core.min_rows).max(1),
@@ -88,12 +89,12 @@ impl<V: EditorView> Element for TextElement<V> {
                 AvailableSpace::Definite(w) => Some(w),
                 _ => None,
             });
-            let shown = if text.is_empty() {
-                placeholder.clone()
+            let (shown, styles) = if text.is_empty() {
+                (placeholder.clone(), &[][..])
             } else {
-                text.clone()
+                (text.clone(), &styles[..])
             };
-            let shaped = Shaped::new(shown, &look, None, width, window);
+            let shaped = Shaped::new(shown, &look, None, styles, width, window);
             let rows = shaped.rows().clamp(min, max);
             size(
                 known.width.unwrap_or_else(|| shaped.width()),
@@ -119,13 +120,13 @@ impl<V: EditorView> Element for TextElement<V> {
         }
         let wrap = core.multiline.then_some(bounds.size.width);
         let text: SharedString = core.buffer.text().to_string().into();
-        let shaped = Rc::new(Shaped::new(text, &look, core.buffer.marked(), wrap, window));
+        let shaped = Rc::new(Shaped::new(text, &look, core.buffer.marked(), &core.styles, wrap, window));
         let placeholder = (core.buffer.is_empty() && !core.placeholder.is_empty()).then(|| {
             let muted = TextLook {
                 color: TEXT_MUTED,
                 ..look.clone()
             };
-            Shaped::new(core.placeholder.clone(), &muted, None, wrap, window)
+            Shaped::new(core.placeholder.clone(), &muted, None, &[], wrap, window)
         });
         let s = shaped.clone();
         self.view.update(cx, |v, _| {
@@ -203,6 +204,9 @@ impl<V: EditorView> Element for TextElement<V> {
         let shaped = state.shaped.clone();
         let lh = shaped.line_height();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if state.placeholder.is_none() {
+                shaped.paint_background(origin, bounds, window, cx);
+            }
             let tint = with_alpha(ACCENT, if focused { 0.32 } else { 0.16 });
             for r in shaped.selection_rects(selection.clone()) {
                 window.paint_quad(fill(Bounds::new(origin + r.origin, r.size), tint));

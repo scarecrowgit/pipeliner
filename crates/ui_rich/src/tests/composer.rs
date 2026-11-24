@@ -460,3 +460,36 @@ fn a_click_picks_a_row_and_a_click_outside_closes(cx: &mut TestAppContext) {
     c.read_with(cx, |c, _| assert!(!c.menu_open(), "the composer saw the menu close"));
     assert_eq!(triggers(&log), vec![None]);
 }
+
+#[gpui::test]
+#[allow(clippy::single_range_in_vec_init)]
+fn accepted_mentions_are_drawn_highlighted_and_follow_edits(cx: &mut TestAppContext) {
+    let (c, _, cx) = open(cx, |cx| Composer::chat(cx).rows(2, 6, cx));
+    let styled = |c: &Entity<Composer>, cx: &mut VisualTestContext| {
+        c.read_with(cx, |c, cx| {
+            c.text_area().read(cx).styles().iter().map(|s| s.range.clone()).collect::<Vec<_>>()
+        })
+    };
+    typ(cx, "ask @re");
+    c.update(cx, |c, cx| c.set_completions(items(), Some(8), cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&c, cx), "ask @Reproducer ");
+    assert_eq!(styled(&c, cx), [4..15], "the mention is highlighted");
+    c.read_with(cx, |c, cx| {
+        let s = &c.text_area().read(cx).styles()[0];
+        assert_eq!((s.color, s.background), (Some(ui::theme::ACCENT_TEXT), Some(ui::theme::ACCENT_SOFT)));
+    });
+    // Typing before the mention moves the highlight with it.
+    cx.simulate_keystrokes("ctrl-home");
+    typ(cx, "so ");
+    cx.run_until_parked();
+    assert_eq!(styled(&c, cx), [7..18]);
+    // Typing into it makes it plain text again.
+    cx.simulate_keystrokes("ctrl-end left left");
+    typ(cx, "x");
+    cx.run_until_parked();
+    assert!(styled(&c, cx).is_empty(), "{:?}", styled(&c, cx));
+    c.update(cx, |c, cx| c.set_rows(1, 3, cx));
+}

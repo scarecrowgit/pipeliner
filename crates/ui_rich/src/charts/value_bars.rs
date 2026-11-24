@@ -4,6 +4,7 @@ use gpui::{
     App, IntoElement, ParentElement, RenderOnce, SharedString, Window, div, prelude::*, px,
     relative,
 };
+use ui::dev::Probe;
 use ui::layout::truncate_lh;
 use ui::theme::*;
 
@@ -28,12 +29,13 @@ pub struct ValueRow {
     value: f64,
     amount: Option<SharedString>,
     spawn: bool,
+    probe: Option<SharedString>,
 }
 
 impl ValueRow {
     /// A row called `name` worth `value`.
     pub fn new(name: impl Into<SharedString>, value: f64) -> Self {
-        Self { name: name.into(), value, amount: None, spawn: false }
+        Self { name: name.into(), value, amount: None, spawn: false, probe: None }
     }
 
     /// The amount text, instead of the default formatting of the value.
@@ -45,6 +47,12 @@ impl ValueRow {
     /// The `spawn` tone: the bar is violet.
     pub fn spawn(mut self) -> Self {
         self.spawn = true;
+        self
+    }
+
+    /// The row's dev-driver probe name; its value is the amount text (`spend-agent-fixer`).
+    pub fn probe(mut self, name: impl Into<SharedString>) -> Self {
+        self.probe = Some(name.into());
         self
     }
 }
@@ -103,8 +111,9 @@ impl RenderOnce for ValueBars {
         div().flex().flex_col().w_full().children(self.rows.into_iter().zip(fractions).map(
             move |(row, frac)| {
                 let fill = if row.spawn { SPAWN_BAR } else { TEXT_MUTED };
-                let amount = row.amount.unwrap_or_else(|| format(row.value).into());
-                div()
+                let amount: SharedString = row.amount.unwrap_or_else(|| format(row.value).into());
+                let probe = row.probe.map(|name| (name, amount.clone()));
+                let el = div()
                     .flex()
                     .flex_row()
                     .items_center()
@@ -144,7 +153,11 @@ impl RenderOnce for ValueBars {
                             .text_color(TEXT)
                             .whitespace_nowrap()
                             .child(amount),
-                    )
+                    );
+                match probe {
+                    Some((name, value)) => el.probe_value(name, value).into_any_element(),
+                    None => el.into_any_element(),
+                }
             },
         ))
     }

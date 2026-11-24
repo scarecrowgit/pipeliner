@@ -36,6 +36,8 @@ pub(crate) struct EditCore {
     pub min_rows: usize,
     pub max_rows: usize,
     pub disabled: bool,
+    /// Ranges drawn in their own style; the host keeps them in step with edits.
+    pub styles: Vec<super::styles::StyledRange>,
     /// The last shaped text and where it was painted.
     pub shaped: Option<Rc<Shaped>>,
     pub bounds: Option<Bounds<Pixels>>,
@@ -55,12 +57,14 @@ impl EditCore {
     pub fn new(buffer: Buffer, multiline: bool, cx: &mut App) -> Self {
         Self {
             buffer,
-            focus: cx.focus_handle(),
+            // A tab stop: Tab and Shift-Tab move between fields in paint order.
+            focus: cx.focus_handle().tab_index(0).tab_stop(true),
             placeholder: SharedString::default(),
             multiline,
             min_rows: 1,
             max_rows: if multiline { 10 } else { 1 },
             disabled: false,
+            styles: Vec::new(),
             shaped: None,
             bounds: None,
             scroll: Point::default(),

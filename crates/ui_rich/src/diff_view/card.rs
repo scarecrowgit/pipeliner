@@ -1,6 +1,7 @@
 //! [`DiffCard`]: a file's diff in a card with a header (path and counts), optional trailing
 //! controls and footer, a collapsible body and a row limit behind "Show all N lines".
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
@@ -37,13 +38,29 @@ pub struct DiffCard {
     limit: Option<usize>,
     max_height: f32,
     compact: bool,
+    held: Option<(DiffCardState, StateHandler)>,
 }
 
-/// Whether the card is open and whether "Show all" was clicked, kept across frames.
-struct CardState {
-    open: bool,
-    expanded: bool,
+/// Whether a [`DiffCard`] is open and whether its "Show all" was clicked. The card keeps it
+/// itself across frames, or the caller does ([`DiffCard::state`]) so a virtualised list that
+/// drops the row keeps it too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiffCardState {
+    /// The body shows (a collapsible card can be folded).
+    pub open: bool,
+    /// "Show all N lines" was clicked: the row limit is off.
+    pub expanded: bool,
 }
+
+impl Default for DiffCardState {
+    /// Open, limited: how a card starts.
+    fn default() -> Self {
+        Self { open: true, expanded: false }
+    }
+}
+
+/// Where a caller-held state goes when the card changes it.
+type StateHandler = Rc<dyn Fn(DiffCardState, &mut Window, &mut App)>;
 
 impl DiffCard {
     /// A card for `file`; `id` must be unique among its siblings.
@@ -59,7 +76,20 @@ impl DiffCard {
             limit: None,
             max_height: 600.,
             compact: false,
+            held: None,
         }
+    }
+
+    /// Keep the fold and "Show all" state outside the card: draw `state`, and call
+    /// `on_change` with the new state when the chevron or "Show all" is clicked (the caller
+    /// stores it and renders again). Without this the card keeps the state itself.
+    pub fn state(
+        mut self,
+        state: DiffCardState,
+        on_change: impl Fn(DiffCardState, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.held = Some((state, Rc::new(on_change)));
+        self
     }
 
     /// A muted mono word before the path, e.g. the tool name `edit`.
@@ -136,17 +166,25 @@ impl DiffCard {
 }
 
 impl RenderOnce for DiffCard {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.with_id(self.id.clone(), |window| {
-            window.use_keyed_state("diff-card", cx, |_, _| CardState {
-                open: true,
-                expanded: false,
-            })
-        });
-        let (open, expanded) = {
-            let s = state.read(cx);
-            (s.open || !self.collapsible, s.expanded)
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // The state lives with the caller, or in the card's keyed state.
+        let (current, set): (DiffCardState, StateHandler) = match self.held.take() {
+            Some(held) => held,
+            None => {
+                let state = window.with_id(self.id.clone(), |window| {
+                    window.use_keyed_state("diff-card", cx, |_, _| DiffCardState::default())
+                });
+                let current = *state.read(cx);
+                let set: StateHandler = Rc::new(move |next, _, cx| {
+                    state.update(cx, |s, cx| {
+                        *s = next;
+                        cx.notify();
+                    })
+                });
+                (current, set)
+            }
         };
+        let (open, expanded) = (current.open || !self.collapsible, current.expanded);
         let child =
             |name: &'static str| ElementId::NamedChild(Box::new(self.id.clone()), name.into());
         let file = &self.file;
@@ -163,7 +201,7 @@ impl RenderOnce for DiffCard {
                 .child(div().text_color(DANGER).child(format!("−{}", file.removed)))
         });
         let toggle = self.collapsible.then(|| {
-            let st = state.clone();
+            let set = set.clone();
             IconButton::new(
                 child("toggle"),
                 if open {
@@ -174,11 +212,8 @@ impl RenderOnce for DiffCard {
             )
             .small()
             .tooltip(if open { "Collapse" } else { "Expand" })
-            .on_click(move |_, _, cx| {
-                st.update(cx, |s, cx| {
-                    s.open = !s.open;
-                    cx.notify();
-                })
+            .on_click(move |_, window, cx| {
+                set(DiffCardState { open: !current.open, ..current }, window, cx)
             })
         });
         let header = row()
@@ -222,7 +257,7 @@ impl RenderOnce for DiffCard {
                 .max_height(self.max_height)
         });
         let show_all = (open && limited.is_some()).then(|| {
-            let st = state.clone();
+            let set = set.clone();
             row()
                 .flex_none()
                 .h(px(CONTROL_HEIGHT_MD))
@@ -239,11 +274,8 @@ impl RenderOnce for DiffCard {
                             base::fmt::plural(lines as u64, "line", "lines")
                         ),
                     )
-                    .on_click(move |_, _, cx| {
-                        st.update(cx, |s, cx| {
-                            s.expanded = true;
-                            cx.notify();
-                        })
+                    .on_click(move |_, window, cx| {
+                        set(DiffCardState { expanded: true, ..current }, window, cx)
                     }),
                 )
         });

@@ -19,7 +19,7 @@ use gpui::{
 
 use crate::text::core::{self, EditCore, EditorView, impl_input_handler};
 use crate::text::element::TextElement;
-use crate::text::{self as t, Buffer, Token};
+use crate::text::{self as t, Buffer, StyledRange, Token};
 
 /// Which key sends the text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,7 +51,8 @@ pub enum TextAreaEvent {
     Up,
     /// Down, while the host intercepts arrows.
     Down,
-    /// Tab, while the host intercepts arrows. Otherwise Tab moves focus as usual.
+    /// Tab, while the host intercepts arrows. Otherwise Tab moves focus to the next field
+    /// (or types a tab with [`TextArea::literal_tabs`]).
     Tab,
     /// Enter, while the host intercepts arrows: pick the popup's item. Nothing is inserted.
     Confirm,
@@ -64,6 +65,7 @@ pub struct TextArea {
     core: EditCore,
     submit_on: SubmitOn,
     intercept: bool,
+    literal_tabs: bool,
 }
 
 impl EventEmitter<TextAreaEvent> for TextArea {}
@@ -75,7 +77,15 @@ impl TextArea {
             core: EditCore::new(Buffer::new(""), true, cx),
             submit_on: SubmitOn::default(),
             intercept: false,
+            literal_tabs: false,
         }
+    }
+
+    /// Builder: Tab types a tab character instead of moving focus (Shift-Tab still moves
+    /// focus back). Off by default: the area is a tab stop like any field.
+    pub fn literal_tabs(mut self, on: bool) -> Self {
+        self.literal_tabs = on;
+        self
     }
 
     /// Builder: muted text shown while empty.
@@ -101,6 +111,38 @@ impl TextArea {
     pub fn with_text(mut self, text: &str) -> Self {
         self.core.buffer.set_text(text);
         self
+    }
+
+    /// Grow from `min` to `max` lines of text, then scroll (the builder [`rows`](Self::rows)
+    /// after creation).
+    pub fn set_rows(&mut self, min: usize, max: usize, cx: &mut Context<Self>) {
+        let min = min.max(1);
+        let max = max.max(min);
+        if (self.core.min_rows, self.core.max_rows) != (min, max) {
+            self.core.min_rows = min;
+            self.core.max_rows = max;
+            cx.notify();
+        }
+    }
+
+    /// Draw these ranges of the text in their own style (accepted `@mentions`). The caller
+    /// moves them along edits (see [`TextAreaEvent::Changed`]); ranges that no longer fit the
+    /// text are skipped until they are replaced.
+    pub fn set_styles(&mut self, styles: Vec<StyledRange>, cx: &mut Context<Self>) {
+        if self.core.styles != styles {
+            self.core.styles = styles;
+            cx.notify();
+        }
+    }
+
+    /// The styled ranges, as last set.
+    pub fn styles(&self) -> &[StyledRange] {
+        &self.core.styles
+    }
+
+    /// Whether Tab types a tab character (see [`literal_tabs`](Self::literal_tabs)).
+    pub fn set_literal_tabs(&mut self, on: bool) {
+        self.literal_tabs = on;
     }
 
     /// The text.
@@ -258,7 +300,10 @@ impl TextArea {
     fn tab(&mut self, _: &t::Tab, _: &mut Window, cx: &mut Context<Self>) {
         if self.intercept {
             cx.emit(TextAreaEvent::Tab);
+        } else if self.literal_tabs && !self.core.disabled {
+            core::edit(self, cx, |b| b.insert("\t"));
         } else {
+            // The kit's Tab binding moves focus to the next tab stop.
             cx.propagate();
         }
     }

@@ -2,8 +2,9 @@
 //! own, then the toast.
 
 use gpui::{
-    AnyElement, App, Context, Div, IntoElement, KeyDownEvent, RenderOnce, Stateful, WeakEntity,
-    Window, deferred, div, prelude::*, px,
+    AnyElement, App, Bounds, Context, Div, Element, ElementId, GlobalElementId, InspectorElementId,
+    IntoElement, KeyDownEvent, LayoutId, Pixels, RenderOnce, Stateful, WeakEntity, Window, deferred,
+    div, prelude::*, px,
 };
 
 use super::{Build, Kind, Layer, LayerId, OverlayHost, Placed, with_layer};
@@ -23,7 +24,75 @@ struct LayerContent {
 impl RenderOnce for LayerContent {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let build = self.build;
-        with_layer(self.id, || build(window, cx))
+        let child = with_layer(self.id, || build(window, cx));
+        LayerScope { id: self.id, child }
+    }
+}
+
+/// Keeps [`super::current_layer`] set while its child is laid out and painted, so a view
+/// placed in a layer (its render runs during layout, after the build closure returned)
+/// knows the layer too.
+struct LayerScope {
+    id: LayerId,
+    child: AnyElement,
+}
+
+impl IntoElement for LayerScope {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for LayerScope {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let child = &mut self.child;
+        (with_layer(self.id, || child.request_layout(window, cx)), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        with_layer(self.id, || child.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        with_layer(self.id, || child.paint(window, cx));
     }
 }
 

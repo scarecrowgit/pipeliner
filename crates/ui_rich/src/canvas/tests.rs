@@ -394,6 +394,21 @@ fn edge_kinds_look_as_the_mockup_says() {
     assert_eq!(EdgeKind::Selected.dash(), None);
     assert_eq!(EdgeKind::Dim.dash(), None);
     assert!(EdgeKind::Back.dash().is_some());
+    assert_eq!(EdgeKind::Back.dash(), Some(BACK_DASH));
+    assert_eq!(EdgeKind::Spawn.dash(), Some(SPAWN_DASH));
+}
+
+#[test]
+fn a_selected_back_edge_keeps_its_loop_and_dots_in_accent() {
+    use ui::theme::ACCENT;
+    let (a, b) = (p(300.0, 40.0), p(20.0, 40.0));
+    let edge = Edge::new(a, b).kind(EdgeKind::SelectedBack);
+    assert!(matches!(edge.curve(), Curve::Cubic(c) if c == back_curve(a, b)));
+    assert_eq!(edge.kind.color(), ACCENT);
+    assert_eq!(edge.kind.dash(), Some(BACK_DASH));
+    // Drawn over the other edges, with the selected path.
+    let mid = edge.midpoint();
+    assert_eq!(hit_edge(&[Edge::new(a, b).kind(EdgeKind::Back), edge], mid, 2.0), Some(1));
 }
 
 #[test]

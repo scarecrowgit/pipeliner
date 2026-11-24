@@ -11,8 +11,10 @@ pub(crate) mod element;
 pub mod history;
 pub(crate) mod layout;
 pub mod segment;
+pub mod styles;
 
 pub use buffer::{Buffer, LogicalLines, Motion, Token, VisualLines};
+pub use styles::StyledRange;
 
 use gpui::{App, KeyBinding, actions};
 

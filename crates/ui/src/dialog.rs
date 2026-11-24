@@ -321,6 +321,7 @@ pub struct OptionCard {
     selected: bool,
     on_select: Option<ClickHandler>,
     focus: Option<FocusHandle>,
+    probe: Option<SharedString>,
 }
 
 impl OptionCard {
@@ -334,7 +335,14 @@ impl OptionCard {
             selected: false,
             on_select: None,
             focus: None,
+            probe: None,
         }
+    }
+
+    /// The card's dev-driver probe name; it passes through an [`OptionGroup`].
+    pub fn probe_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.probe = Some(name.into());
+        self
     }
 
     /// The muted line under the title.
@@ -389,7 +397,8 @@ impl RenderOnce for OptionCard {
             .border_1()
             .rounded(px(RADIUS_LG))
             .cursor_pointer();
-        faded
+        let probe = self.probe;
+        let el = faded
             .apply(el)
             .child(div().mt(px(SPACE_0_5)).child(dot))
             .child(
@@ -399,7 +408,11 @@ impl RenderOnce for OptionCard {
                     .when_some(self.desc, |d, s| d.child(div().type_style(LABEL).text_color(TEXT_MUTED).child(s))),
             )
             .when_some(self.right, |d, r| d.child(div().flex_none().child(r)))
-            .when_some(self.on_select.filter(|_| !selected), |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
+            .when_some(self.on_select.filter(|_| !selected), |d, f| d.on_click(move |e, w, cx| f(e, w, cx)));
+        match probe {
+            Some(name) => crate::dev::Probe::probe(el, name).into_any_element(),
+            None => el.into_any_element(),
+        }
     }
 }
 

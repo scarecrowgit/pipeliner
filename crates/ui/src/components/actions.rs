@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, IntoElement, RenderOnce, SharedString, Window, div,
-    prelude::*, px,
+    App, ClickEvent, ElementId, Hsla, IntoElement, MouseButton, RenderOnce, SharedString, Stateful,
+    Window, div, prelude::*, px,
 };
 
 use super::{ClickHandler, Kbd, child_id};
@@ -13,6 +13,14 @@ use crate::tooltip::Tooltip;
 use crate::assets::{IconName, icon};
 use crate::motion::{self, Look};
 use crate::theme::*;
+
+/// Keep the keyboard focus where it is when `el` is pressed: its own focus (and any focusable
+/// parent's) is not taken. It stays a tab stop.
+fn keep_focus_on_press(el: Stateful<gpui::Div>) -> Stateful<gpui::Div> {
+    // Runs before the element's own focus-on-press listener, which then sees the default
+    // prevented and leaves focus alone.
+    el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+}
 
 /// The weight of a [`Button`]: how loud the action is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -26,8 +34,10 @@ enum ButtonKind {
 
 /// An action someone takes. Variants: `primary` (at most one per view), `secondary` (the
 /// default), `ghost` for low-stakes toolbar actions, `danger` text for destructive ones; 40px
-/// tall or `small` (28px); with a leading icon and a trailing `kbd` hint; `disabled`;
-/// `selected` for a pressed toggle. Labels start with a verb.
+/// tall or `small` (28px); with a leading icon, a trailing icon (the "New ▾" chevron) and a
+/// trailing `kbd` hint; `disabled`; `selected` for a pressed toggle. Labels start with a verb.
+/// Toolbar and header buttons that must not pull focus from the screen under them take
+/// `.focus_on_click(false)`.
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -35,10 +45,12 @@ pub struct Button {
     kind: ButtonKind,
     small: bool,
     icon: Option<IconName>,
+    trailing_icon: Option<IconName>,
     kbd: Option<SharedString>,
     disabled: bool,
     selected: bool,
     full_width: bool,
+    keep_focus: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -51,10 +63,12 @@ impl Button {
             kind: ButtonKind::Secondary,
             small: false,
             icon: None,
+            trailing_icon: None,
             kbd: None,
             disabled: false,
             selected: false,
             full_width: false,
+            keep_focus: false,
             on_click: None,
         }
     }
@@ -92,6 +106,21 @@ impl Button {
     /// A leading icon (14px, 12px when small).
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
+        self
+    }
+
+    /// An icon after the label, same size as the leading one: the chevron of a button that
+    /// opens a menu ("New ▾").
+    pub fn trailing_icon(mut self, name: IconName) -> Self {
+        self.trailing_icon = Some(name);
+        self
+    }
+
+    /// Whether a press moves keyboard focus to the button (on by default, like any tab
+    /// stop). Off for header and toolbar buttons, so keys keep going to the screen under
+    /// them (the editor canvas, a text field). The button stays reachable with Tab.
+    pub fn focus_on_click(mut self, on: bool) -> Self {
+        self.keep_focus = !on;
         self
     }
 
@@ -158,7 +187,9 @@ impl RenderOnce for Button {
         let disabled = self.disabled;
         let on_click = self.on_click.filter(|_| !disabled);
         let el = div().id(self.id).debug_selector(move || selector);
-        let el = focus::tab_stop(el, disabled, cx)
+        let el = focus::tab_stop(el, disabled, cx);
+        let el = if self.keep_focus { keep_focus_on_press(el) } else { el };
+        let el = el
             .flex()
             .flex_none()
             .items_center()
@@ -177,6 +208,7 @@ impl RenderOnce for Button {
             .apply(el)
             .when_some(self.icon, |d, name| d.child(icon(name, icon_size, icon_color)))
             .child(self.label)
+            .when_some(self.trailing_icon, |d, name| d.child(icon(name, icon_size, icon_color)))
             .when_some(self.kbd, |d, keys| {
                 let kbd = Kbd::new(keys);
                 let kbd = if self.kind == ButtonKind::Primary { kbd.on_accent() } else { kbd };
@@ -202,6 +234,7 @@ pub struct IconButton {
     tooltip: Option<SharedString>,
     pip: Option<Hsla>,
     count: Option<SharedString>,
+    keep_focus: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -219,8 +252,16 @@ impl IconButton {
             tooltip: None,
             pip: None,
             count: None,
+            keep_focus: false,
             on_click: None,
         }
+    }
+
+    /// Whether a press moves keyboard focus to the button (on by default). Off for header
+    /// and toolbar buttons, so keys keep going to the screen under them.
+    pub fn focus_on_click(mut self, on: bool) -> Self {
+        self.keep_focus = !on;
+        self
     }
 
     /// Border and raised fill (`.ibtn.bd`).
@@ -309,7 +350,9 @@ impl RenderOnce for IconButton {
         let disabled = self.disabled;
         let on_click = self.on_click.filter(|_| !disabled);
         let el = div().id(self.id).debug_selector(move || selector);
-        let el = focus::tab_stop(el, disabled, cx)
+        let el = focus::tab_stop(el, disabled, cx);
+        let el = if self.keep_focus { keep_focus_on_press(el) } else { el };
+        let el = el
             .relative()
             .flex()
             .flex_none()

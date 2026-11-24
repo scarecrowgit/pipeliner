@@ -118,7 +118,8 @@ struct Demo {
 impl Demo {
     fn new(cx: &mut Context<Self>) -> Self {
         let chat = cx.new(|cx| Composer::chat(cx).name("chat").placeholder("Message Build…"));
-        let issue = cx.new(|cx| Composer::issue(cx).name("issue"));
+        // The issue composer stops growing at 6 lines (default 10).
+        let issue = cx.new(|cx| Composer::issue(cx).name("issue").rows(1, 6, cx));
         let subs = vec![
             cx.subscribe(&chat, |this, c, ev, cx| this.on_event(false, c, ev, cx)),
             cx.subscribe(&issue, |this, c, ev, cx| this.on_event(true, c, ev, cx)),
