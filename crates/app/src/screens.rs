@@ -4,6 +4,9 @@
 use gpui::AppContext as _;
 use hub::Route;
 use screen_chat::{ChatsView, NewChatView, SessionView};
+use screen_agents::AgentsView;
+use screen_inbox::InboxView;
+use screen_issues::IssuesView;
 use shell::{Header, Keep, Mounted, ScreenKind, Screens};
 
 /// Every screen the app has.
@@ -47,5 +50,87 @@ pub fn all() -> Screens {
                 let header = Header::title(title);
                 actions.into_iter().fold(header, Header::action)
             })
+        })
+        .add(ScreenKind::Inbox, Keep::One, |route, window, cx| {
+            let focus = match route {
+                Route::Inbox { item } => item.clone(),
+                _ => None,
+            };
+            let view = cx.new(|cx| InboxView::new(focus, window, cx));
+            let shown = view.clone();
+            let for_header = view.clone();
+            Mounted::new(view)
+                .on_show(move |route, window, cx| {
+                    if let Route::Inbox { item } = route {
+                        shown.update(cx, |view, cx| view.show(item.clone(), window, cx));
+                    }
+                })
+                .header(move |window, cx| {
+                    let (title, trail) = {
+                        let view = for_header.read(cx);
+                        (view.title(cx), view.trail(cx))
+                    };
+                    let (badges, actions) = for_header
+                        .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                    let header = if trail.is_empty() && title.as_ref() == "Inbox" {
+                        Header::title(title)
+                    } else {
+                        let header = Header::new().crumb_to("Inbox", Route::Inbox { item: None });
+                        trail.into_iter().fold(header, Header::crumb).crumb(title)
+                    };
+                    let header = badges.into_iter().fold(header, Header::after);
+                    actions.into_iter().fold(header, Header::action)
+                })
+        })
+        .add(ScreenKind::Issues, Keep::One, |route, window, cx| {
+            let issue = match route {
+                Route::Issues { issue } => issue.clone(),
+                _ => None,
+            };
+            let view = cx.new(|cx| IssuesView::new(issue, window, cx));
+            let shown = view.clone();
+            let for_header = view.clone();
+            Mounted::new(view)
+                .on_show(move |route, window, cx| {
+                    if let Route::Issues { issue } = route {
+                        shown.update(cx, |view, cx| view.show(issue.clone(), window, cx));
+                    }
+                })
+                .header(move |window, cx| {
+                    let (title, project) = {
+                        let view = for_header.read(cx);
+                        (view.title(cx), view.project_name(cx))
+                    };
+                    let (badges, actions) = for_header
+                        .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                    let header = match project {
+                        Some(project) => Header::new().crumb(project).crumb(title),
+                        None => Header::title(title),
+                    };
+                    let header = badges.into_iter().fold(header, Header::after);
+                    actions.into_iter().fold(header, Header::action)
+                })
+        })
+        .add(ScreenKind::Agents, Keep::One, |route, window, cx| {
+            let selected = match route {
+                Route::Agents { runnable } => runnable.clone(),
+                _ => None,
+            };
+            let view = cx.new(|cx| AgentsView::new(selected, window, cx));
+            let shown = view.clone();
+            let for_header = view.clone();
+            Mounted::new(view)
+                .on_show(move |route, window, cx| {
+                    if let Route::Agents { runnable } = route {
+                        shown.update(cx, |view, cx| view.show(runnable.clone(), window, cx));
+                    }
+                })
+                .header(move |window, cx| {
+                    let title = for_header.read(cx).title(cx);
+                    let (badges, actions) = for_header
+                        .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                    let header = badges.into_iter().fold(Header::title(title), Header::after);
+                    actions.into_iter().fold(header, Header::action)
+                })
         })
 }
