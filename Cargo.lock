@@ -109,6 +109,7 @@ dependencies = [
  "screen_issues",
  "shell",
  "ui",
+ "ui_rich",
 ]
 
 [[package]]

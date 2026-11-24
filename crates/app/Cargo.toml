@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 gpui.workspace = true
+ui_rich.workspace = true
 base.workspace = true
 engine.workspace = true
 hub.workspace = true

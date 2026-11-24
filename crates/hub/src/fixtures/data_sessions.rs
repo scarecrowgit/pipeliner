@@ -173,7 +173,7 @@ pub fn fill(world: &mut World) {
         session: fix.id.clone(),
         agent: "Build".to_string(),
         tool: "bash".to_string(),
-        call_id: None,
+        call_id: Some("t8".to_string()),
         class: ToolClass::Execute,
         display: ToolDisplay::Command { command: "bun test src/charges".to_string(), output: String::new(), exit_code: None },
         policy: "bash = ask".to_string(),
