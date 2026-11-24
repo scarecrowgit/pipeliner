@@ -20,6 +20,14 @@ pub(crate) fn issue_input(issue: &Issue) -> String {
     if body.is_empty() { title.to_string() } else { format!("{title}\n\n{body}") }
 }
 
+/// What a wake tells its runner: the issue (`about`), and what was `said` in the comment that
+/// caused the wake when that is not the issue's own text. A mention carries only the comment,
+/// and a runner that is new to the issue has never seen the issue.
+fn wake_input(about: String, said: &str) -> String {
+    let said = said.trim();
+    if said.is_empty() || said == about { about } else { format!("{about}\n\n## New comment\n\n{said}") }
+}
+
 impl Engine {
     /// Wakes whoever `happening` wakes on `issue`, and records who could not be.
     pub(crate) fn wake(&self, issue: &Issue, happening: &Happening) -> Result<()> {
@@ -94,8 +102,7 @@ impl Engine {
                 bail!("run {} is still open ({:?}); the comment stays on the issue", run.number, run.state)
             }
             (WakeMode::Start, Some(run)) => bail!("run {} on this issue is still open; cancel it first", run.number),
-            (WakeMode::Continue, None) => format!("{}\n\n## New comment\n\n{}", issue_input(issue), intent.input.trim()),
-            (WakeMode::Start, None) => intent.input.clone(),
+            (WakeMode::Continue | WakeMode::Start, None) => wake_input(issue_input(issue), &intent.input),
         };
         // Checked again, atomically, where the run starts.
         let run = self.start_issue_run(issue, &pipeline, &text, false)?;
@@ -132,7 +139,7 @@ impl Engine {
             }
         };
         let text = match intent.mode {
-            WakeMode::Start => format!("Issue {}: {}", issue.key, intent.input),
+            WakeMode::Start => format!("Issue {}: {}", issue.key, wake_input(issue_input(issue), &intent.input)),
             WakeMode::Continue => intent.input.clone(),
         };
         self.send(&session.id, UserMessage { text, images: Vec::new() })
@@ -146,5 +153,22 @@ impl Engine {
             project.repos.iter().find(|path| path.file_name().is_some_and(|n| n.to_string_lossy() == name.as_str()))
         });
         Ok(named.or(project.repos.first()).filter(|p| p.is_dir()).cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wake_input;
+
+    #[test]
+    fn a_wake_always_carries_the_issue() {
+        let about = || "Fix login\n\nThe form loses focus.".to_string();
+        assert_eq!(wake_input(about(), &about()), about(), "started from the issue itself: nothing is repeated");
+        assert_eq!(wake_input(about(), "  "), about());
+        assert_eq!(
+            wake_input(about(), " @Build take this "),
+            "Fix login\n\nThe form loses focus.\n\n## New comment\n\n@Build take this",
+            "a mention's comment comes after the issue it is about"
+        );
     }
 }
