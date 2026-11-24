@@ -104,6 +104,8 @@ actions!(
 pub fn bind_keys(cx: &mut App) {
     // Selection and copy inside rendered Markdown.
     crate::markdown::bind_keys(cx);
+    // Zoom, pan and switching images in the image viewer.
+    crate::viewer::bind_keys(cx);
     let mut bindings = Vec::new();
     for ctx in ["TextInput", "TextArea"] {
         let c = Some(ctx);

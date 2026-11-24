@@ -11,7 +11,7 @@ use super::{Build, Kind, Layer, LayerId, OverlayHost, Placed, with_layer};
 use crate::focus::set_focus_visible;
 use crate::keys::{self, Cancel, FocusNext, FocusPrev, Undo};
 use crate::motion::{Pop, PopFrame};
-use crate::theme::{SCRIM, Z_DIALOG, Z_POPOVER, Z_TOAST};
+use crate::theme::{SCRIM, SCRIM_STRONG, Z_DIALOG, Z_POPOVER, Z_TOAST};
 
 /// A layer's content, built when it is laid out (not while the host renders, so a build
 /// closure may read the host) with [`super::current_layer`] set.
@@ -129,7 +129,7 @@ impl OverlayHost {
         for layer in &self.layers {
             let base = match layer.kind {
                 Kind::Popover { .. } => Z_POPOVER,
-                Kind::Dialog => Z_DIALOG,
+                Kind::Dialog | Kind::Full => Z_DIALOG,
             } as usize;
             z = base.max(z + 1);
             if let Some((el, settled)) = render_layer(layer, &host) {
@@ -247,6 +247,19 @@ fn render_layer(layer: &Layer, host: &WeakEntity<OverlayHost>) -> Option<(AnyEle
                 .child(panel(f).mt(px(f.dy)));
             let el = div().absolute().inset_0().child(scrim).child(stage);
             Some((el.into_any_element(), f.settled() && s.settled()))
+        }
+        Kind::Full => {
+            // Fades only: a panel the size of the window has nowhere to travel.
+            let f = layer.presence.frame(Pop::Scrim)?;
+            let scrim = div()
+                .id(("overlay-full-scrim", id.0 as usize))
+                .absolute()
+                .inset_0()
+                .bg(SCRIM_STRONG)
+                .opacity(f.opacity)
+                .occlude();
+            let el = div().absolute().inset_0().child(scrim).child(panel(f).absolute().inset_0().occlude());
+            Some((el.into_any_element(), f.settled()))
         }
     }
 }

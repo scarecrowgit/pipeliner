@@ -82,6 +82,9 @@ pub(crate) type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
 pub(crate) enum Kind {
     Popover { anchor: Anchor, placement: Placement },
     Dialog,
+    /// Covers the whole window over [`SCRIM_STRONG`](crate::theme::SCRIM_STRONG); fades only.
+    /// The content takes every press (the host's scrim is under it and not clickable).
+    Full,
 }
 
 pub(crate) struct Layer {
@@ -481,6 +484,28 @@ impl Overlays {
         let build: Build = Rc::new(move |_, _| view.clone().into_any_element());
         let on_close: Callback = Rc::new(on_close);
         self.update(cx, |host, cx| host.open_layer_with(key, Kind::Dialog, build, Some(on_close), window, cx))
+    }
+
+    /// Open a view the caller owns over the whole window, on a dark scrim (an image viewer, a
+    /// full-screen preview). It fades in and out with the dialog timings and does not move.
+    /// The view is laid out at the window's size and takes every press itself: to close on a
+    /// press outside its content it calls [`Overlays::close`] with `id`. Escape, focus moving
+    /// in and back, Tab staying inside, and `on_close` work as for
+    /// [`Overlays::open_dialog_view`]. The view should focus a handle of its own when it is
+    /// first drawn, so its key bindings apply.
+    pub fn open_full_view(
+        &self,
+        id: impl Into<ElementId>,
+        view: impl Into<AnyView>,
+        on_close: impl Fn(&mut Window, &mut App) + 'static,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<LayerId> {
+        let key = id.into();
+        let view: AnyView = view.into();
+        let build: Build = Rc::new(move |_, _| view.clone().into_any_element());
+        let on_close: Callback = Rc::new(on_close);
+        self.update(cx, |host, cx| host.open_layer_with(key, Kind::Full, build, Some(on_close), window, cx))
     }
 
     /// Show `toast` at the bottom centre, replacing the one that is up.

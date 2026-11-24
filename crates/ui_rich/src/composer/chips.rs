@@ -11,6 +11,7 @@ use ui::motion::Look;
 use ui::prelude::*;
 
 use super::types::{Attachment, AttachmentContent};
+use crate::viewer::{ImageThumb, ViewerImage};
 use super::view::part;
 use super::{Composer, ComposerKind, spans};
 
@@ -33,10 +34,19 @@ pub(super) fn chips_row(
     let (name, kind, off) = (c.name.clone(), c.kind, c.disabled.is_some());
     let attachments = c.attachments.clone();
     let lines = spans::summary(&attachments, c.limits);
+    // Every image of the row, so the viewer opened from one chip pages through the others.
+    let images: Vec<ViewerImage> = attachments.iter().filter_map(viewer_image).collect();
+    let mut image_ix = 0;
     let chips: Vec<AnyElement> = attachments
         .iter()
         .enumerate()
-        .map(|(ix, a)| chip(entity, &name, ix, a, off, window, cx))
+        .map(|(ix, a)| {
+            let open = viewer_image(a).map(|_| {
+                image_ix += 1;
+                (images.clone(), image_ix - 1)
+            });
+            chip(entity, &name, ix, a, off, open, window, cx)
+        })
         .collect();
     let note = match kind {
         ComposerKind::Chat => div().child(lines.join(" · ")),
@@ -61,13 +71,39 @@ pub(super) fn chips_row(
     )
 }
 
-/// One chip.
+/// Place and frame of a chip's thumbnail.
+fn shot_frame<E: Styled>(el: E, uploading: bool) -> E {
+    let el = el
+        .absolute()
+        .top(px(SPACE_1_5))
+        .left(px(SPACE_1_5))
+        .right(px(SPACE_1_5))
+        .bottom(px(CAPTION_H + SPACE_1))
+        .rounded(px(RADIUS_SM))
+        .bg(SURFACE)
+        .overflow_hidden();
+    if uploading { el.opacity(0.4) } else { el }
+}
+
+/// The viewer's copy of an image attachment; `None` for other files.
+fn viewer_image(a: &Attachment) -> Option<ViewerImage> {
+    match &a.content {
+        AttachmentContent::Image(image) => Some(ViewerImage::memory(image.clone(), a.name.clone())),
+        AttachmentContent::ImageFile(path) => Some(ViewerImage::file(path).name(a.name.clone())),
+        AttachmentContent::File(_) => None,
+    }
+}
+
+/// One chip. `open` is the row's images and this one's place among them, for an image: a
+/// click on its thumbnail opens the viewer there.
+#[allow(clippy::too_many_arguments)]
 fn chip(
     entity: &Entity<Composer>,
     name: &str,
     ix: usize,
     a: &Attachment,
     off: bool,
+    open: Option<(Vec<ViewerImage>, usize)>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -87,19 +123,19 @@ fn chip(
             .child(icon(IconName::File, 16., TEXT_MUTED))
             .into_any_element(),
     };
-    let shot = div()
-        .absolute()
-        .top(px(SPACE_1_5))
-        .left(px(SPACE_1_5))
-        .right(px(SPACE_1_5))
-        .bottom(px(CAPTION_H + SPACE_1))
-        .rounded(px(RADIUS_SM))
-        .border_1()
-        .border_color(LINE)
-        .bg(SURFACE)
-        .overflow_hidden()
-        .when(uploading.is_some(), |d| d.opacity(0.4))
-        .child(preview);
+    let shot_id = ElementId::NamedInteger(format!("{name}-chip-shot").into(), a.id.0);
+    let shot: AnyElement = match open {
+        Some((images, start)) => shot_frame(
+            ImageThumb::new(shot_id, images, start).border(LINE),
+            uploading.is_some(),
+        )
+        .child(preview)
+        .probe(format!("{name}-chip-{ix}-open"))
+        .into_any_element(),
+        None => shot_frame(div().id(shot_id).border_1().border_color(LINE), uploading.is_some())
+            .child(preview)
+            .into_any_element(),
+    };
     let meta = match uploading {
         Some(p) => format!("{}%", base::fmt::percent(f64::from(p), 1.0)),
         None => base::fmt::bytes(a.size),
@@ -177,7 +213,9 @@ fn remove_button(
             .justify_center()
             .rounded(px(RADIUS_SM))
             .border_1()
-            .cursor_pointer(),
+            .cursor_pointer()
+            // Over the thumbnail: a press here must not also open the viewer.
+            .occlude(),
     )
     .child(icon(IconName::X, 10., fg))
     .tooltip(Tooltip::text(label))

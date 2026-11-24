@@ -531,3 +531,35 @@ fn a_long_hint_is_cut_before_the_send_button_leaves_the_card(cx: &mut TestAppCon
     assert!(hint.right() <= send.left(), "the hint ends before the button: {hint:?} {send:?}");
     assert!(hint.size.width > px(40.), "the hint keeps the room that is left: {hint:?}");
 }
+
+#[gpui::test]
+fn a_chip_opens_the_image_viewer_and_its_remove_button_does_not(cx: &mut TestAppContext) {
+    let (c, _, cx) = open(cx, Composer::chat);
+    let a = c.update(cx, |c, cx| c.add_attachment(Attachment::image("a.png", png()), cx)).expect("a");
+    let file = Attachment::file("notes.txt", "/tmp/notes.txt".into(), 2_000);
+    c.update(cx, |c, cx| c.add_attachment(file, cx)).expect("file");
+    let b = c.update(cx, |c, cx| c.add_attachment(Attachment::image("b.png", png()), cx)).expect("b");
+    cx.run_until_parked();
+    let shot = |id: crate::AttachmentId, cx: &mut VisualTestContext| {
+        let selector: &'static str = Box::leak(format!("composer-chip-shot-{}", id.0).into_boxed_str());
+        cx.debug_bounds(selector).unwrap_or_else(|| panic!("`{selector}` was not laid out"))
+    };
+    let viewer_open = |cx: &mut VisualTestContext| cx.update(|window, cx| crate::viewer::is_image_viewer_open(window, cx));
+
+    let bounds = shot(b, cx);
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(viewer_open(cx), "a click on the thumbnail opens the viewer");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!viewer_open(cx));
+    assert!(cx.update(|window, cx| c.read(cx).is_focused(window, cx)), "focus is back in the composer");
+
+    // The × sits over the thumbnail's corner: it removes, it does not open.
+    let bounds = shot(a, cx);
+    let corner = gpui::point(bounds.right() - px(8.), bounds.top() + px(8.));
+    cx.simulate_click(corner, Modifiers::none());
+    cx.run_until_parked();
+    assert!(!viewer_open(cx));
+    c.read_with(cx, |c, _| assert_eq!(c.attachments().len(), 2));
+}

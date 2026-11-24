@@ -16,7 +16,7 @@ mod fade;
 mod presence;
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{Hsla, Rgba};
@@ -63,16 +63,28 @@ fn system_reduced() -> bool {
         .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false")
 }
 
+// Set once `set_reduced` was called: `init` then keeps that choice.
+static EXPLICIT: AtomicBool = AtomicBool::new(false);
+
 /// Read the reduced-motion preference once, at startup (environment, then GNOME settings).
 /// [`crate::init`] calls it; until then [`reduced`] only looks at the environment, so
-/// rendering never spawns a process.
+/// rendering never spawns a process. A choice made with [`set_reduced`] (tests turn motion
+/// off before building their app) is kept.
 pub fn init() {
+    if EXPLICIT.load(Ordering::Relaxed) {
+        return;
+    }
     let off = env_reduced().unwrap_or_else(system_reduced);
-    set_reduced(off);
+    store(off);
 }
 
-/// Turn motion off (`true`) or on, overriding what [`init`] found.
+/// Turn motion off (`true`) or on, overriding what [`init`] found or will find.
 pub fn set_reduced(off: bool) {
+    EXPLICIT.store(true, Ordering::Relaxed);
+    store(off);
+}
+
+fn store(off: bool) {
     REDUCED.store(if off { 2 } else { 1 }, Ordering::Relaxed);
 }
 
@@ -81,7 +93,7 @@ pub fn reduced() -> bool {
     match REDUCED.load(Ordering::Relaxed) {
         0 => {
             let off = env_reduced().unwrap_or(false);
-            set_reduced(off);
+            store(off);
             off
         }
         v => v == 2,

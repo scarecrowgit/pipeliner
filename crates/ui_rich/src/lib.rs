@@ -7,6 +7,10 @@
 //! - [`Composer`]: the chat and issue message box (attachments, `@` / `/` menus, send).
 //! - [`text`]: the shared core ([`text::Buffer`] is GPUI-free) and [`bind_keys`], which the
 //!   app calls once at startup.
+//!
+//! Images:
+//! - [`viewer`]: the full-window image viewer (zoom, pan, several images) and
+//!   [`viewer::ImageThumb`], the clickable thumbnail that opens it.
 
 pub mod canvas;
 pub mod charts;
@@ -17,6 +21,7 @@ pub mod markdown;
 pub mod text;
 pub mod text_area;
 pub mod text_input;
+pub mod viewer;
 
 #[cfg(test)]
 mod tests;
