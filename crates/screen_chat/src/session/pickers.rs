@@ -253,7 +253,7 @@ fn agent_popover(view: &Entity<SessionView>, cx: &App) -> AnyElement {
             .checked(choice.current)
             .tile(Tile::new(choice.icon).medium().tone(choice.tone))
             .subline(choice.sub.clone())
-            .hint(choice.model.clone())
+            .label_suffix(choice.model.clone())
             .when(n < 9, |item| item.kbd((n + 1).to_string()))
             .on_click(move |_, _, cx| v.update(cx, |this, cx| this.choose_agent(&c, cx)));
         menu = menu.item(item);
