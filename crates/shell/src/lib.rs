@@ -79,6 +79,8 @@ actions!(
         SwitchProject4,
         /// Switch to the fifth project (⌘5).
         SwitchProject5,
+        /// Enter full screen, or leave it (F11).
+        ToggleFullScreen,
     ]
 );
 
@@ -97,6 +99,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         bindings.push(KeyBinding::new(&format!("{modifier}-4"), SwitchProject4, None));
         bindings.push(KeyBinding::new(&format!("{modifier}-5"), SwitchProject5, None));
     }
+    bindings.push(KeyBinding::new("f11", ToggleFullScreen, None));
     bindings
 }
 
@@ -116,12 +119,17 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &SwitchProject3, cx| sidebar::projects::switch_to_nth(3, cx));
     cx.on_action(|_: &SwitchProject4, cx| sidebar::projects::switch_to_nth(4, cx));
     cx.on_action(|_: &SwitchProject5, cx| sidebar::projects::switch_to_nth(5, cx));
+    cx.on_action(|_: &ToggleFullScreen, cx| in_active_window(cx, |window, _| window.toggle_fullscreen()));
 }
 
-/// Run `f` in the active window, for shortcuts that open a popover or a dialog.
-fn in_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App)) {
+/// Run `f` in the active window, for shortcuts that open a popover or a dialog or act on the
+/// window. A key's action is dispatched while its window is being updated, when the window
+/// cannot be reached again, so `f` runs right after the dispatch.
+fn in_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'static) {
     if let Some(window) = cx.active_window() {
-        window.update(cx, |_, window, cx| f(window, cx)).ok();
+        cx.defer(move |cx| {
+            window.update(cx, |_, window, cx| f(window, cx)).ok();
+        });
     }
 }
 

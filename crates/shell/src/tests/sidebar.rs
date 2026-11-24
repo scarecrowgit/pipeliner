@@ -72,3 +72,25 @@ fn chat_row_actions_call_the_commands(cx: &mut TestAppContext) {
     t.click("sidebar-new-chat");
     assert_eq!(t.route(), Route::NewChat);
 }
+
+#[gpui::test]
+fn many_live_pipelines_leave_the_rail_spend_in_a_short_window(cx: &mut TestAppContext) {
+    let mut t = super::setup_in(cx, gpui::size(gpui::px(900.), gpui::px(600.)), |world| {
+        let live = world.activity.iter().find(|(_, a)| a.queued > 0).cloned().expect("a pipeline with a queue");
+        let runnable = world.runnables.iter().find(|r| r.reference == live.0).cloned().expect("its runnable");
+        for n in 0..12 {
+            let reference = model::RunnableRef(format!("pipeline:extra-{n}"));
+            let mut copy = runnable.clone();
+            copy.reference = reference.clone();
+            copy.name = format!("Extra {n}");
+            world.runnables.push(copy);
+            world.activity.push((reference, live.1.clone()));
+        }
+    });
+    t.click("sidebar-collapse");
+    assert!(t.drawn("sidebar-pipeline-extra-11"), "every live pipeline has a button");
+    let spend = t.cx.debug_bounds("rail-spend").expect("the spend block");
+    assert!(spend.bottom() <= gpui::px(600.), "the spend block stays in the window: {:?}", spend.bottom());
+    let pipelines = t.cx.debug_bounds("rail-pipelines").expect("the pipelines");
+    assert!(pipelines.bottom() <= spend.top(), "the pipelines end above the spend block");
+}

@@ -164,7 +164,7 @@ impl Sidebar {
                 .current(active == entry.section)
                 .on_click(move |_, _, cx| hub::navigate(route(), cx));
             if entry.section == Section::Inbox && inbox_waiting > 0 {
-                item = item.count(inbox_waiting.to_string());
+                item = item.count(base::fmt::count(inbox_waiting as u64));
             }
             if entry.section == Section::Chats && chats_waiting > 0 {
                 item = item.hint(format!("{chats_waiting} waiting"));
@@ -183,7 +183,7 @@ impl Sidebar {
             .child(section_head(
                 "Pipelines",
                 "sidebar-pipelines-all",
-                pipelines.len().to_string(),
+                base::fmt::count(pipelines.len() as u64),
                 Route::Agents { runnable: None },
                 window,
                 cx,

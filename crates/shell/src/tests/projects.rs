@@ -206,3 +206,18 @@ fn project_states_and_next_runs_read_as_drawn() {
     let later = next_run_label(now, now + 50 * hour);
     assert!(!later.contains(':'), "a weekday further out: {later}");
 }
+
+#[gpui::test]
+fn keys_open_the_switcher_and_the_project_settings(cx: &mut TestAppContext) {
+    let mut t = setup(cx);
+    t.cx.update(|window, _| window.activate_window());
+    t.cx.run_until_parked();
+
+    t.keys("ctrl-o");
+    assert!(t.open(ANCHOR), "⌘O opens the project switcher");
+    t.keys("escape");
+    assert!(!t.open(ANCHOR));
+
+    t.keys("ctrl-,");
+    assert!(t.open(FORM_DIALOG), "⌘, opens the current project's settings");
+}

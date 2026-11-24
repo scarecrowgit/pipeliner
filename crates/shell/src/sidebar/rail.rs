@@ -56,7 +56,7 @@ impl Sidebar {
                 .on_click(move |_, _, cx| hub::navigate(route(), cx));
             let tooltip = match entry.section {
                 Section::Inbox if inbox_waiting > 0 => {
-                    button = button.count(inbox_waiting.to_string());
+                    button = button.count(base::fmt::count(inbox_waiting as u64));
                     format!("{label} · {inbox_waiting} waiting")
                 }
                 Section::Chats if chats_waiting > 0 => {
@@ -129,7 +129,18 @@ impl Sidebar {
             .child(rule())
             .child(col().flex_none().items_center().gap(px(SPACE_1)).children(nav))
             .child(rule())
-            .child(col().flex_none().items_center().gap(px(SPACE_1)).children(pipelines))
+            // Many live pipelines in a short window scroll here; the spend block stays at the foot.
+            .child(
+                col()
+                    .id("rail-pipelines")
+                    .debug_selector(|| "rail-pipelines".into())
+                    .flex_shrink()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .items_center()
+                    .gap(px(SPACE_1))
+                    .children(pipelines),
+            )
             .child(div().flex_1().min_h_0())
             .child(spend_block)
             .into_any_element()

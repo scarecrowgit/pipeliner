@@ -1,7 +1,7 @@
 //! Which view the shell shows for which route. Sections without a screen yet fall back to the
 //! shell's placeholder.
 
-use gpui::AppContext as _;
+use gpui::{AppContext as _, Focusable as _};
 use hub::Route;
 use screen_chat::{ChatsView, NewChatView, SessionView};
 use screen_editor::EditorView;
@@ -137,14 +137,18 @@ pub fn all() -> Screens {
         })
         .add(ScreenKind::Home, Keep::One, |_, window, cx| {
             let view = cx.new(|cx| HomeView::new(window, cx));
+            let shown = view.clone();
             let for_header = view.clone();
-            Mounted::new(view).header(move |window, cx| {
-                let title = for_header.read(cx).title(cx);
-                let (badges, actions) = for_header
-                    .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
-                let header = badges.into_iter().fold(Header::title(title), Header::after);
-                actions.into_iter().fold(header, Header::action)
-            })
+            Mounted::new(view)
+                // Back on Home, J/K and Enter work at once: the kept view takes focus again.
+                .on_show(move |_, window, cx| window.focus(&shown.focus_handle(cx)))
+                .header(move |window, cx| {
+                    let title = for_header.read(cx).title(cx);
+                    let (badges, actions) = for_header
+                        .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                    let header = badges.into_iter().fold(Header::title(title), Header::after);
+                    actions.into_iter().fold(header, Header::action)
+                })
         })
         .add(ScreenKind::Editor, Keep::One, |route, window, cx| {
             let (pipeline, node) = match route {

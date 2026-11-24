@@ -2,6 +2,7 @@
 //! following hub events, collapse, the placeholder, toasts, row actions and keys.
 
 mod chrome;
+mod header;
 mod projects;
 mod sidebar;
 
@@ -78,7 +79,13 @@ fn setup(cx: &mut TestAppContext) -> Setup {
 
 /// [`setup`] in a window `width` px wide.
 fn setup_with_width(cx: &mut TestAppContext, width: f32) -> Setup {
+    setup_in(cx, gpui::size(px(width), px(1000.)), |_| {})
+}
+
+/// [`setup`] in a window of `size`, after `edit` changed the world.
+fn setup_in(cx: &mut TestAppContext, size: gpui::Size<gpui::Pixels>, edit: impl FnOnce(&mut World)) -> Setup {
     let api = Arc::new(FixtureApi::new(World::acme(NOW)));
+    api.with_world(edit);
     let hub = cx.update(|cx| {
         ui::motion::set_reduced(true);
         ui::keys::init(cx);
@@ -92,7 +99,7 @@ fn setup_with_width(cx: &mut TestAppContext, width: f32) -> Setup {
     let out = slot.clone();
     let window = cx
         .update(|cx| {
-            let bounds = Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(width), px(1000.)));
+            let bounds = Bounds::new(gpui::point(px(0.), px(0.)), size);
             cx.open_window(
                 WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },
                 move |window, cx| {

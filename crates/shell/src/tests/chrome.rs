@@ -117,10 +117,19 @@ fn keys_open_the_palette_start_a_chat_and_collapse(cx: &mut TestAppContext) {
     assert!(!t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));
     assert!(!t.cx.update(|_, cx| router.read(cx).is_open(Overlay::Palette)));
 
+    // ⌘K opens it again after Escape, and closes it when pressed while it is open.
+    t.cx.simulate_keystrokes("ctrl-k");
+    t.cx.run_until_parked();
+    assert!(t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)), "⌘K reopens");
+    t.cx.simulate_keystrokes("ctrl-k");
+    t.cx.run_until_parked();
+    assert!(!t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)), "⌘K closes");
+    assert_eq!(built.get(), 2);
+
     // The search field opens it too; navigating closes it.
     t.click("sidebar-search");
     assert!(t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));
-    assert_eq!(built.get(), 2, "each opening builds a fresh palette");
+    assert_eq!(built.get(), 3, "each opening builds a fresh palette");
     t.cx.update(|_, cx| hub::navigate(Route::Chats, cx));
     t.cx.run_until_parked();
     assert!(!t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));
@@ -132,4 +141,36 @@ fn keys_open_the_palette_start_a_chat_and_collapse(cx: &mut TestAppContext) {
     t.cx.simulate_keystrokes("ctrl-\\");
     t.cx.run_until_parked();
     assert!(t.shown().collapsed);
+}
+
+#[gpui::test]
+fn f11_enters_and_leaves_full_screen_from_anywhere(cx: &mut TestAppContext) {
+    let mut t = setup(cx);
+    // Keys reach a window only while it is the active one, as on the desktop.
+    t.cx.update(|window, _| window.activate_window());
+    t.cx.run_until_parked();
+    let full = |t: &mut super::Setup| t.cx.update(|window, _| window.is_fullscreen());
+    assert!(!full(&mut t));
+
+    t.keys("f11");
+    assert!(full(&mut t), "F11 with nothing focused");
+    t.navigate(Route::Chats);
+    t.keys("f11");
+    assert!(!full(&mut t), "F11 again, on another screen");
+
+    // With a text field focused: the project form's name field takes focus when it opens.
+    t.click("sidebar-project");
+    t.click("project-settings");
+    assert!(t.open(crate::sidebar::projects::form::FORM_DIALOG));
+    t.keys("f11");
+    assert!(full(&mut t), "F11 while a text field has focus");
+    assert!(t.open(crate::sidebar::projects::form::FORM_DIALOG), "the dialog stays open");
+    t.keys("f11");
+    assert!(!full(&mut t));
+    // The field still takes text: F11 did not end up typed or steal focus.
+    t.keys("ctrl-a");
+    t.typed("Payments core");
+    t.click("project-form-save");
+    let name = t.api.with_world(|world| world.projects.iter().find(|p| p.id.as_str() == "payments").map(|p| p.name.clone()));
+    assert_eq!(name.as_deref(), Some("Payments core"));
 }

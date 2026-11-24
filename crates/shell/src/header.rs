@@ -25,14 +25,20 @@ impl RenderOnce for HeaderBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Header { crumbs, after, actions, .. } = self.header;
         let last = crumbs.len().saturating_sub(1);
-        let mut trail = row().gap(px(SPACE_1_5)).min_w_0().flex_shrink().type_style(HEADING);
+        // Every crumb gives way with an ellipsis when the bar is short of room, so a long trail
+        // never runs under the actions.
+        let mut trail = row().gap(px(SPACE_1_5)).min_w_0().flex_shrink().overflow_hidden().type_style(HEADING);
         for (ix, crumb) in crumbs.into_iter().enumerate() {
             if ix < last {
                 trail = trail
                     .child(crumb_link(ix, crumb, window, cx))
-                    .child(icon(IconName::ChevronRight, 14., TEXT_DISABLED));
+                    .child(div().flex_none().child(icon(IconName::ChevronRight, 14., TEXT_DISABLED)));
             } else {
-                trail = trail.child(truncate(crumb.label).text_color(TEXT));
+                trail = trail.child(
+                    div().id("header-title").debug_selector(|| "header-title".into()).flex().min_w_0().child(
+                        truncate(crumb.label).text_color(TEXT),
+                    ),
+                );
             }
         }
         row()
@@ -48,7 +54,14 @@ impl RenderOnce for HeaderBar {
             .child(trail)
             .child(after_row(after))
             .child(grow())
-            .child(row().flex_none().gap(px(SPACE_2)).children(actions))
+            .child(
+                row()
+                    .id("header-actions")
+                    .debug_selector(|| "header-actions".into())
+                    .flex_none()
+                    .gap(px(SPACE_2))
+                    .children(actions),
+            )
             .probe("header")
     }
 }
@@ -77,14 +90,14 @@ fn crumb_link(ix: usize, crumb: Crumb, window: &mut Window, cx: &mut App) -> imp
     let el = div()
         .id(gpui::ElementId::Name(name.clone()))
         .debug_selector(move || selector)
-        .flex_none()
-        .whitespace_nowrap()
+        .flex()
+        .min_w_0()
         .font_weight(gpui::FontWeight::NORMAL)
         .when(crumb.route.is_some(), |d| d.cursor_pointer());
     let route = crumb.route;
     faded
         .apply(el)
-        .child(crumb.label)
+        .child(truncate(crumb.label))
         .when_some(route, |d, route| d.on_click(move |_, _, cx| hub::navigate(route.clone(), cx)))
         .probe(name)
 }
