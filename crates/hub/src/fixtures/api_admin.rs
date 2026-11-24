@@ -375,8 +375,7 @@ impl OpsApi for FixtureApi {
     fn project_counts(&self) -> Result<Vec<crate::api::ProjectCounts>> {
         self.fail_if_told("project_counts")?;
         let world = self.world();
-        let open: Vec<_> = world.runs.iter().filter(|run| run.state.is_open()).cloned().collect();
-        Ok(crate::api::project_counts_of(&world.projects, &world.issues, &open))
+        Ok(crate::api::project_counts_of(&world.projects, &world.issues, &world.runs))
     }
 
     fn set_daily_limit(&self, usd: Option<f64>) -> Result<()> {

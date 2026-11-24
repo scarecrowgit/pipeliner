@@ -101,9 +101,44 @@ pub fn fill(world: &mut World) {
             vec![IssueEvent { seq: 1, at: now - card.age, actor: Actor::Me, kind: IssueEventKind::Created }],
         );
     }
+    checkout_issue(world);
     feed_1440(world);
     feed_1427(world);
     autopilots(world);
+}
+
+/// An issue of another project whose run failed, so the project switcher has a failed run
+/// to show (the run is in `data_runs`).
+fn checkout_issue(world: &mut World) {
+    let now = world.now;
+    let key = IssueKey::new("DAT-58");
+    world.issues.push(Issue {
+        key: key.clone(),
+        project: ProjectId::new("data"),
+        title: "Nightly export misses refunds".to_string(),
+        body: "The warehouse export skips refunds booked after 23:00.".to_string(),
+        status: IssueStatus::InProgress,
+        priority: Priority::Medium,
+        kind: IssueType::Bug,
+        owner: "Nina Kim".to_string(),
+        repo: Some("warehouse".to_string()),
+        created: now - 2 * DAY,
+        updated: now - 3 * HOUR,
+        filed_by: None,
+        runner: Some(RunnableRef::pipeline("pay-triage")),
+        triggers: StartTriggers::default(),
+        run_count: 1,
+        run: Some(RunId::new("run-dat-58")),
+        pr_url: None,
+        images: Vec::new(),
+    });
+    world.issue_events.insert(key, vec![IssueEvent { seq: 1, at: now - 2 * DAY, actor: Actor::Me, kind: IssueEventKind::Created }]);
+}
+
+/// The next 02:00 local time after `now`.
+fn next_two_am(now: i64) -> i64 {
+    let today = base::time::day_start(now, base::time::utc_offset(now)) + 2 * HOUR;
+    if today > now { today } else { base::time::day_start(today + DAY, base::time::utc_offset(today + DAY)) + 2 * HOUR }
 }
 
 fn runnable(reference: RunnableRef, name: &str) -> Actor {
@@ -211,6 +246,20 @@ fn autopilots(world: &mut World) {
             next_run: None,
             last_run: Some(now - 2 * HOUR),
             last_result: "3 issues today".into(),
+            budget_usd: Some(0.5),
+        },
+        Autopilot {
+            id: AutopilotId::new("ap-nightly-audit"),
+            project: ProjectId::new("platform"),
+            name: "Nightly audit".into(),
+            trigger: AutopilotTrigger::Schedule { schedule: Schedule::Day { hour: 2, minute: 0 } },
+            target: RunnableRef::pipeline("nightly-audit"),
+            prompt: "Audit log redaction and dependency licences.".into(),
+            enabled: true,
+            paused_reason: None,
+            next_run: Some(next_two_am(now)),
+            last_run: Some(next_two_am(now) - 2 * DAY),
+            last_result: "started a run".into(),
             budget_usd: Some(0.5),
         },
         Autopilot {

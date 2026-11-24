@@ -340,7 +340,9 @@ impl OpsApi for Engine {
         for project in &projects {
             issues.extend(store.issues(&project.id)?);
         }
-        Ok(crate::api::project_counts_of(&projects, &issues, &store.open_runs()?))
+        let mut runs = store.open_runs()?;
+        runs.extend(store.latest_runs()?);
+        Ok(crate::api::project_counts_of(&projects, &issues, &runs))
     }
 
     fn set_daily_limit(&self, usd: Option<f64>) -> Result<()> {

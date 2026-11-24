@@ -116,7 +116,7 @@ fn workdir_issue_and_run_queries_answer() {
     let run = RunId::new("run-1427");
     assert!(api.run(&run).ok().flatten().is_some_and(|run| run.issue == Some(IssueKey::new("PAY-1427"))));
     let latest = api.latest_runs().unwrap_or_default();
-    assert_eq!(latest.len(), 3, "one per issue; the finished test run is left out");
+    assert_eq!(latest.len(), 4, "one per issue (three PAY, one DAT); the finished test run is left out");
     assert!(latest.iter().all(|run| run.issue.is_some()));
     assert!(!api.runs_for_issue(&IssueKey::new("PAY-1427")).unwrap_or_default().is_empty());
     assert_eq!(api.run_log_tail(&run, 5).map(|lines| lines.len()).ok(), Some(5));

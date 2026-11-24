@@ -163,3 +163,27 @@ fn spend_of_runnables_agents_created_is_marked(cx: &mut TestAppContext) {
     assert!(rows.iter().any(|row| row.spawned && row.runnable.as_str().starts_with("spawned:")), "{rows:#?}");
     assert!(rows.iter().filter(|row| !row.runnable.as_str().starts_with("spawned:")).all(|row| !row.spawned));
 }
+
+#[gpui::test]
+fn the_switcher_sees_waiting_and_failed_runs_and_the_nightly_audit_at_two(cx: &mut TestAppContext) {
+    let (_api, _hub) = setup(cx);
+    let ops = cx.update(crate::ops);
+    cx.update(|cx| {
+        ops.update(cx, |ops, cx| {
+            ops.ensure_project_counts(cx);
+            ops.ensure_schedules(cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let ops = ops.read(cx);
+        let pay = ops.counts_for(&crate::api::ProjectId::new("payments")).expect("payments");
+        assert_eq!((pay.working_runs, pay.waiting_runs, pay.failed_runs), (1, 2, 0), "{pay:?}");
+        let data = ops.counts_for(&crate::api::ProjectId::new("data")).expect("data");
+        assert_eq!((data.open_issues, data.failed_runs), (1, 1), "{data:?}");
+        let at = ops.next_scheduled_run(&crate::api::RunnableRef::pipeline("nightly-audit")).expect("scheduled");
+        assert!(at > super::NOW && at <= super::NOW + 24 * 3_600_000);
+        let local = base::time::civil(at, base::time::utc_offset(at));
+        assert_eq!((local.hour, local.minute), (2, 0));
+    });
+}

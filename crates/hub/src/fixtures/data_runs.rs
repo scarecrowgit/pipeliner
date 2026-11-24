@@ -306,7 +306,21 @@ pub fn fill(world: &mut World) {
     );
     test.test = true;
     test.version = 0;
-    world.runs = vec![r1423, r1427, r1431, test];
+    let t = now - 3 * HOUR;
+    let mut dat = run(
+        "run-dat-58",
+        Some("DAT-58"),
+        "Nightly export misses refunds",
+        RunState::Failed,
+        t,
+        0.09,
+        vec![
+            instance("jira", "Jira puller", 0, Done, Step, t, 0.0, "DAT-58 pulled"),
+            instance("repro", "Reproducer", 0, Failed, Agent, t + MINUTE, 0.09, "The warehouse was unreachable"),
+        ],
+    );
+    dat.error = Some("Reproducer failed: the warehouse was unreachable".into());
+    world.runs = vec![r1423, r1427, r1431, test, dat];
     world.logs.insert(RunId::new("run-1427"), log_1427(now - 20 * MINUTE));
 }
 

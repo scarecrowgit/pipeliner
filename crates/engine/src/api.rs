@@ -516,7 +516,8 @@ pub struct SweptWorktree {
     pub reason: String,
 }
 
-/// What the project switcher shows next to a project.
+/// What the project switcher shows next to a project: open issues and the live state of its
+/// runs (running / waiting for you / failed).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectCounts {
     pub project: ProjectId,
@@ -524,21 +525,35 @@ pub struct ProjectCounts {
     pub open_issues: u32,
     /// Runs on its issues that are working now (`RunState::Running`).
     pub working_runs: u32,
+    /// Runs on its issues that wait for a person: a review, a question or a budget.
+    pub waiting_runs: u32,
+    /// Issues not done whose latest run failed (and was not resumed).
+    pub failed_runs: u32,
 }
 
-/// [`OpsApi::project_counts`] from the projects' issues and the open runs.
-pub fn project_counts_of(projects: &[Project], issues: &[Issue], open_runs: &[Run]) -> Vec<ProjectCounts> {
+/// [`OpsApi::project_counts`] from the projects' issues and their runs (the open ones and the
+/// latest of each issue; duplicates are ignored).
+pub fn project_counts_of(projects: &[Project], issues: &[Issue], runs: &[Run]) -> Vec<ProjectCounts> {
+    let mut seen = std::collections::HashSet::new();
+    let runs: Vec<&Run> = runs.iter().filter(|run| seen.insert(run.id.clone())).collect();
+    let latest = |key: &IssueKey| {
+        runs.iter().filter(|run| run.issue.as_ref() == Some(key)).max_by_key(|run| (run.number, run.started)).copied()
+    };
     projects
         .iter()
         .map(|project| {
-            let mine = || issues.iter().filter(|issue| issue.project == project.id);
-            let open_issues = mine().filter(|issue| issue.status != IssueStatus::Done).count() as u32;
-            let working_runs = open_runs
-                .iter()
-                .filter(|run| run.state == RunState::Running)
-                .filter(|run| run.issue.as_ref().is_some_and(|key| mine().any(|issue| &issue.key == key)))
-                .count() as u32;
-            ProjectCounts { project: project.id.clone(), open_issues, working_runs }
+            let mine: Vec<&Issue> = issues.iter().filter(|issue| issue.project == project.id).collect();
+            let on_mine = |run: &&&Run| run.issue.as_ref().is_some_and(|key| mine.iter().any(|issue| &issue.key == key));
+            let count = |pick: &dyn Fn(&Run) -> bool| runs.iter().filter(on_mine).filter(|run| pick(run)).count() as u32;
+            let open: Vec<&&Issue> = mine.iter().filter(|issue| issue.status != IssueStatus::Done).collect();
+            let failed = open.iter().filter(|issue| latest(&issue.key).is_some_and(|run| run.state == RunState::Failed)).count();
+            ProjectCounts {
+                project: project.id.clone(),
+                open_issues: open.len() as u32,
+                working_runs: count(&|run| run.state == RunState::Running),
+                waiting_runs: count(&|run| run.state.needs_person()),
+                failed_runs: failed as u32,
+            }
         })
         .collect()
 }

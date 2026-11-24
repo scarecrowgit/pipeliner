@@ -349,7 +349,32 @@ fn project_counts_schedules_and_spend_of_spawned_sessions() {
     let project = project(&fx);
     let issue = fx.engine.create_issue(crate::api::NewIssue { project: project.clone(), title: "One".into(), ..Default::default() }).unwrap();
     let counts = fx.engine.project_counts().unwrap();
-    assert_eq!(counts, vec![crate::api::ProjectCounts { project: project.clone(), open_issues: 1, working_runs: 0 }]);
+    assert_eq!(counts, vec![crate::api::ProjectCounts { project: project.clone(), open_issues: 1, ..Default::default() }]);
+    // Waiting and failed runs on its issues.
+    let shell = |id: &str, state: RunState, number: u32| Run {
+        id: RunId::new(id),
+        pipeline: PipelineId::new("fix"),
+        version: 1,
+        issue: Some(issue.key.clone()),
+        number,
+        title: id.into(),
+        input: String::new(),
+        state,
+        test: false,
+        started: NOW + i64::from(number),
+        finished: None,
+        cost_usd: 0.0,
+        usage: Default::default(),
+        error: None,
+        pr_url: None,
+        nodes: Vec::new(),
+    };
+    fx.engine.inner.store.upsert_run(&shell("r1", RunState::Failed, 1)).unwrap();
+    let counts = fx.engine.project_counts().unwrap().remove(0);
+    assert_eq!((counts.working_runs, counts.waiting_runs, counts.failed_runs), (0, 0, 1));
+    fx.engine.inner.store.upsert_run(&shell("r2", RunState::WaitingReview, 2)).unwrap();
+    let counts = fx.engine.project_counts().unwrap().remove(0);
+    assert_eq!((counts.working_runs, counts.waiting_runs, counts.failed_runs), (0, 1, 0), "a later run replaces the failed one");
     fx.engine.update_issue(&issue.key, crate::api::IssuePatch { status: Some(model::IssueStatus::Done), ..Default::default() }).unwrap();
     assert_eq!(fx.engine.project_counts().unwrap()[0].open_issues, 0);
 
