@@ -39,6 +39,38 @@ nix-shell shell.nix --run 'CARGO_TARGET_DIR=target/domain cargo test -p <crate>'
 
 A change is done when the build is clean, tests pass and clippy has no warnings.
 
+Cargo may build outside the repository: when `CARGO_TARGET_DIR` is set in the environment,
+`target/debug` and `target/release` here are links to that directory. Check where a binary
+really is before running it; an example binary from an earlier build can be stale.
+
+## Running and checking in a real window
+
+```bash
+nix-shell shell.nix --run 'cargo run -p app' </dev/null                       # the real engine, your data
+nix-shell shell.nix --run 'cargo run -p app -- --fixture chat-session' </dev/null   # the in-memory fixture world
+scripts/build-desktop.sh            # release build into dist/harness-next + menu entry
+```
+
+Fixture names are `hub::fixtures::SCENARIOS`. Every screen crate also has
+`examples/preview.rs --fixture <name>` showing the screen alone.
+
+UI work is checked in a window, not only by tests. The dev driver clicks, types and
+screenshots through probes (`.probe("name")` on elements):
+
+```bash
+nix-shell shell.nix --run 'cargo build -p devtools -p app' </dev/null
+nix-shell shell.nix --run 'target/debug/harness-dev mockup chat-session --out /tmp/mock.png' </dev/null
+nix-shell shell.nix --run 'target/debug/harness-dev run target/debug/harness --script check.script --width 1440 -- --fixture chat-session' </dev/null
+```
+
+A script is one command per line: `wait`, `sleep <ms>`, `click <probe>`, `type "<text>"`,
+`key <keystroke>`, `drag <from> <to>`, `scroll <probe> <dx> <dy>`, `text <probe>`, `probes`,
+`shot <png>`, `quit`. Compare the screenshot with the rendered mockup by eye.
+
+The engine can be driven without a window through `harness-cli` (`chat`, `issue`, `run`,
+`review`, `pipeline`, `import`); `HARNESS_CONFIG` and `HARNESS_DATA` point it and the app at
+another config file and data directory.
+
 ## Rules for subagents
 
 You own the crates or modules named in your brief, nothing else.
@@ -95,3 +127,18 @@ You own the crates or modules named in your brief, nothing else.
 - There are no element transforms: zoom by multiplying layout units, not by scaling.
 - Element ids must be unique among siblings; use `("name", index)` tuples in lists.
 - The background executor has one thread per core; long agent work never runs there.
+- Wrapping text needs a definite pixel width. A column with a relative width
+  (`w_full().max_w(..)`) inside a flex row makes taffy measure markdown at the wrong width:
+  rows came out thousands of pixels tall. Measure the container and pass the width down.
+- A text field needs width (`flex_1().min_w_0()`); in a row whose sibling has long
+  unbreakable text it collapses to nothing and takes no keys.
+- A view is built by the shell before it is in the window: take focus when it is first
+  drawn or shown, not only in `new`.
+- `text_ellipsis` drops every styled run after the first once the text is cut; use the kit's
+  `truncate_styled` / `truncate_middle`.
+- In `#[gpui::test]`, `debug_bounds` is never cleared between frames: an element that is gone
+  still has bounds. Assert on state, or on what the last frame laid out, not on absence.
+- A `ListState::splice` over a range that contains the scroll anchor resets the scroll
+  position: emit one splice per run of edited rows.
+- Typing in tests must go through the window's key dispatch, not through methods on the
+  field: only that catches a field that never got focus.
