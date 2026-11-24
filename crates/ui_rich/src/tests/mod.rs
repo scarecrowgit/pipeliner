@@ -2,6 +2,8 @@
 //! events. GPUI's test platform has no real text shaping, so geometry (wrapping, vertical
 //! movement) is tested on the buffer with a fake layout instead.
 
+mod composer;
+mod composer_spans;
 mod geometry;
 mod text_area;
 mod text_input;
