@@ -7,6 +7,7 @@ use ui::dev::Probe;
 use ui::prelude::*;
 
 use crate::review::{letter_tile, tests_color, tests_label};
+use crate::texts::{Look, cell};
 use crate::view::InboxView;
 
 /// Width of the row labels ("Approach", "Lines"…).
@@ -175,10 +176,15 @@ impl InboxView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row_ix {
-            0 => div()
-                .text_color(TEXT_SECONDARY)
-                .child(variant.approach.clone())
-                .into_any_element(),
+            0 => {
+                let approach = self.texts.get(
+                    format!("approach-{}", variant.index),
+                    variant.approach.clone(),
+                    Look::plain(BODY, TEXT_SECONDARY),
+                    cx,
+                );
+                cell("review-approach", approach).into_any_element()
+            }
             1 => counts(variant.added, variant.removed).into_any_element(),
             2 => self.files_cell(variant, selected, file, cx),
             3 => {

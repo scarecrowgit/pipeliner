@@ -14,10 +14,15 @@ use hub::api::{
 use ui::dev::Probe;
 use ui::prelude::*;
 
+use crate::texts::{Look, block, cell};
 use crate::view::InboxView;
 
 /// Height of a rendered mockup in the renders card.
 const SHOT_HEIGHT: f32 = 220.;
+/// Width of a line of text in the middle of the empty detail area.
+const PLACEHOLDER_WIDTH: f32 = 420.;
+/// Width of the hint under "Nothing waits for you".
+const EMPTY_HINT_WIDTH: f32 = 360.;
 
 /// "212 of 212 passed", "211 of 212 · 1 failed", "Passed", "Failed", "No tests", "Not run",
 /// and whether it reads as a pass.
@@ -101,30 +106,73 @@ impl InboxView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let item = self.current_item(cx);
+        let scope = match (&self.review, &item) {
+            (Some(open), _) => format!("review/{}", open.id),
+            (None, Some(item)) => format!("item/{}", item.id),
+            (None, None) => String::new(),
+        };
+        if self.texts.scope(scope, window, cx) {
+            // The text that had the keys is gone with the item it belonged to.
+            window.focus(&self.focus_handle);
+        }
         if let Some(open) = &self.review {
             let model = open.model.read(cx);
             return match (model.review().cloned(), model.state().clone()) {
                 (Some(review), _) => self.render_review(review, window, cx),
                 (None, LoadState::Failed(error)) => {
-                    placeholder(format!("Could not load the review: {error}"), true)
+                    self.error_placeholder(format!("Could not load the review: {error}"), cx)
                 }
-                (None, _) => placeholder("Loading the review…", false),
+                (None, _) => self.placeholder("Loading the review…"),
             };
         }
-        match self.current_item(cx) {
+        match item {
             Some(item) => self.render_item(item, window, cx),
             None => {
                 let waiting = self.live_items(crate::list::Tab::Waiting, cx).len();
-                match self.inbox.read(cx).state() {
-                    LoadState::Loading => placeholder("Loading…", false),
+                match self.inbox.read(cx).state().clone() {
+                    LoadState::Loading => self.placeholder("Loading…"),
                     LoadState::Failed(error) => {
-                        placeholder(format!("Could not load the inbox: {error}"), true)
+                        self.error_placeholder(format!("Could not load the inbox: {error}"), cx)
                     }
-                    LoadState::Ready if waiting == 0 => empty_state(),
-                    LoadState::Ready => placeholder("Pick an item on the left", false),
+                    LoadState::Ready if waiting == 0 => empty_state(self.content_width()),
+                    LoadState::Ready => self.placeholder("Pick an item on the left"),
                 }
             }
         }
+    }
+
+    /// A centred line in the detail area: loading, a hint.
+    fn placeholder(&self, text: &'static str) -> AnyElement {
+        col()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(PLACEHOLDER_WIDTH.min(self.content_width())))
+                    .text_center()
+                    .text_color(TEXT_MUTED)
+                    .child(text),
+            )
+            .into_any_element()
+    }
+
+    /// A centred error in the detail area, which can be selected and copied.
+    fn error_placeholder(&mut self, text: String, cx: &mut Context<Self>) -> AnyElement {
+        let error = self
+            .texts
+            .get("load-error", text, Look::plain(BODY, DANGER), cx);
+        col()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(PLACEHOLDER_WIDTH.min(self.content_width())))
+                    .child(block("detail-error", error)),
+            )
+            .into_any_element()
     }
 
     /// The scrolling column every detail lives in: a fixed width, 24px padding.
@@ -158,8 +206,14 @@ impl InboxView {
             .cloned();
         let mut content: Vec<AnyElement> = vec![self.review_head(&review, cx)];
         if review.state != ReviewState::Open {
+            let decided = self.texts.get(
+                "decided",
+                decided_label(&review),
+                Look::plain(BODY, TEXT),
+                cx,
+            );
             content.push(
-                div()
+                col()
                     .mt(px(SPACE_4))
                     .debug_selector(|| "review-closed".into())
                     .child(
@@ -178,9 +232,10 @@ impl InboxView {
                                 14.,
                                 TEXT_SECONDARY,
                             ))
-                            .child(div().flex_1().min_w_0().child(decided_label(&review)))
+                            .child(cell("review-closed-text", decided))
                             .child(
                                 div()
+                                    .flex_none()
                                     .type_style(LABEL)
                                     .text_color(TEXT_MUTED)
                                     .child("This review is closed"),
@@ -211,20 +266,28 @@ impl InboxView {
             .cloned()
             .collect();
         if !shots.is_empty() {
+            let paths: Vec<_> = shots
+                .iter()
+                .enumerate()
+                .map(|(ix, shot)| {
+                    self.texts.get(
+                        format!("shot-{ix}-path"),
+                        shot.path.clone(),
+                        Look::plain(MONO, TEXT),
+                        cx,
+                    )
+                })
+                .collect();
             content.push(
                 div()
                     .mt(px(SPACE_4))
-                    .child(render_shots(&shots, cx))
+                    .child(render_shots(&shots, paths, cx))
                     .into_any_element(),
             );
         }
         if !review.feedback.is_empty() {
-            content.push(
-                div()
-                    .mt(px(SPACE_4))
-                    .child(self.render_notes(&review))
-                    .into_any_element(),
-            );
+            let notes = self.render_notes(&review, cx);
+            content.push(div().mt(px(SPACE_4)).child(notes).into_any_element());
         }
         let column = self.detail_column("review-scroll", content);
         col()
@@ -264,39 +327,27 @@ impl InboxView {
                     }),
                 )
             });
-        let last = review.provenance.len().saturating_sub(1);
-        let mut trail = row()
-            .flex_shrink()
-            .min_w_0()
-            .gap(px(SPACE_1_5))
-            .type_style(MONO)
-            .text_color(TEXT_SECONDARY);
-        for (ix, step) in review.provenance.iter().enumerate() {
-            if ix > 0 {
-                trail = trail.child(div().text_color(TEXT_DISABLED).child("›"));
-            }
-            trail = trail.child(
-                div()
-                    .flex_none()
-                    .when(ix == last, |d| d.text_color(TEXT))
-                    .child(step.clone()),
-            );
-        }
+        let trail = provenance_line(&review.provenance);
         let spawned = self.spawned_summary(review, cx);
+        let title = self.texts.get(
+            "title",
+            review.title.clone(),
+            Look::plain(TITLE_LG, TEXT),
+            cx,
+        );
         col()
             .child(tags)
-            .child(
-                div()
-                    .mt(px(SPACE_2))
-                    .type_style(TITLE_LG)
-                    .child(review.title.clone()),
-            )
+            .child(div().mt(px(SPACE_2)).child(block("review-title", title)))
             .child(
                 row()
                     .mt(px(SPACE_2_5))
                     .gap(px(SPACE_2_5))
+                    .type_style(MONO)
+                    .text_color(TEXT_SECONDARY)
                     .child(trail)
-                    .when_some(spawned, |d, text| d.child(SpawnChip::new(text))),
+                    .when_some(spawned, |d, text| {
+                        d.child(div().flex_none().child(SpawnChip::new(text)))
+                    }),
             )
             .into_any_element()
     }
@@ -326,8 +377,8 @@ impl InboxView {
         Some(format!("{}{by}", list.join(", ")).into())
     }
 
-    /// Earlier "Send back" notes, oldest first.
-    fn render_notes(&self, review: &Review) -> AnyElement {
+    /// Earlier "Send back" notes, oldest first; their text can be selected.
+    fn render_notes(&mut self, review: &Review, cx: &mut Context<Self>) -> AnyElement {
         let now = self.now();
         let offset = base::time::utc_offset(now);
         let rows: Vec<AnyElement> = review
@@ -335,6 +386,12 @@ impl InboxView {
             .iter()
             .enumerate()
             .map(|(ix, note)| {
+                let text = self.texts.get(
+                    format!("note-{ix}"),
+                    note.text.clone(),
+                    Look::plain(BODY, TEXT_SECONDARY),
+                    cx,
+                );
                 col()
                     .gap(px(SPACE_1))
                     .py(px(SPACE_3))
@@ -353,7 +410,7 @@ impl InboxView {
                                     .child(base::time::ago(now, note.at, offset)),
                             ),
                     )
-                    .child(div().text_color(TEXT_SECONDARY).child(note.text.clone()))
+                    .child(block("review-note", text))
                     .into_any_element()
             })
             .collect();
@@ -438,8 +495,39 @@ impl InboxView {
     }
 }
 
-/// Before and after pictures of rendered files.
-fn render_shots(shots: &[Shot], cx: &Context<InboxView>) -> AnyElement {
+/// "triage › fixer › review" on one line, the last step brighter, ending in `…` when it does
+/// not fit; as wide as its text otherwise.
+fn provenance_line(steps: &[String]) -> AnyElement {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    let last = steps.len().saturating_sub(1);
+    for (ix, step) in steps.iter().enumerate() {
+        if ix > 0 {
+            let start = text.len();
+            text.push_str(" › ");
+            highlights.push((start..text.len(), TEXT_DISABLED.into()));
+        }
+        let start = text.len();
+        text.push_str(step);
+        if ix == last {
+            highlights.push((start..text.len(), TEXT.into()));
+        }
+    }
+    div()
+        .flex()
+        .flex_shrink()
+        .min_w_0()
+        .debug_selector(|| "review-provenance".into())
+        .child(truncate_styled(text, highlights, MONO.line).flex_initial())
+        .into_any_element()
+}
+
+/// Before and after pictures of rendered files, each under its path (`paths`, in order).
+fn render_shots(
+    shots: &[Shot],
+    paths: Vec<gpui::Entity<ui_rich::markdown::Markdown>>,
+    cx: &Context<InboxView>,
+) -> AnyElement {
     let queries = hub::queries(cx);
     let picture = |label: &'static str, blob: &hub::api::BlobId, shot: &Shot| {
         let ratio = if shot.height > 0 {
@@ -470,13 +558,14 @@ fn render_shots(shots: &[Shot], cx: &Context<InboxView>) -> AnyElement {
     };
     let rows: Vec<AnyElement> = shots
         .iter()
+        .zip(paths)
         .enumerate()
-        .map(|(ix, shot)| {
+        .map(|(ix, (shot, path))| {
             col()
                 .gap(px(SPACE_2))
                 .p(px(SPACE_4))
                 .when(ix > 0, |d| d.border_t_1().border_color(LINE_SUBTLE))
-                .child(div().type_style(MONO).child(shot.path.clone()))
+                .child(block("review-shot-path", path))
                 .child(
                     div()
                         .id(ElementId::NamedInteger("review-shot".into(), ix as u64))
@@ -502,24 +591,8 @@ fn render_shots(shots: &[Shot], cx: &Context<InboxView>) -> AnyElement {
         .into_any_element()
 }
 
-/// A centred line in the detail area: loading, an error, a hint.
-pub(crate) fn placeholder(text: impl Into<SharedString>, error: bool) -> AnyElement {
-    col()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .w(px(420.))
-                .text_center()
-                .text_color(if error { DANGER } else { TEXT_MUTED })
-                .child(text.into()),
-        )
-        .into_any_element()
-}
-
-/// Nothing waits for a person.
-fn empty_state() -> AnyElement {
+/// Nothing waits for a person; the hint is at most `width` wide.
+fn empty_state(width: f32) -> AnyElement {
     col()
         .flex_1()
         .items_center()
@@ -530,7 +603,7 @@ fn empty_state() -> AnyElement {
         .child(div().type_style(HEADING).child("Nothing waits for you"))
         .child(
             div()
-                .w(px(360.))
+                .w(px(EMPTY_HINT_WIDTH.min(width)))
                 .text_center()
                 .type_style(LABEL)
                 .text_color(TEXT_MUTED)

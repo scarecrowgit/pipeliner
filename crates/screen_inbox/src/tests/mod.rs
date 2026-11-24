@@ -6,6 +6,7 @@ mod markdown;
 mod review;
 mod select;
 mod send_back;
+mod texts;
 mod waits;
 
 use std::cell::RefCell;

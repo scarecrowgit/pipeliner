@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, ElementId, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, ElementId, IntoElement, div, prelude::*, px};
 use hub::LoadState;
 use hub::api::{FileDiff, Variant};
 use ui::prelude::*;
@@ -11,6 +11,7 @@ use ui_rich::diff_view::{DiffCard, DiffFile, DiffHunk, DiffLine, DiffLineKind};
 
 use crate::review::letter_tile;
 use crate::table::counts;
+use crate::texts::{Look, block};
 use crate::view::InboxView;
 
 /// How tall the diff gets before it scrolls inside.
@@ -58,7 +59,7 @@ impl InboxView {
         };
         let total = variant.files.len();
         let Some(change) = variant.files.get(open.file).cloned() else {
-            return frame(variant.index, None, "No files changed", false);
+            return frame(variant.index, None, Body::Note("No files changed"));
         };
         let file_ix = open.file;
         let index = variant.index;
@@ -87,29 +88,39 @@ impl InboxView {
                     )
                     .into_any_element()
             }
-            Some((None, LoadState::Failed(error))) => frame(
-                index,
-                Some((change.path.clone(), change.added, change.removed)),
-                format!("Could not load the diff: {error}"),
-                true,
-            ),
+            Some((None, LoadState::Failed(error))) => {
+                let error = self.texts.get(
+                    format!("diff-error-{index}-{file_ix}"),
+                    format!("Could not load the diff: {error}"),
+                    Look::plain(LABEL, DANGER),
+                    cx,
+                );
+                frame(
+                    index,
+                    Some((change.path.clone(), change.added, change.removed)),
+                    Body::Error(block("review-diff-error-text", error)),
+                )
+            }
             _ => frame(
                 index,
                 Some((change.path.clone(), change.added, change.removed)),
-                "Loading the diff…",
-                false,
+                Body::Note("Loading the diff…"),
             ),
         }
     }
 }
 
+/// What a diff card without a diff says.
+enum Body {
+    /// A line of the interface: loading, nothing changed.
+    Note(&'static str),
+    /// Why the diff could not be read, as selectable text.
+    Error(AnyElement),
+}
+
 /// A diff card without a diff: its header and one line of text.
-fn frame(
-    index: u32,
-    file: Option<(String, u32, u32)>,
-    text: impl Into<SharedString>,
-    error: bool,
-) -> AnyElement {
+fn frame(index: u32, file: Option<(String, u32, u32)>, body: Body) -> AnyElement {
+    let error = matches!(body, Body::Error(_));
     let header = row()
         .flex_none()
         .gap(px(SPACE_2))
@@ -125,7 +136,7 @@ fn frame(
                     .min_w_0()
                     .flex_shrink()
                     .type_style(MONO)
-                    .child(truncate(path)),
+                    .child(truncate_middle(path, MONO.line)),
             )
             .child(counts(added, removed))
         });
@@ -144,8 +155,11 @@ fn frame(
                         .py(px(SPACE_4))
                         .bg(BG_SIDEBAR)
                         .type_style(LABEL)
-                        .text_color(if error { DANGER } else { TEXT_MUTED })
-                        .child(text.into()),
+                        .text_color(TEXT_MUTED)
+                        .child(match body {
+                            Body::Note(text) => text.into_any_element(),
+                            Body::Error(text) => text,
+                        }),
                 ),
             ),
         )

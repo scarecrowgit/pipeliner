@@ -14,10 +14,10 @@ use hub::{
 };
 use ui::dev::Probe;
 use ui::prelude::*;
-use ui_rich::markdown::Markdown;
 
 use crate::list::{self, Tab};
 use crate::send_back::SendBack;
+use crate::texts::Texts;
 use crate::waits::{self, ItemRun};
 
 /// Width of the queue on the left (`aside` in the mockup).
@@ -69,7 +69,8 @@ pub struct InboxView {
     runs: Entity<RunsModel>,
     pub(crate) archived: Archived,
     pub(crate) review: Option<OpenReview>,
-    pub(crate) markdown: Option<(InboxId, Entity<Markdown>)>,
+    /// The selectable texts of the open item or review.
+    pub(crate) texts: Texts,
     pub(crate) prs: HashMap<String, PrStatus>,
     pub(crate) send_back: Option<Entity<SendBack>>,
     /// The run of the open item, when it has one (questions, budget stops).
@@ -124,7 +125,7 @@ impl InboxView {
             runs,
             archived: Archived::default(),
             review: None,
-            markdown: None,
+            texts: Texts::default(),
             prs: HashMap::new(),
             send_back: None,
             item_run: None,
@@ -384,7 +385,11 @@ impl InboxView {
         self.sync_review(cx);
         self.sync_item(cx);
         self.reconcile(cx);
-        let _ = window;
+        // A text of the item left behind had the keys (a press on it selects): the queue
+        // takes them back, as the texts of the newly opened item are new views.
+        if self.texts.focused(window, cx) {
+            window.focus(&self.focus_handle);
+        }
         cx.notify();
     }
 
@@ -478,14 +483,6 @@ impl InboxView {
             if !item.read && !item.archived {
                 hub::commands(cx).set_inbox_read(&item.id, true, cx);
             }
-        }
-        if self.markdown.as_ref().is_none_or(|(id, _)| id != &item.id) {
-            self.markdown = (!item.summary.is_empty()).then(|| {
-                let text = item.summary.clone();
-                let md =
-                    cx.new(|cx| Markdown::new(text, cx).on_link(|url, _, cx| cx.open_url(url)));
-                (item.id.clone(), md)
-            });
         }
         for link in item
             .links
@@ -737,8 +734,14 @@ impl Render for InboxView {
         let this = cx.entity().downgrade();
         let measure = canvas(
             move |bounds, _, cx| {
-                let width = f32::from(bounds.size.width);
-                this.update(cx, |view, cx| view.fit_detail(width, cx)).ok();
+                let width = f32::from(bounds.size.width).clamp(0., DETAIL_MAX);
+                let Some(view) = this.upgrade() else { return };
+                if (width - view.read(cx).detail_width).abs() < 0.5 {
+                    return;
+                }
+                // A notification while the window draws does not draw it again: the new
+                // width is taken once this frame is done, and the column laid out anew.
+                cx.defer(move |cx| view.update(cx, |view, cx| view.fit_detail(width, cx)));
             },
             |_, _, _, _| {},
         )
@@ -754,8 +757,10 @@ impl Render for InboxView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
-                    // A text field the press focused keeps it; anything else gives the queue its keys.
-                    if !this.typing(window, cx) {
+                    // A text field the press focused keeps it, and so does a text the press
+                    // selects in (Cmd/Ctrl+C then copies; the queue's keys still bubble up
+                    // to it); anything else gives the queue its keys.
+                    if !this.typing(window, cx) && !this.texts.focused(window, cx) {
                         window.focus(&this.focus_handle);
                     }
                 }),

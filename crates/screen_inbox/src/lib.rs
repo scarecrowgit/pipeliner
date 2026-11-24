@@ -14,6 +14,7 @@ mod review;
 mod select;
 mod send_back;
 mod table;
+mod texts;
 mod view;
 mod waits;
 
