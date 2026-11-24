@@ -109,6 +109,42 @@ pub fn due(autopilots: &[Autopilot], now_ms: i64) -> Vec<&Autopilot> {
         .collect()
 }
 
+/// How long after its time a missed tick still fires: a run missed while the app was
+/// closed fires once on start when it was due within this window, otherwise it is skipped.
+pub const CATCH_UP_MS: i64 = 24 * 3_600_000;
+
+/// What the scheduler does with a due autopilot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tick {
+    /// Fire it now.
+    Fire,
+    /// It was due too long ago: do not fire, only move `next_run` to this time.
+    Skip { next_run: i64 },
+}
+
+/// The tick of a due autopilot (one [`due`] returned) at `now_ms`: [`Tick::Fire`] when it was
+/// due within [`CATCH_UP_MS`], else [`Tick::Skip`] with the next time after `now_ms`.
+pub fn tick(autopilot: &Autopilot, now_ms: i64, utc_offset_secs: i32) -> Tick {
+    let due_at = autopilot.next_run.unwrap_or(now_ms);
+    match &autopilot.trigger {
+        AutopilotTrigger::Schedule { schedule } if now_ms - due_at > CATCH_UP_MS => {
+            Tick::Skip { next_run: next_run(schedule, now_ms, utc_offset_secs) }
+        }
+        _ => Tick::Fire,
+    }
+}
+
+/// The earliest `next_run` among the autopilots that can fire on their own: what the
+/// scheduler sleeps until.
+pub fn next_due(autopilots: &[Autopilot]) -> Option<i64> {
+    autopilots
+        .iter()
+        .filter(|a| a.enabled && a.paused_reason.is_none())
+        .filter(|a| matches!(a.trigger, AutopilotTrigger::Schedule { .. }))
+        .filter_map(|a| a.next_run)
+        .min()
+}
+
 /// How many autopilots are on and how many are paused: "2 on · 1 paused".
 pub fn header_count(autopilots: &[Autopilot]) -> (usize, usize) {
     let on = autopilots.iter().filter(|a| a.enabled && a.paused_reason.is_none()).count();

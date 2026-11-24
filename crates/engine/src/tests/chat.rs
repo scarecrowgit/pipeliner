@@ -187,6 +187,11 @@ fn a_sub_agent_reports_under_its_own_session_and_its_spend_lands_in_the_ledger()
     assert!((today.cost_usd - done.cost_usd).abs() < 1e-9, "{} vs {}", today.cost_usd, done.cost_usd);
     assert!(done.cost_usd > child_spend);
     assert_eq!(done.usage.input, 2_000, "the header's usage is the session's own calls");
+    let rows = fx.engine.spend_by_runnable(crate::api::Period::Today, 1).expect("spend by agent");
+    let spawned: Vec<_> = rows.iter().filter(|row| row.spawned).collect();
+    assert_eq!(spawned.len(), 1, "the sub-agent's spend is marked as created by an agent: {rows:#?}");
+    assert!((spawned[0].cost_usd - child_spend).abs() < 1e-9);
+    assert!(rows.iter().filter(|row| !row.spawned).all(|row| row.cost_usd > 0.0));
 }
 
 #[test]

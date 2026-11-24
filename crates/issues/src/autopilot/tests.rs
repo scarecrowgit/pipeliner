@@ -245,3 +245,19 @@ fn header_counts_and_labels() {
     assert_eq!(header_text(std::slice::from_ref(&on)), "1 on");
     assert_eq!(button_label(&[on.clone(), on, broken]), "Autopilots · 2");
 }
+
+#[test]
+fn a_tick_missed_by_less_than_a_day_fires_and_an_older_one_is_skipped() {
+    let now = utc(2026, 11, 24, 12, 0);
+    let mut recent = pilot(daily(3, 0));
+    recent.next_run = Some(utc(2026, 11, 24, 3, 0));
+    assert_eq!(tick(&recent, now, 0), Tick::Fire);
+    let mut old = pilot(daily(3, 0));
+    old.next_run = Some(utc(2026, 11, 22, 3, 0));
+    assert_eq!(tick(&old, now, 0), Tick::Skip { next_run: utc(2026, 11, 25, 3, 0) });
+    let mut off = pilot(daily(1, 0));
+    off.enabled = false;
+    off.next_run = Some(1);
+    assert_eq!(next_due(&[recent.clone(), old.clone(), off]), Some(utc(2026, 11, 22, 3, 0)));
+    assert_eq!(next_due(&[]), None);
+}

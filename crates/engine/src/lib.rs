@@ -18,6 +18,8 @@
 //! | `runs`, `reviews` | [`api::RunApi`] and [`api::InboxApi`] over the drivers and the store |
 //! | `issues`, `catalog`, `ops` | The other parts of the API |
 //! | `autopilots` | Firing an autopilot: its target starts on its prompt |
+//! | `scheduler` | The thread that fires due autopilots and sweeps old worktrees |
+//! | `sweep` | Removing worktrees of runs that finished long ago and were merged or shipped |
 
 pub mod api;
 mod autopilots;
@@ -28,13 +30,16 @@ mod engine;
 mod gate;
 mod host;
 mod issues;
+mod legacy;
 mod live;
 mod mcp;
 mod ops;
 mod pipelines;
 mod reviews;
 mod runs;
+mod scheduler;
 mod sink;
+mod sweep;
 mod wake;
 mod workdir;
 

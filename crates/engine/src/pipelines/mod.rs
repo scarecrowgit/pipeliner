@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use model::{Event, GraphDef, InboxId, PipelineId, ReviewId, Run, RunId, RunState};
+use model::{Event, GraphDef, InboxId, PipelineId, ReviewId, Run, RunId, RunState, RunWait};
 use pipeline::exec::{Driver, DriverHandle, Machine, Snapshot};
 use pipeline::runners::{Runner, RunnerConfig, Services, SessionQuestions};
 use pipeline::{InstanceKey, Item, NodeRunner};
@@ -48,6 +48,60 @@ pub(crate) fn review_inbox_id(review: &ReviewId) -> InboxId {
 /// The Inbox item of an agent's question.
 pub(crate) fn question_inbox_id(run: &RunId, key: &InstanceKey) -> InboxId {
     InboxId::new(format!("ask:{run}:{}:{}:{}", key.node, key.variant, key.attempt))
+}
+
+/// The Inbox item of a run that stopped at its budget.
+pub(crate) fn budget_inbox_id(run: &RunId) -> InboxId {
+    InboxId::new(format!("budget:{run}"))
+}
+
+/// What a run's budget stop is about: what was spent and the cap that stopped it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct BudgetStop {
+    pub spent: f64,
+    pub cap: Option<f64>,
+}
+
+/// Same slack as the executor's: a cap counts as reached a hair before it.
+const CAP_SLACK: f64 = 1e-9;
+
+/// Whether the run stands still for its budget (the run's cap, or a node's), and at what.
+pub(crate) fn budget_stop(snapshot: &Snapshot) -> Option<BudgetStop> {
+    let run = &snapshot.run;
+    if run.state != RunState::WaitingAnswer {
+        return None;
+    }
+    if let Some(cap) = snapshot.budget_usd.filter(|cap| run.cost_usd + CAP_SLACK >= *cap) {
+        return Some(BudgetStop { spent: run.cost_usd, cap: Some(cap) });
+    }
+    snapshot.meta.iter().zip(&run.nodes).find_map(|(meta, node)| {
+        let held = !meta.superseded
+            && meta.spawn.is_none()
+            && node.status == model::NodeStatus::Waiting
+            && meta.hold == Some(pipeline::exec::Hold::Budget);
+        held.then_some(BudgetStop { spent: node.cost_usd, cap: meta.node_budget.or(snapshot.budget_usd) })
+    })
+}
+
+/// Why the run of this snapshot waits for a person. A budget stop wins over a question: no
+/// answer lets the run go on until the budget is raised.
+pub(crate) fn wait_of(snapshot: &Snapshot) -> Option<RunWait> {
+    match snapshot.run.state {
+        RunState::WaitingReview => Some(RunWait::Review),
+        RunState::WaitingAnswer if budget_stop(snapshot).is_some() => Some(RunWait::Budget),
+        RunState::WaitingAnswer => Some(RunWait::Question),
+        _ => None,
+    }
+}
+
+/// [`wait_of`] for a run without a stored snapshot (imported ones), from what the run shows.
+pub(crate) fn wait_of_run(run: &Run) -> Option<RunWait> {
+    match run.state {
+        RunState::WaitingReview => Some(RunWait::Review),
+        RunState::WaitingAnswer if run.nodes.iter().any(|n| n.question.is_some()) => Some(RunWait::Question),
+        RunState::WaitingAnswer => Some(RunWait::Budget),
+        _ => None,
+    }
 }
 
 struct Open {
@@ -172,12 +226,24 @@ fn drive(inner: &Arc<Inner>, graph: GraphDef, machine: Machine) -> Result<Driver
     let id = machine.run().id.clone();
     let runner = runner(inner, &graph);
     let broken = Broken::default();
+    // Questions still open and the current wait carry over a restart, so they are settled
+    // when the run moves on.
+    let asked: BTreeMap<InstanceKey, InboxId> = machine
+        .run()
+        .nodes
+        .iter()
+        .filter(|n| n.question.is_some() && n.status == model::NodeStatus::Waiting)
+        .map(|n| InstanceKey { node: n.node.clone(), variant: n.variant, attempt: n.attempt })
+        .map(|key| (key.clone(), question_inbox_id(&id, &key)))
+        .collect();
     let observer = observer::RunObserver {
         inner: Arc::downgrade(inner),
         followed: None,
-        asked: BTreeMap::new(),
+        asked,
         merged: false,
         broken: broken.clone(),
+        waiting: wait_of(machine.snapshot()),
+        budget: budget_stop(machine.snapshot()),
         graph,
     };
     let node_runner: Arc<dyn NodeRunner> = Arc::new(Guarded { runner, broken });

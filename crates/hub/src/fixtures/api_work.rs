@@ -5,9 +5,19 @@ use anyhow::{Result, anyhow, bail};
 use crate::api::{
     Actor, Attachment, Autopilot, AutopilotId, Estimate, Event, FileDiff, InboxApi, InboxId, InboxItem, Issue, IssueApi,
     IssueEvent, IssueEventKind, IssueKey, IssuePatch, NewIssue, PipelineId, ProjectId, PullRequest, Review,
-    ReviewDecision, ReviewId, ReviewState, Run, RunApi, RunId, RunInput, RunLogLine, RunState, RunStats, RunnableRef,
-    StartFrom,
+    ReviewDecision, ReviewId, ReviewState, Run, RunApi, RunId, RunInput, RunLogLine, RunState, RunStats, RunWait,
+    RunnableRef, StartFrom,
 };
+
+/// Why a fixture run waits, from what it shows (the engine keeps it as the run moves).
+fn wait_of(run: &Run) -> Option<RunWait> {
+    match run.state {
+        RunState::WaitingReview => Some(RunWait::Review),
+        RunState::WaitingAnswer if run.nodes.iter().any(|n| n.question.is_some()) => Some(RunWait::Question),
+        RunState::WaitingAnswer => Some(RunWait::Budget),
+        _ => None,
+    }
+}
 
 use super::{FixtureApi, World, data_inbox};
 
@@ -241,6 +251,10 @@ impl IssueApi for FixtureApi {
         bail!("runtime laptop is still offline")
     }
 
+    fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, i64)>> {
+        Ok(crate::api::next_scheduled_runs_of(&self.world().autopilots))
+    }
+
     fn autopilots(&self, project: &ProjectId) -> Result<Vec<Autopilot>> {
         Ok(self.world().autopilots.iter().filter(|autopilot| &autopilot.project == project).cloned().collect())
     }
@@ -302,6 +316,21 @@ impl RunApi for FixtureApi {
 
     fn runs_for_issue(&self, key: &IssueKey) -> Result<Vec<Run>> {
         Ok(self.world().runs.iter().filter(|run| run.issue.as_ref() == Some(key)).cloned().collect())
+    }
+
+    fn runs_for_pipeline(&self, id: &PipelineId, limit: usize) -> Result<Vec<Run>> {
+        let mut runs: Vec<Run> = self.world().runs.iter().filter(|run| &run.pipeline == id).cloned().collect();
+        runs.sort_by_key(|run| std::cmp::Reverse(run.started));
+        runs.truncate(limit);
+        Ok(runs)
+    }
+
+    fn run_waiting(&self, id: &RunId) -> Result<Option<RunWait>> {
+        Ok(self.run(id)?.as_ref().and_then(wait_of))
+    }
+
+    fn waiting_runs(&self) -> Result<Vec<(RunId, RunWait)>> {
+        Ok(self.world().runs.iter().filter_map(|run| Some((run.id.clone(), wait_of(run)?))).collect())
     }
 
     fn run_log(&self, id: &RunId, after_seq: u64, limit: usize) -> Result<Vec<RunLogLine>> {

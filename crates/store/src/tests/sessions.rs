@@ -154,6 +154,27 @@ fn listing_filters_orders_and_pages() {
 }
 
 #[test]
+fn listing_tells_a_persons_chats_from_agent_sessions() {
+    let store = store();
+    let mine = session("mine", "Mine", 1_000);
+    let mut node = session("node", "Fixer", 2_000);
+    node.origin = model::SessionOrigin::Run { run: model::RunId::new("r1"), node: model::NodeId::new("fix"), variant: 0 };
+    let mut sub = session("sub", "Helper", 3_000);
+    sub.parent = Some(SessionId::new("mine"));
+    sub.origin = model::SessionOrigin::Agent { parent: SessionId::new("mine") };
+    for s in [&mine, &node, &sub] {
+        store.upsert_session(s).unwrap();
+    }
+    let ids = |filter: SessionFilter| -> Vec<String> {
+        store.sessions(&filter).unwrap().into_iter().map(|s| s.id.0).collect()
+    };
+    use crate::StartedBy;
+    assert_eq!(ids(SessionFilter { started_by: Some(StartedBy::Me), ..Default::default() }), ["mine"]);
+    assert_eq!(ids(SessionFilter { started_by: Some(StartedBy::Agents), ..Default::default() }), ["sub", "node"]);
+    assert_eq!(ids(SessionFilter::default()).len(), 3);
+}
+
+#[test]
 fn sessions_are_found_by_their_legacy_id() {
     let store = store();
     let s = session("new", "Imported", 1_000);

@@ -7,6 +7,11 @@ mod turn;
 
 pub(crate) use turn::mcp_view;
 
+/// Marker holding a chat's spending cap, set when an autopilot with a budget starts it.
+pub(crate) fn budget_marker(id: &model::SessionId) -> String {
+    format!("session-budget:{id}")
+}
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

@@ -65,3 +65,45 @@ pub fn prefix_for(project_name: &str) -> String {
     }
     prefix
 }
+
+/// Why a typed key prefix cannot be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrefixProblem {
+    /// Nothing was typed.
+    Empty,
+    /// Something besides the letters A to Z, or more than [`MAX_PREFIX`] of them.
+    NotLetters,
+    /// Another project has it.
+    Taken,
+}
+
+/// Longest key prefix a project may have.
+pub const MAX_PREFIX: usize = 8;
+
+impl std::fmt::Display for PrefixProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            PrefixProblem::Empty => "A project needs a key prefix",
+            PrefixProblem::NotLetters => "A key prefix is 1 to 8 letters, A to Z",
+            PrefixProblem::Taken => "Another project already uses that key prefix",
+        })
+    }
+}
+
+impl std::error::Error for PrefixProblem {}
+
+/// Checks a typed key prefix against the prefixes other projects have, and returns it
+/// upper-cased: letters A to Z only, at most [`MAX_PREFIX`], and unique (case ignored).
+pub fn validate_prefix<'a>(typed: &str, taken: impl IntoIterator<Item = &'a str>) -> Result<String, PrefixProblem> {
+    let prefix = typed.trim().to_ascii_uppercase();
+    if prefix.is_empty() {
+        return Err(PrefixProblem::Empty);
+    }
+    if prefix.len() > MAX_PREFIX || !prefix.chars().all(|c| c.is_ascii_uppercase()) {
+        return Err(PrefixProblem::NotLetters);
+    }
+    if taken.into_iter().any(|other| other.trim().eq_ignore_ascii_case(&prefix)) {
+        return Err(PrefixProblem::Taken);
+    }
+    Ok(prefix)
+}

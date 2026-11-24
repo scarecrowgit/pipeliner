@@ -133,6 +133,17 @@ fn help_and_mistakes() {
     assert!(err.contains("unknown option --bogus"));
 }
 
+#[test]
+fn run_sweep_reports_what_would_go() {
+    let temp = Temp::new();
+    let data = temp.0.join("data").to_string_lossy().into_owned();
+    let (code, out, err) = cli(&["--data-dir", &data, "run", "sweep", "--dry-run"], "", &temp.0, Vec::new);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.trim(), "nothing to remove");
+    assert_eq!(crate::args_work::parse_run(&["sweep"]).unwrap(), crate::args::RunCmd::Sweep { dry_run: false });
+    assert!(crate::args_work::parse_run(&["sweep", "extra"]).is_err());
+}
+
 /// Runs git in `dir` with an isolated config.
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")

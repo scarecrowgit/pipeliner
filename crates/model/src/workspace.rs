@@ -67,10 +67,18 @@ pub struct Settings {
     /// Share of the context window at which a session compacts itself.
     #[serde(default = "default_compact_at")]
     pub compact_at: f32,
+    /// Days a finished run keeps its worktrees once its branch is merged or has a pull
+    /// request; 0 keeps them forever.
+    #[serde(default = "default_worktree_retention_days")]
+    pub worktree_retention_days: u32,
 }
 
 fn default_slots() -> u32 {
     4
+}
+
+fn default_worktree_retention_days() -> u32 {
+    7
 }
 
 fn default_compact_at() -> f32 {
@@ -86,6 +94,7 @@ impl Default for Settings {
             current_project: None,
             sidebar_collapsed: false,
             compact_at: default_compact_at(),
+            worktree_retention_days: default_worktree_retention_days(),
         }
     }
 }

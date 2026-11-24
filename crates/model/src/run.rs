@@ -35,6 +35,19 @@ impl RunState {
     }
 }
 
+/// Why an open run waits for a person. Kept by the engine as the run moves; screens read it
+/// from the hub instead of guessing from the run's nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunWait {
+    /// A review is open in the Inbox.
+    Review,
+    /// An agent asked something and waits for the answer.
+    Question,
+    /// The run's (or a node's) budget is used up; it goes on once a person raises it.
+    Budget,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     pub id: RunId,

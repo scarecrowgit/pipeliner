@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use crate::api::{
-    FacetCounts, IndexStats, MessageSnippet, SearchResult, Session, SessionFilter, SessionHit, SessionId, SessionOrigin,
+    FacetCounts, IndexStats, MessageSnippet, SearchResult, Session, SessionFilter, SessionHit, SessionId,
     SessionQuery, SessionState, StartedBy,
 };
 
@@ -37,6 +37,11 @@ pub fn sessions(world: &World, filter: &SessionFilter) -> Vec<Session> {
         .filter(|s| filter.archived.is_none_or(|archived| s.archived == archived))
         .filter(|s| filter.pinned.is_none_or(|pinned| s.pinned == pinned))
         .filter(|s| filter.state.is_none_or(|state| s.state == state))
+        .filter(|s| match filter.started_by {
+            None => true,
+            Some(StartedBy::Me) => !by_agent(s),
+            Some(StartedBy::Agents) => by_agent(s),
+        })
         .filter(|s| match &parent {
             Parent::Any => true,
             Parent::TopLevel => s.parent.is_none(),
@@ -67,7 +72,7 @@ fn highlights(text: &str, words: &[String]) -> Vec<Range<usize>> {
 }
 
 fn by_agent(session: &Session) -> bool {
-    matches!(session.origin, SessionOrigin::Agent { .. } | SessionOrigin::Run { .. })
+    !session.started_by_person()
 }
 
 pub fn search(world: &World, query: &SessionQuery) -> SearchResult {

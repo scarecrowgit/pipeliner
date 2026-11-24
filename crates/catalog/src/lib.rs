@@ -36,7 +36,7 @@ mod tests;
 
 pub use builtin::{BUILD_ID, PLAN_ID};
 pub use place::Place;
-pub use self_edit::{SelfEditModels, self_edit_pipeline};
+pub use self_edit::{SelfEditModels, self_edit_pipeline, self_edit_pipeline_with};
 pub use templates::{Instance, Template, TemplateContext, instantiate, templates};
 
 /// A file that could not be read or parsed. The rest of the catalog is unaffected.

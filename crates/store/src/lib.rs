@@ -48,7 +48,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 pub use catalog::SpawnedRunnable;
 pub use chat_extras::QueuedMessage;
 pub use db::Db;
-pub use ledger::SpendTotal;
+pub use ledger::{CREATED_BY_AGENTS, SpendTotal};
 pub use search::{FacetCounts, IndexStats, MessageSnippet, SearchResult, SessionHit, SessionQuery, StartedBy};
 pub use sessions::{ParentFilter, SessionFilter};
 

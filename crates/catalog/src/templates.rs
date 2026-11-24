@@ -11,7 +11,7 @@ use model::{
 };
 
 use crate::write::{reference_of, slug};
-use crate::{Catalog, SelfEditModels, self_edit_pipeline};
+use crate::{Catalog, SelfEditModels, self_edit_pipeline_with};
 
 /// One entry of the template list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,9 +37,13 @@ pub enum Instance {
 pub struct TemplateContext {
     /// The repo the pipeline works in; the current folder when absent.
     pub repo: Option<PathBuf>,
-    /// The mockups folder of the self-editing pipeline; `~/Pictures/designs/<repo>-mockups`
-    /// when absent.
+    /// The mockups folder of the self-editing pipeline. When absent (and for the code folder
+    /// when `repo` is absent) the workdir is left without a folder for the person to set; the
+    /// validator flags it, so the pipeline cannot be deployed until then.
     pub mockups_dir: Option<PathBuf>,
+    /// A cargo target folder the self-editing pipeline's builds share; each worktree builds in
+    /// its own when absent.
+    pub cargo_target: Option<PathBuf>,
     pub models: SelfEditModels,
 }
 
@@ -131,11 +135,11 @@ pub fn instantiate(catalog: &Catalog, id: &str, ctx: &TemplateContext) -> Result
         "agent-pr" => Ok(Instance::Pipeline(agent_pr(catalog, &repo, 1))),
         "agent-x3-review-pr" => Ok(Instance::Pipeline(agent_pr(catalog, &repo, 3))),
         "self-edit" => {
-            let name = repo.file_name().map_or_else(|| "repo".to_string(), |n| n.to_string_lossy().into_owned());
-            let mockups = ctx.mockups_dir.clone().unwrap_or_else(|| {
-                base::paths::Paths::from_env().home.join("Pictures/designs").join(format!("{name}-mockups"))
-            });
-            let mut graph = self_edit_pipeline(&repo, &mockups, &ctx.models);
+            // Nothing is guessed from the environment: missing folders stay empty for the
+            // person to set in the editor.
+            let code = ctx.repo.clone().unwrap_or_default();
+            let mockups = ctx.mockups_dir.clone().unwrap_or_default();
+            let mut graph = self_edit_pipeline_with(&code, &mockups, ctx.cargo_target.as_deref(), &ctx.models);
             graph.id = PipelineId::new(free_ref(catalog, RunnableKind::Pipeline, graph.id.as_str()));
             Ok(Instance::Pipeline(graph))
         }

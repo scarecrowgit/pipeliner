@@ -273,3 +273,24 @@ fn the_waiting_count_matches_the_model() {
     store.set_inbox_read(&InboxId::new("i8"), true).unwrap();
     assert_eq!(store.inbox_needs_person().unwrap(), expected - 1);
 }
+
+#[test]
+fn a_pipelines_runs_come_newest_first_with_test_runs() {
+    let store = store();
+    let mut old = run("r1", None, 0, 1_000, RunState::Done);
+    let mut test = run("r2", None, 0, 2_000, RunState::Running);
+    test.test = true;
+    let mut other = run("r3", None, 0, 3_000, RunState::Done);
+    other.pipeline = PipelineId::new("triage");
+    old.finished = Some(1_500);
+    for r in [&old, &test, &other] {
+        store.upsert_run(r).unwrap();
+    }
+    let ids: Vec<String> = store.runs_for_pipeline(&PipelineId::new("fix"), 10).unwrap().into_iter().map(|r| r.id.0).collect();
+    assert_eq!(ids, ["r2", "r1"]);
+    assert_eq!(store.runs_for_pipeline(&PipelineId::new("fix"), 1).unwrap().len(), 1);
+    other.finished = Some(3_500);
+    store.upsert_run(&other).unwrap();
+    let closed: Vec<String> = store.closed_runs_before(3_000).unwrap().into_iter().map(|r| r.id.0).collect();
+    assert_eq!(closed, ["r1"], "only real runs closed before the cutoff");
+}

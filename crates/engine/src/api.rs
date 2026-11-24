@@ -282,6 +282,26 @@ pub trait IssueApi {
     /// Fires the autopilot now, as a tick of its schedule would (also when it is switched
     /// off): its target starts on its prompt. Records `last_run` and `last_result`.
     fn run_autopilot(&self, id: &AutopilotId) -> Result<()>;
+    /// When each runnable runs next on a schedule: the earliest `next_run` of the enabled
+    /// schedule autopilots that target it, across projects. Changes with `AutopilotsChanged`.
+    fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, Millis)>>;
+}
+
+/// [`IssueApi::next_scheduled_runs`] over a list of autopilots.
+pub fn next_scheduled_runs_of(autopilots: &[Autopilot]) -> Vec<(RunnableRef, Millis)> {
+    let mut out: Vec<(RunnableRef, Millis)> = Vec::new();
+    let on = autopilots
+        .iter()
+        .filter(|a| a.enabled && a.paused_reason.is_none() && matches!(a.trigger, AutopilotTrigger::Schedule { .. }));
+    for autopilot in on {
+        let Some(at) = autopilot.next_run else { continue };
+        match out.iter_mut().find(|(target, _)| target == &autopilot.target) {
+            Some((_, known)) => *known = (*known).min(at),
+            None => out.push((autopilot.target.clone(), at)),
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 // ---------------------------------------------------------------- runs
@@ -298,6 +318,13 @@ pub trait RunApi {
     /// The latest run of every issue that has one, plus runs without an issue that are open.
     fn latest_runs(&self) -> Result<Vec<Run>>;
     fn runs_for_issue(&self, key: &IssueKey) -> Result<Vec<Run>>;
+    /// The newest `limit` runs of a pipeline, test runs included (`Run::test`), newest first.
+    fn runs_for_pipeline(&self, id: &PipelineId, limit: usize) -> Result<Vec<Run>>;
+    /// Why a run waits for a person; `None` when it does not.
+    fn run_waiting(&self, id: &RunId) -> Result<Option<RunWait>>;
+    /// Every open run that waits for a person, with why. Later changes arrive as
+    /// `Event::RunWaiting`.
+    fn waiting_runs(&self) -> Result<Vec<(RunId, RunWait)>>;
     /// Log lines with `seq` greater than `after_seq`, oldest first.
     fn run_log(&self, id: &RunId, after_seq: u64, limit: usize) -> Result<Vec<RunLogLine>>;
     fn run_log_tail(&self, id: &RunId, count: usize) -> Result<Vec<RunLogLine>>;
@@ -477,6 +504,55 @@ pub struct Working {
     pub target: Target,
 }
 
+/// A worktree the sweep removed, or would remove in a dry run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SweptWorktree {
+    pub run: RunId,
+    pub path: PathBuf,
+    pub branch: String,
+    /// The branch went too (it was merged); otherwise it stays.
+    pub branch_removed: bool,
+    /// Why it may go: "merged into main", "has a pull request".
+    pub reason: String,
+}
+
+/// What the project switcher shows next to a project.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProjectCounts {
+    pub project: ProjectId,
+    /// Issues not done.
+    pub open_issues: u32,
+    /// Runs on its issues that are working now (`RunState::Running`).
+    pub working_runs: u32,
+}
+
+/// [`OpsApi::project_counts`] from the projects' issues and the open runs.
+pub fn project_counts_of(projects: &[Project], issues: &[Issue], open_runs: &[Run]) -> Vec<ProjectCounts> {
+    projects
+        .iter()
+        .map(|project| {
+            let mine = || issues.iter().filter(|issue| issue.project == project.id);
+            let open_issues = mine().filter(|issue| issue.status != IssueStatus::Done).count() as u32;
+            let working_runs = open_runs
+                .iter()
+                .filter(|run| run.state == RunState::Running)
+                .filter(|run| run.issue.as_ref().is_some_and(|key| mine().any(|issue| &issue.key == key)))
+                .count() as u32;
+            ProjectCounts { project: project.id.clone(), open_issues, working_runs }
+        })
+        .collect()
+}
+
+/// A local project to create.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NewProject {
+    pub name: String,
+    /// Upper-case letters, unique among projects; derived from the name when empty.
+    pub key_prefix: String,
+    /// Checkout folders (`~` allowed); each must exist.
+    pub repos: Vec<PathBuf>,
+}
+
 pub trait OpsApi {
     fn home_stats(&self, period: Period) -> Result<HomeStats>;
     fn needs_you(&self) -> Result<Vec<Need>>;
@@ -496,6 +572,24 @@ pub trait OpsApi {
     fn projects(&self) -> Result<Vec<Project>>;
     fn save_project(&self, project: Project) -> Result<()>;
     fn delete_project(&self, id: &ProjectId) -> Result<()>;
+    /// Creates a project: a name, a key prefix (validated: letters A to Z, unique) and repo
+    /// folders that exist. Publishes `SettingsChanged`.
+    fn create_project(&self, new: NewProject) -> Result<Project>;
+    fn rename_project(&self, id: &ProjectId, name: &str) -> Result<Project>;
+    /// Makes a project the one shown on start and in the issues screen.
+    fn set_current_project(&self, id: &ProjectId) -> Result<()>;
+    /// Open issues and working runs of every project, for the project switcher.
+    fn project_counts(&self) -> Result<Vec<ProjectCounts>>;
+
+    /// Today's spend limit; `None` for no limit. Publishes `SettingsChanged`.
+    fn set_daily_limit(&self, usd: Option<f64>) -> Result<()>;
+    /// Agents working at once; applies to waiting work at once, no restart.
+    fn set_slots(&self, slots: u32) -> Result<()>;
+    /// Days a finished, merged or shipped run keeps its worktrees; 0 keeps them forever.
+    fn set_worktree_retention(&self, days: u32) -> Result<()>;
+    /// Removes the worktrees of runs that finished more than the retention ago and were merged
+    /// or have a pull request; `dry_run` only lists them. Runs on its own once a day.
+    fn sweep_worktrees(&self, dry_run: bool) -> Result<Vec<SweptWorktree>>;
 
     fn permission_rules(&self) -> Result<Vec<PermissionRule>>;
     fn remove_permission_rule(&self, rule: &PermissionRule) -> Result<()>;

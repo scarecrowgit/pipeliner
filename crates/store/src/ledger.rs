@@ -69,6 +69,9 @@ pub(crate) fn run_has_usage_in(tx: &Transaction, run: &RunId) -> Result<bool> {
     Ok(tx.query_row("SELECT EXISTS (SELECT 1 FROM usage_ledger WHERE run = ?1)", [run.as_str()], |row| row.get(0))?)
 }
 
+/// Reference of the row that sums runnables created by agents beyond the top spenders.
+pub const CREATED_BY_AGENTS: &str = "spawned:*";
+
 impl Store {
     /// Appends one model call to the ledger.
     pub fn record_usage(&self, entry: &UsageEntry) -> Result<()> {
@@ -126,7 +129,9 @@ impl Store {
     }
 
     /// "Spend by agent" for `[from, to)`: the `top` biggest spenders, then one row named
-    /// "Others" (with an empty reference) summing the rest when there is a rest. A runnable's
+    /// "Others" (with an empty reference) summing the rest of the person's runnables, and one
+    /// named "Created by agents" ([`CREATED_BY_AGENTS`], `spawned`) summing the rest of the
+    /// runnables agents created, each when there is such a rest. A runnable's
     /// name is the one of its latest call; `spawned` is set when another agent created it.
     pub fn spend_by_runnable(&self, from: Millis, to: Millis, top: usize) -> Result<Vec<SpendByRunnable>> {
         let rows: Vec<(String, String, f64, bool)> = self.read(|conn| {
@@ -152,12 +157,20 @@ impl Store {
                 spawned: *spawned,
             })
             .collect();
-        if rows.len() > top {
+        // The rest: what the person's runnables spent as "Others", and what runnables created
+        // by agents spent as one more row, so totals by who created them stay right.
+        let rest = rows.get(top..).unwrap_or_default();
+        let others: f64 = rest.iter().filter(|row| !row.3).map(|row| row.2).sum();
+        let created: f64 = rest.iter().filter(|row| row.3).map(|row| row.2).sum();
+        if rest.iter().any(|row| !row.3) {
+            out.push(SpendByRunnable { runnable: RunnableRef(String::new()), name: "Others".to_string(), cost_usd: others, spawned: false });
+        }
+        if rest.iter().any(|row| row.3) {
             out.push(SpendByRunnable {
-                runnable: RunnableRef(String::new()),
-                name: "Others".to_string(),
-                cost_usd: rows[top..].iter().map(|row| row.2).sum(),
-                spawned: false,
+                runnable: RunnableRef(CREATED_BY_AGENTS.to_string()),
+                name: "Created by agents".to_string(),
+                cost_usd: created,
+                spawned: true,
             });
         }
         Ok(out)

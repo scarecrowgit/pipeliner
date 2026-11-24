@@ -209,6 +209,7 @@ impl IssueApi for Engine {
         };
         inner.store.upsert_autopilot(&autopilot)?;
         inner.publish(Event::AutopilotsChanged);
+        inner.wakeup.poke();
         Ok(())
     }
 
@@ -217,7 +218,12 @@ impl IssueApi for Engine {
             bail!("There is no autopilot {id}");
         }
         self.inner.publish(Event::AutopilotsChanged);
+        self.inner.wakeup.poke();
         Ok(())
+    }
+
+    fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, model::Millis)>> {
+        Ok(crate::api::next_scheduled_runs_of(&self.inner.store.autopilots(None)?))
     }
 
     fn run_autopilot(&self, id: &AutopilotId) -> Result<()> {
@@ -228,6 +234,6 @@ impl IssueApi for Engine {
             .into_iter()
             .find(|a| &a.id == id)
             .ok_or_else(|| anyhow!("There is no autopilot {id}"))?;
-        self.fire_autopilot(autopilot)
+        self.fire_autopilot(autopilot, false)
     }
 }

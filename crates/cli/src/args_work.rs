@@ -24,6 +24,8 @@ pub enum RunCmd {
     /// Throws a test run away with its worktrees and branches.
     Discard { id: String },
     Answer { id: String, text: String, node: Option<String> },
+    /// Removes worktrees of old finished runs that were merged or shipped (`--dry-run` lists).
+    Sweep { dry_run: bool },
 }
 
 /// Where a sent-back round starts, as typed after `--from`.
@@ -170,6 +172,11 @@ pub fn parse_run(options: &[&str]) -> Result<RunCmd> {
         "cancel" => RunCmd::Cancel { id: split(&label, rest, &[], &[])?.one("a run id")? },
         "resume" => RunCmd::Resume { id: split(&label, rest, &[], &[])?.one("a run id")? },
         "discard" => RunCmd::Discard { id: split(&label, rest, &[], &[])?.one("a run id")? },
+        "sweep" => {
+            let w = split(&label, rest, &[], &["--dry-run"])?;
+            w.none()?;
+            RunCmd::Sweep { dry_run: w.has("--dry-run") }
+        }
         "answer" => {
             let w = split(&label, rest, &["--node"], &[])?;
             let (id, text) = w.head_and_text("a run id", "the answer")?;

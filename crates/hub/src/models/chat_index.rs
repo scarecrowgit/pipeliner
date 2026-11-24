@@ -1,5 +1,7 @@
-//! The sidebar's chats: pinned and recent top-level sessions, the open session's sub-agents,
-//! and the counts next to "Chats".
+//! The sidebar's chats: pinned and recent chats the person started, the open session's
+//! sub-agents, and the counts next to "Chats". Sessions that pipeline nodes and sub-agents
+//! started are not listed; they are reached through their run, issue or parent (or asked for
+//! with `Queries::sessions` and `started_by: Some(StartedBy::Agents)`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use gpui::Context;
 
-use crate::api::{Api, Session, SessionFilter, SessionId, SessionQuery};
+use crate::api::{Api, Session, SessionFilter, SessionId, SessionQuery, SessionState, StartedBy};
 use crate::load::{LoadState, failed, query};
 
 /// How many recent sessions the index reads at start; older ones come in through events.
@@ -23,7 +25,7 @@ pub struct ChatIndex {
     api: Arc<dyn Api>,
     state: LoadState,
     started: bool,
-    /// Top-level, not archived.
+    /// Started by the person, not archived.
     sessions: HashMap<SessionId, Arc<Session>>,
     pinned: Vec<Arc<Session>>,
     recent: Vec<Arc<Session>>,
@@ -85,7 +87,7 @@ impl ChatIndex {
         self.waiting
     }
 
-    /// Every chat that is not archived ("View all 2,418").
+    /// Every chat of the person's that is not archived ("View all 2,418").
     pub fn total(&self) -> u64 {
         self.total
     }
@@ -110,7 +112,12 @@ impl ChatIndex {
             cx,
             &self.api,
             |api| {
-                let filter = SessionFilter { archived: Some(false), limit: Some(LOAD_LIMIT), ..SessionFilter::default() };
+                let filter = SessionFilter {
+                    archived: Some(false),
+                    started_by: Some(StartedBy::Me),
+                    limit: Some(LOAD_LIMIT),
+                    ..SessionFilter::default()
+                };
                 Ok((api.sessions(&filter)?, counts(api)?))
             },
             |this: &mut Self, result, cx| {
@@ -195,7 +202,7 @@ impl ChatIndex {
                 None => self.children.push(session.clone()),
             }
         }
-        if session.parent.is_none() && !session.archived {
+        if session.started_by_person() && !session.archived {
             self.sessions.insert(session.id.clone(), session);
         } else {
             self.sessions.remove(&session.id);
@@ -227,8 +234,14 @@ impl ChatIndex {
     }
 }
 
-/// (chats that are not archived, chats waiting for a person).
+/// (the person's chats that are not archived, those of them waiting for a person).
 fn counts(api: &dyn Api) -> Result<(u64, u64)> {
-    let result = api.search_sessions(&SessionQuery { limit: 0, ..SessionQuery::default() })?;
-    Ok((result.facets.all, result.facets.waiting))
+    let query = SessionQuery {
+        started_by: Some(StartedBy::Me),
+        state: Some(SessionState::Waiting),
+        limit: 0,
+        ..SessionQuery::default()
+    };
+    let result = api.search_sessions(&query)?;
+    Ok((result.facets.mine, result.total))
 }

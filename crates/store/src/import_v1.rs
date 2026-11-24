@@ -39,7 +39,7 @@ use anyhow::{Context as _, Result};
 use base::paths::Paths;
 use model::{Millis, SessionId};
 
-pub use report::{ImportReport, Kind, Problem, Tally};
+pub use report::{ImportReport, Kind, PipelineImport, PipelineOutcome, Problem, Tally};
 
 use crate::Store;
 

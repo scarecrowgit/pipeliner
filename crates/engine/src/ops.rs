@@ -1,14 +1,15 @@
 //! [`OpsApi`]: Home's numbers from the ledger and the live registry, runtimes, settings,
 //! projects and permission rules.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use model::{
     Event, InboxKind, PermissionRule, Project, ProjectId, Runtime, RuntimeKind, Settings, SessionState, SpendBucket,
     SpendByRunnable, SpendToday, ToolDisplay,
 };
 use store::SessionFilter;
 
-use crate::api::{HomeStats, Need, NeedKind, OpsApi, Period, Target, Working, WorkingState};
+use crate::api::{HomeStats, Need, NeedKind, NewProject, OpsApi, Period, SweptWorktree, Target, Working, WorkingState};
+use crate::bus::lock;
 use crate::catalog::{days, period_start};
 use crate::engine::{Engine, Inner};
 
@@ -37,6 +38,30 @@ fn ask_text(display: &ToolDisplay, tool: &str) -> String {
     };
     let what = if what.trim().is_empty() { format!("use {tool}") } else { what };
     format!("asks to {what}")
+}
+
+impl Engine {
+    /// Stores the settings and tells everyone: waiting turns see a new slot count at once.
+    fn save_settings(&self, settings: Settings) -> Result<()> {
+        if settings.slots == 0 {
+            bail!("At least one agent must be able to work");
+        }
+        self.inner.store.set_settings(&settings)?;
+        self.inner.slots.notify();
+        self.inner.publish(Event::SettingsChanged);
+        if let Some(runtime) = self.runtimes().into_iter().next() {
+            self.inner.publish(Event::RuntimeChanged { runtime });
+        }
+        Ok(())
+    }
+
+    /// Reads, changes and stores the settings as one step.
+    fn change_settings(&self, change: impl FnOnce(&mut Settings) -> Result<()>) -> Result<()> {
+        let _guard = lock(&self.inner.settings_lock);
+        let mut settings = self.inner.store.settings()?;
+        change(&mut settings)?;
+        self.save_settings(settings)
+    }
 }
 
 impl OpsApi for Engine {
@@ -205,16 +230,8 @@ impl OpsApi for Engine {
     }
 
     fn set_settings(&self, settings: Settings) -> Result<()> {
-        if settings.slots == 0 {
-            bail!("At least one agent must be able to work");
-        }
-        self.inner.store.set_settings(&settings)?;
-        self.inner.slots.notify();
-        self.inner.publish(Event::SettingsChanged);
-        if let Some(runtime) = self.runtimes().into_iter().next() {
-            self.inner.publish(Event::RuntimeChanged { runtime });
-        }
-        Ok(())
+        let _guard = lock(&self.inner.settings_lock);
+        self.save_settings(settings)
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
@@ -241,8 +258,117 @@ impl OpsApi for Engine {
         if !self.inner.store.delete_project(id)? {
             bail!("There is no project {id}");
         }
+        // The current project falls back to the first one left.
+        self.change_settings(|settings| {
+            if settings.current_project.as_ref() == Some(id) {
+                settings.current_project = None;
+            }
+            Ok(())
+        })?;
         self.inner.publish(Event::SettingsChanged);
         Ok(())
+    }
+
+    fn create_project(&self, new: NewProject) -> Result<Project> {
+        let inner = &self.inner;
+        let name = new.name.trim();
+        if name.is_empty() {
+            bail!("A project needs a name");
+        }
+        let existing = inner.store.projects()?;
+        let taken = || existing.iter().map(|p| p.key_prefix.as_str());
+        let key_prefix = if new.key_prefix.trim().is_empty() {
+            // A prefix made from the name gets a letter more when another project has it.
+            let base = issues::keys::prefix_for(name);
+            std::iter::once(base.clone())
+                .chain(('A'..='Z').map(|c| format!("{base}{c}")))
+                .find_map(|candidate| issues::keys::validate_prefix(&candidate, taken()).ok())
+                .ok_or_else(|| anyhow!("Pick a key prefix for {name}: {base} is taken"))?
+        } else {
+            issues::keys::validate_prefix(&new.key_prefix, taken())?
+        };
+        let mut repos = Vec::new();
+        for typed in &new.repos {
+            let path = inner.paths.expand(&typed.to_string_lossy());
+            if !path.is_dir() {
+                bail!("The folder {} does not exist", inner.paths.display(&path));
+            }
+            if !repos.contains(&path) {
+                repos.push(path);
+            }
+        }
+        let base = base::id::slug(name, 40);
+        let base = if base.is_empty() { key_prefix.to_ascii_lowercase() } else { base };
+        let mut id = ProjectId::new(base.clone());
+        let mut n = 2;
+        while existing.iter().any(|p| p.id == id) {
+            id = ProjectId::new(format!("{base}-{n}"));
+            n += 1;
+        }
+        let project = Project { id, name: name.to_string(), key_prefix, repos };
+        inner.store.upsert_project(&project)?;
+        inner.publish(Event::SettingsChanged);
+        Ok(project)
+    }
+
+    fn rename_project(&self, id: &ProjectId, name: &str) -> Result<Project> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("A project needs a name");
+        }
+        let mut project = self.inner.store.project(id)?.ok_or_else(|| anyhow!("There is no project {id}"))?;
+        project.name = name.to_string();
+        self.inner.store.upsert_project(&project)?;
+        self.inner.publish(Event::SettingsChanged);
+        Ok(project)
+    }
+
+    fn set_current_project(&self, id: &ProjectId) -> Result<()> {
+        if self.inner.store.project(id)?.is_none() {
+            bail!("There is no project {id}");
+        }
+        self.change_settings(|settings| {
+            settings.current_project = Some(id.clone());
+            Ok(())
+        })
+    }
+
+    fn project_counts(&self) -> Result<Vec<crate::api::ProjectCounts>> {
+        let store = &self.inner.store;
+        let projects = store.projects()?;
+        let mut issues = Vec::new();
+        for project in &projects {
+            issues.extend(store.issues(&project.id)?);
+        }
+        Ok(crate::api::project_counts_of(&projects, &issues, &store.open_runs()?))
+    }
+
+    fn set_daily_limit(&self, usd: Option<f64>) -> Result<()> {
+        if usd.is_some_and(|usd| !usd.is_finite() || usd < 0.0) {
+            bail!("The daily limit cannot be below $0.00");
+        }
+        self.change_settings(|settings| {
+            settings.daily_limit_usd = usd;
+            Ok(())
+        })
+    }
+
+    fn set_slots(&self, slots: u32) -> Result<()> {
+        self.change_settings(|settings| {
+            settings.slots = slots;
+            Ok(())
+        })
+    }
+
+    fn set_worktree_retention(&self, days: u32) -> Result<()> {
+        self.change_settings(|settings| {
+            settings.worktree_retention_days = days;
+            Ok(())
+        })
+    }
+
+    fn sweep_worktrees(&self, dry_run: bool) -> Result<Vec<SweptWorktree>> {
+        crate::sweep::sweep(&self.inner, dry_run)
     }
 
     fn permission_rules(&self) -> Result<Vec<PermissionRule>> {

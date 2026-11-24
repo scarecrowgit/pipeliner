@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Task};
 
 use crate::api::{
-    GraphDef, InboxId, PermissionRule, PipelineId, PipelineVersion, Place, Project, ProjectId, ReviewDecision,
-    ReviewId, Run, RunId, RunInput, Runnable, RunnableRef, Settings,
+    GraphDef, InboxId, NewProject, PermissionRule, PipelineId, PipelineVersion, Place, Project, ProjectId,
+    ReviewDecision, ReviewId, Run, RunId, RunInput, Runnable, RunnableRef, Settings, SweptWorktree,
 };
 use crate::commands::Commands;
 
@@ -77,6 +77,12 @@ impl Commands {
         self.fire("save the agent", cx, move |api| api.save_runnable(&place, runnable));
     }
 
+    /// [`Self::save_runnable`] that tells how it went: `Some(())` once saved, `None` after the
+    /// failure was shown.
+    pub fn save_runnable_with_result(&self, place: Place, runnable: Runnable, cx: &mut App) -> Task<Option<()>> {
+        self.call("save the agent", cx, move |api| api.save_runnable(&place, runnable))
+    }
+
     /// Copies a runnable; resolves to the copy.
     pub fn duplicate_runnable(&self, reference: &RunnableRef, cx: &mut App) -> Task<Option<RunnableRef>> {
         let reference = reference.clone();
@@ -132,6 +138,12 @@ impl Commands {
         self.fire("save the pipeline", cx, move |api| api.save_pipeline(&place, graph));
     }
 
+    /// [`Self::save_pipeline`] that tells how it went: `Some(())` once saved, `None` after the
+    /// failure was shown.
+    pub fn save_pipeline_with_result(&self, place: Place, graph: GraphDef, cx: &mut App) -> Task<Option<()>> {
+        self.call("save the pipeline", cx, move |api| api.save_pipeline(&place, graph))
+    }
+
     /// Deploys the draft as the next version.
     pub fn deploy_pipeline(&self, id: &PipelineId, note: &str, cx: &mut App) -> Task<Option<PipelineVersion>> {
         let (id, note) = (id.clone(), note.to_string());
@@ -154,6 +166,43 @@ impl Commands {
     pub fn delete_project(&self, id: &ProjectId, cx: &mut App) {
         let id = id.clone();
         self.fire("delete the project", cx, move |api| api.delete_project(&id));
+    }
+
+    /// Sets today's spend limit; `None` for no limit.
+    pub fn set_daily_limit(&self, usd: Option<f64>, cx: &mut App) {
+        self.fire("change the daily limit", cx, move |api| api.set_daily_limit(usd));
+    }
+
+    /// Sets how many agents work at once; takes effect without a restart.
+    pub fn set_slots(&self, slots: u32, cx: &mut App) {
+        self.fire("change the slots", cx, move |api| api.set_slots(slots));
+    }
+
+    /// Sets how many days finished, merged or shipped runs keep their worktrees (0: forever).
+    pub fn set_worktree_retention(&self, days: u32, cx: &mut App) {
+        self.fire("change the worktree retention", cx, move |api| api.set_worktree_retention(days));
+    }
+
+    /// Creates a local project (the key prefix and folders are checked); resolves to it.
+    pub fn create_project(&self, new: NewProject, cx: &mut App) -> Task<Option<Project>> {
+        self.call("create the project", cx, move |api| api.create_project(new))
+    }
+
+    /// Renames a project; resolves to it.
+    pub fn rename_project(&self, id: &ProjectId, name: &str, cx: &mut App) -> Task<Option<Project>> {
+        let (id, name) = (id.clone(), name.to_string());
+        self.call("rename the project", cx, move |api| api.rename_project(&id, &name))
+    }
+
+    /// Switches the current project.
+    pub fn set_current_project(&self, id: &ProjectId, cx: &mut App) {
+        let id = id.clone();
+        self.fire("switch the project", cx, move |api| api.set_current_project(&id));
+    }
+
+    /// Removes old worktrees of finished, merged or shipped runs now; resolves to what went.
+    pub fn sweep_worktrees(&self, cx: &mut App) -> Task<Option<Vec<SweptWorktree>>> {
+        self.call("clean up old worktrees", cx, move |api| api.sweep_worktrees(false))
     }
 
     /// Removes a saved allow or deny rule.

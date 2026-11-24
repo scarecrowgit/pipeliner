@@ -4,13 +4,14 @@ use std::ops::Range;
 
 use anyhow::{Result, bail};
 use model::{
-    FileChange, IssueKey, Message, ModelRef, RunnableRef, Session, SessionId, SessionOrigin, SessionState,
+    FileChange, IssueKey, Message, ModelRef, RunnableRef, Session, SessionId, SessionState,
     StoredMessage, TodoItem,
 };
 use rusqlite::types::Value;
 use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 
 use crate::Store;
+use crate::search::StartedBy;
 use crate::codec::{Decoder, Filter, check_path, int, json, query_all, query_one, tag, text};
 
 /// Session columns read back into a [`Session`], prefixed for joins.
@@ -28,6 +29,9 @@ pub struct SessionFilter {
     pub pinned: Option<bool>,
     pub state: Option<SessionState>,
     pub parent: ParentFilter,
+    /// `Some(Me)` lists only chats a person started (the sidebar), `Some(Agents)` only those an
+    /// agent or a pipeline node started; `None` both.
+    pub started_by: Option<StartedBy>,
     /// `None` lists all.
     pub limit: Option<usize>,
     pub offset: usize,
@@ -85,10 +89,7 @@ fn decode_message(d: &Decoder) -> Result<StoredMessage> {
 
 /// Started by an agent or a pipeline rather than by the person.
 fn by_agent(session: &Session) -> bool {
-    match session.origin {
-        SessionOrigin::Agent { .. } | SessionOrigin::Run { .. } => true,
-        SessionOrigin::Me | SessionOrigin::Imported => session.parent.is_some(),
-    }
+    !session.started_by_person()
 }
 
 /// Writes a session header inside the caller's transaction.
@@ -244,6 +245,11 @@ impl Store {
             ParentFilter::Any => {}
             ParentFilter::TopLevel => f.and("s.parent IS NULL", []),
             ParentFilter::Of(parent) => f.and("s.parent = ?", [text(parent.as_str())]),
+        }
+        match filter.started_by {
+            Some(StartedBy::Me) => f.and("s.by_agent = 0", []),
+            Some(StartedBy::Agents) => f.and("s.by_agent = 1", []),
+            None => {}
         }
         let limit = filter.limit.map_or(-1, |limit| limit as i64);
         f.params.push(Value::Integer(limit));

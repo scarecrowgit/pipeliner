@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow, bail};
 
 use crate::api::{
-    CatalogApi, Event, GraphChange, GraphDef, HomeStats, LoadProblem, Need, OpsApi, Period, PermissionRule, PipelineId,
+    CatalogApi, Event, GraphChange, GraphDef, HomeStats, LoadProblem, Need, NewProject, OpsApi, Period, PermissionRule,
+    PipelineId, SweptWorktree,
     PipelineVersion, Place, Problem, Project, ProjectId, Runnable, RunnableActivity, RunnableKind, RunnableRef,
     RunnableState, Runtime, Settings, Severity, Skill, SpendBucket, SpendByRunnable, SpendToday, Template, UsedBy,
     VersionState, Working,
@@ -323,6 +324,90 @@ impl OpsApi for FixtureApi {
         Ok(())
     }
 
+    fn create_project(&self, new: NewProject) -> Result<Project> {
+        self.record("create_project", new.name.clone())?;
+        let project = {
+            let mut world = self.world();
+            let key_prefix = new.key_prefix.trim().to_ascii_uppercase();
+            if key_prefix.is_empty() || !key_prefix.chars().all(|c| c.is_ascii_uppercase()) {
+                bail!("A key prefix is 1 to 8 letters, A to Z");
+            }
+            if world.projects.iter().any(|p| p.key_prefix == key_prefix) {
+                bail!("Another project already uses that key prefix");
+            }
+            let name = new.name.trim().to_string();
+            if name.is_empty() {
+                bail!("A project needs a name");
+            }
+            let project = Project { id: ProjectId::new(world.fresh_id("project")), name, key_prefix, repos: new.repos };
+            world.projects.push(project.clone());
+            project
+        };
+        self.emit(Event::SettingsChanged);
+        Ok(project)
+    }
+
+    fn rename_project(&self, id: &ProjectId, name: &str) -> Result<Project> {
+        self.record("rename_project", format!("{id} {name}"))?;
+        let project = {
+            let mut world = self.world();
+            let project = world.projects.iter_mut().find(|p| &p.id == id).ok_or_else(|| anyhow!("no project {id}"))?;
+            project.name = name.trim().to_string();
+            project.clone()
+        };
+        self.emit(Event::SettingsChanged);
+        Ok(project)
+    }
+
+    fn set_current_project(&self, id: &ProjectId) -> Result<()> {
+        self.record("set_current_project", id.to_string())?;
+        {
+            let mut world = self.world();
+            if !world.projects.iter().any(|p| &p.id == id) {
+                bail!("no project {id}");
+            }
+            world.settings.current_project = Some(id.clone());
+        }
+        self.emit(Event::SettingsChanged);
+        Ok(())
+    }
+
+    fn project_counts(&self) -> Result<Vec<crate::api::ProjectCounts>> {
+        self.fail_if_told("project_counts")?;
+        let world = self.world();
+        let open: Vec<_> = world.runs.iter().filter(|run| run.state.is_open()).cloned().collect();
+        Ok(crate::api::project_counts_of(&world.projects, &world.issues, &open))
+    }
+
+    fn set_daily_limit(&self, usd: Option<f64>) -> Result<()> {
+        self.record("set_daily_limit", format!("{usd:?}"))?;
+        self.world().settings.daily_limit_usd = usd;
+        self.emit(Event::SettingsChanged);
+        Ok(())
+    }
+
+    fn set_slots(&self, slots: u32) -> Result<()> {
+        self.record("set_slots", slots.to_string())?;
+        if slots == 0 {
+            bail!("At least one agent must be able to work");
+        }
+        self.world().settings.slots = slots;
+        self.emit(Event::SettingsChanged);
+        Ok(())
+    }
+
+    fn set_worktree_retention(&self, days: u32) -> Result<()> {
+        self.record("set_worktree_retention", days.to_string())?;
+        self.world().settings.worktree_retention_days = days;
+        self.emit(Event::SettingsChanged);
+        Ok(())
+    }
+
+    fn sweep_worktrees(&self, dry_run: bool) -> Result<Vec<SweptWorktree>> {
+        self.record("sweep_worktrees", dry_run.to_string())?;
+        Ok(Vec::new())
+    }
+
     fn permission_rules(&self) -> Result<Vec<PermissionRule>> {
         Ok(self.world().rules.clone())
     }
@@ -337,3 +422,4 @@ impl OpsApi for FixtureApi {
         self.record("shutdown", String::new()).ok();
     }
 }
+

@@ -18,7 +18,7 @@ fn main() {
     signal::install();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let deps = app::Deps {
-        open: Box::new(engine::Engine::open_configured),
+        open: Box::new(engine::Engine::open_for_cli),
         input: Box::new(BufReader::new(std::io::stdin())),
         out: Box::new(std::io::stdout()),
         err: Box::new(std::io::stderr()),

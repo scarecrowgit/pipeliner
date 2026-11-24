@@ -33,6 +33,7 @@ struct Routed {
     sessions: HashMap<SessionId, Vec<SessionInput>>,
     issues: Vec<IssueInput>,
     runs: Vec<Run>,
+    run_waits: Vec<(RunId, Option<crate::api::RunWait>)>,
     run_models: HashMap<RunId, Vec<RunInput>>,
     inbox: Vec<InboxInput>,
     reviews: HashMap<ReviewId, crate::api::Review>,
@@ -46,6 +47,8 @@ struct Routed {
     runtimes: Vec<crate::api::Runtime>,
     /// Something Home's needs-you or working-now rows depend on.
     live_changed: bool,
+    /// An issue changed: the project switcher's counts move.
+    issues_changed: bool,
     notices: Vec<HubNotice>,
 }
 
@@ -73,8 +76,14 @@ impl Hub {
                     routed.index.push(IndexInput::Removed(session));
                 }
                 Event::Agent { session, event } => self.to_session(&mut routed, &session, SessionInput::Agent(event)),
-                Event::IssueChanged { issue } => routed.issues.push(IssueInput::Changed(issue)),
-                Event::IssueRemoved { key } => routed.issues.push(IssueInput::Removed(key)),
+                Event::IssueChanged { issue } => {
+                    routed.issues_changed = true;
+                    routed.issues.push(IssueInput::Changed(issue));
+                }
+                Event::IssueRemoved { key } => {
+                    routed.issues_changed = true;
+                    routed.issues.push(IssueInput::Removed(key));
+                }
                 Event::IssueActivity { key, event } => routed.issues.push(IssueInput::Activity(key, event)),
                 Event::RunChanged { run } => {
                     routed.live_changed = true;
@@ -82,6 +91,13 @@ impl Hub {
                         routed.run_models.entry(run.id.clone()).or_default().push(RunInput::Changed(run.clone()));
                     }
                     routed.runs.push(run);
+                }
+                Event::RunWaiting { run, waiting } => {
+                    routed.live_changed = true;
+                    if self.run_models.contains_key(&run) {
+                        routed.run_models.entry(run.clone()).or_default().push(RunInput::Waiting(waiting));
+                    }
+                    routed.run_waits.push((run, waiting));
                 }
                 Event::RunLog { run, line } => {
                     if self.run_models.contains_key(&run) {
@@ -157,8 +173,8 @@ impl Hub {
         if !routed.issues.is_empty() {
             self.issues.update(cx, |model, cx| model.apply(routed.issues, cx));
         }
-        if !routed.runs.is_empty() {
-            self.runs.update(cx, |model, cx| model.apply(routed.runs, cx));
+        if !routed.runs.is_empty() || !routed.run_waits.is_empty() {
+            self.runs.update(cx, |model, cx| model.apply_all(routed.runs, routed.run_waits, cx));
         }
         for (id, inputs) in routed.run_models {
             if let Some(model) = live::<RunModel, _>(&mut self.run_models, &id) {
@@ -185,6 +201,9 @@ impl Hub {
         self.ops.update(cx, |ops, cx| {
             if routed.live_changed {
                 ops.live_changed(cx);
+            }
+            if routed.live_changed || routed.issues_changed {
+                ops.counts_changed(cx);
             }
             if routed.spend_changed {
                 ops.spend_changed(cx);

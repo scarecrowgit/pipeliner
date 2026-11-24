@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     FileChange, InboxId, InboxItem, Issue, IssueEvent, IssueKey, PermissionRequest, RequestId, Review, Run, RunId,
-    RunLogLine, Runtime, Session, SessionId, StopReason, StoredMessage, TodoItem, ToolClass, ToolDisplay, Usage,
+    RunLogLine, RunWait, Runtime, Session, SessionId, StopReason, StoredMessage, TodoItem, ToolClass, ToolDisplay, Usage,
 };
 
 /// Everything a running agent reports, in order. The chat transcript and a pipeline node's log
@@ -127,6 +127,8 @@ pub enum Event {
     /// A run was created or its state or node instances changed. Logs are not included.
     RunChanged { run: Run },
     RunLog { run: RunId, line: RunLogLine },
+    /// Why an open run waits for a person changed; `None` once it no longer waits.
+    RunWaiting { run: RunId, waiting: Option<RunWait> },
 
     ReviewChanged { review: Review },
 

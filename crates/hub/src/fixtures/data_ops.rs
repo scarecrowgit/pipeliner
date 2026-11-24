@@ -90,13 +90,17 @@ pub fn fill(world: &mut World) {
             (RunnableRef::agent("build"), "Build"),
             (RunnableRef::agent("fixer"), "Fixer"),
             (RunnableRef::agent("codex"), "Codex"),
-            (RunnableRef::agent("auditor"), "Auditor"),
+            (RunnableRef("spawned:log-digger".into()), "Log digger"),
             (RunnableRef("others".into()), "Others · 6"),
         ];
         names
             .into_iter()
             .zip(values)
-            .map(|((runnable, name), cost)| SpendByRunnable { runnable, name: name.to_string(), cost_usd: cost, spawned: false })
+            .map(|((runnable, name), cost)| {
+                // Runnables an agent created at run time are marked, as the ledger marks them.
+                let spawned = runnable.as_str().starts_with("spawned:");
+                SpendByRunnable { runnable, name: name.to_string(), cost_usd: cost, spawned }
+            })
             .collect()
     };
     ops.by_runnable.insert(Period::Today, spenders([1.12, 0.94, 0.62, 0.41, 0.18, 0.15, 0.39]));

@@ -46,6 +46,10 @@ pub struct EngineOptions {
     pub renderer: Option<Arc<dyn pipeline::runners::Renderer>>,
     /// Values pipelines must never let out of a job (the configured provider keys).
     pub secrets: Vec<String>,
+    /// Runs the scheduler thread: autopilots fire on their clock, and finished runs'
+    /// worktrees are swept on start and once a day. The app turns it on; the CLI and tests
+    /// leave it off (the CLI must not fire what the app fires).
+    pub background: bool,
 }
 
 impl std::fmt::Debug for EngineOptions {
@@ -55,6 +59,7 @@ impl std::fmt::Debug for EngineOptions {
             .field("gh", &self.gh.as_ref().map(|_| "custom"))
             .field("renderer", &self.renderer.as_ref().map(|_| "custom"))
             .field("secrets", &self.secrets.len())
+            .field("background", &self.background)
             .finish()
     }
 }
@@ -97,6 +102,12 @@ pub(crate) struct Inner {
     headers: Mutex<()>,
     /// Turn threads, joined on shutdown.
     pub threads: Mutex<Vec<JoinHandle<()>>>,
+    /// Wakes or stops the scheduler thread.
+    pub wakeup: Arc<crate::scheduler::Wakeup>,
+    /// Serialises firing autopilots, by hand and on schedule.
+    pub autopilot_fires: Mutex<()>,
+    /// Serialises read-modify-write of the settings.
+    pub settings_lock: Mutex<()>,
     shut_down: AtomicBool,
 }
 
@@ -137,29 +148,49 @@ impl Engine {
             limits: options.limits,
             headers: Mutex::new(()),
             threads: Mutex::new(Vec::new()),
+            wakeup: Default::default(),
+            autopilot_fires: Mutex::new(()),
+            settings_lock: Mutex::new(()),
             shut_down: AtomicBool::new(false),
         };
         let engine = Engine { inner: Arc::new(inner) };
         engine.inner.keep_queues()?;
         engine.inner.recover()?;
         crate::pipelines::recover(&engine.inner);
+        if options.background {
+            crate::scheduler::start(&engine.inner)?;
+        }
         Ok(engine)
     }
 
     /// The engine the app and the CLI run with: providers from `config.toml` and the
     /// environment, and the wall clock.
+    /// Autopilots fire on their schedule and old worktrees are swept (see
+    /// [`EngineOptions::background`]).
     pub fn open_configured(paths: Paths) -> Result<Engine> {
+        Self::configured(paths, true)
+    }
+
+    /// [`Engine::open_configured`] without the scheduler thread, for one-off commands that run
+    /// beside the app.
+    pub fn open_for_cli(paths: Paths) -> Result<Engine> {
+        Self::configured(paths, false)
+    }
+
+    fn configured(paths: Paths, background: bool) -> Result<Engine> {
         let config = llm::Config::load(&paths)?;
         let secrets = config.providers.iter().filter_map(|p| p.api_key.clone()).filter(|k| !k.trim().is_empty()).collect();
-        let options = EngineOptions { secrets, ..Default::default() };
+        let options = EngineOptions { secrets, background, ..Default::default() };
         Self::open_with(paths, Arc::new(llm::Providers::new(config)), Arc::new(SystemClock), options)
     }
 
-    /// Imports the old app's data into the store (see [`store::import_v1`]). A dry run reports
-    /// what would be imported and writes nothing.
+    /// Imports the old app's data into the store (see [`store::import_v1`]) and converts its
+    /// linear pipelines into the library. A dry run reports what would be imported and writes
+    /// nothing.
     pub fn import_v1(&self, dry_run: bool) -> Result<ImportReport> {
         let inner = &self.inner;
-        let report = store::import_v1::import_v1(&inner.store, &inner.paths, &ImportOptions { dry_run })?;
+        let mut report = store::import_v1::import_v1(&inner.store, &inner.paths, &ImportOptions { dry_run })?;
+        report.pipelines = self.import_v1_pipelines(dry_run);
         if !dry_run {
             inner.publish(Event::SpendChanged);
             inner.publish(Event::SettingsChanged);
@@ -290,6 +321,7 @@ impl Inner {
         if self.shut_down.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.wakeup.stop();
         // Runs first: their agents become interrupted instances that resume later.
         self.runs.stop_all();
         self.live.cancel_all();
@@ -307,5 +339,12 @@ impl Inner {
             self.interrupted(&id);
         }
         self.mcp.shutdown();
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        // The scheduler thread holds only a weak reference; this ends its wait at once.
+        self.wakeup.stop();
     }
 }

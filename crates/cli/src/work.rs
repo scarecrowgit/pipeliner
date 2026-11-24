@@ -278,6 +278,18 @@ pub fn run(engine: &Engine, cmd: RunCmd, deps: &mut Deps) -> Result<i32> {
             engine.resume_run(&id)?;
             followed(engine, &id, after, deps)
         }
+        RunCmd::Sweep { dry_run } => {
+            let swept = engine.sweep_worktrees(dry_run)?;
+            let verb = if dry_run { "would remove" } else { "removed" };
+            for s in &swept {
+                let branch = if s.branch_removed { format!("{} (branch too)", s.branch) } else { s.branch.clone() };
+                writeln!(deps.out, "{verb} {}  {branch}  run {}  {}", s.path.display(), s.run, s.reason)?;
+            }
+            if swept.is_empty() {
+                writeln!(deps.out, "nothing to remove")?;
+            }
+            Ok(0)
+        }
         RunCmd::Discard { id } => {
             let id = RunId::new(id);
             engine.discard_run(&id)?;

@@ -10,7 +10,7 @@ use gpui::{App, AppContext as _, Task};
 use crate::api::{
     Api, BlobId, ChildDir, Estimate, FolderInfo, GraphChange, GraphDef, InboxItem, Issue, IssueEvent, IssueKey, PermissionRule,
     PipelineId, Problem, ProviderModels, PullRequest, RepoFacts, ReviewId, Run, RunId, RunLogLine, RunStats,
-    RunnableRef, Session, SessionFilter, SessionId, SlashCommand, StartFrom, Template, UsedBy, WorkdirEntry,
+    RunWait, RunnableRef, Session, SessionFilter, SweptWorktree, SessionId, SlashCommand, StartFrom, Template, UsedBy, WorkdirEntry,
 };
 
 /// A cheap, clonable handle for reads outside the models.
@@ -29,7 +29,9 @@ impl Queries {
         cx.background_spawn(async move { f(&*api) })
     }
 
-    /// Sessions matching a filter (the archive, a "View all" page).
+    /// Sessions matching a filter (the archive, a "View all" page). The sidebar lists only the
+    /// person's own chats; set `started_by: Some(StartedBy::Agents)` to ask for the sessions
+    /// pipeline nodes and sub-agents started.
     pub fn sessions(&self, filter: SessionFilter, cx: &App) -> Task<Result<Vec<Session>>> {
         self.ask(cx, move |api| api.sessions(&filter))
     }
@@ -133,6 +135,24 @@ impl Queries {
     pub fn runs_for_issue(&self, key: &IssueKey, cx: &App) -> Task<Result<Vec<Run>>> {
         let key = key.clone();
         self.ask(cx, move |api| api.runs_for_issue(&key))
+    }
+
+    /// The newest `limit` runs of a pipeline, test runs included, newest first (the editor's
+    /// "Last test run #N" after a restart).
+    pub fn runs_for_pipeline(&self, id: &PipelineId, limit: usize, cx: &App) -> Task<Result<Vec<Run>>> {
+        let id = id.clone();
+        self.ask(cx, move |api| api.runs_for_pipeline(&id, limit))
+    }
+
+    /// Why a run waits for a person, without opening a [`crate::RunModel`].
+    pub fn run_waiting(&self, id: &RunId, cx: &App) -> Task<Result<Option<RunWait>>> {
+        let id = id.clone();
+        self.ask(cx, move |api| api.run_waiting(&id))
+    }
+
+    /// What the worktree sweep would remove now, for the settings.
+    pub fn planned_sweep(&self, cx: &App) -> Task<Result<Vec<SweptWorktree>>> {
+        self.ask(cx, |api| api.sweep_worktrees(true))
     }
 
     /// The live numbers of a run's header.

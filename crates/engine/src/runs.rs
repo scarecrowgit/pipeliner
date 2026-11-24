@@ -3,7 +3,8 @@
 
 use anyhow::{Result, anyhow, bail};
 use model::{
-    Event, GraphDef, Issue, IssueKey, NodeStatus, PipelineId, Run, RunId, RunLogLine, RunState, RunStats, SourceKind,
+    Event, GraphDef, Issue, IssueKey, NodeStatus, PipelineId, Run, RunId, RunLogLine, RunState, RunStats, RunWait,
+    SourceKind,
 };
 use pipeline::Item;
 
@@ -92,6 +93,16 @@ impl Engine {
         Ok(run)
     }
 
+    /// Starts the live version of a pipeline on a manual item, with its budget capped at
+    /// `budget_usd` when one is given (an autopilot's).
+    pub(crate) fn start_live_run(&self, pipeline: &PipelineId, input: RunInput, budget_usd: Option<f64>) -> Result<Run> {
+        let (mut graph, version) = pipelines::live_graph(&self.inner, pipeline)?;
+        if let Some(cap) = budget_usd.filter(|usd| usd.is_finite() && *usd > 0.0) {
+            graph.limits.budget_usd = Some(graph.limits.budget_usd.map_or(cap, |own| own.min(cap)));
+        }
+        self.start_graph(graph, version, input, false)
+    }
+
     fn start_graph(&self, graph: GraphDef, version: u32, input: RunInput, test: bool) -> Result<Run> {
         let item = manual_item(&input)?;
         let run = shell(&self.inner, &graph.id, version, &item.title, &item.text, test);
@@ -113,6 +124,24 @@ impl RunApi for Engine {
 
     fn runs_for_issue(&self, key: &IssueKey) -> Result<Vec<Run>> {
         self.inner.store.runs_for_issue(key)
+    }
+
+    fn runs_for_pipeline(&self, id: &PipelineId, limit: usize) -> Result<Vec<Run>> {
+        self.inner.store.runs_for_pipeline(id, limit)
+    }
+
+    fn run_waiting(&self, id: &RunId) -> Result<Option<RunWait>> {
+        let run = self.inner.run_or_fail(id)?;
+        Ok(pipelines::run_snapshot(&self.inner, id).map_or_else(|| pipelines::wait_of_run(&run), |s| pipelines::wait_of(&s)))
+    }
+
+    fn waiting_runs(&self) -> Result<Vec<(RunId, RunWait)>> {
+        let mut out = Vec::new();
+        for run in self.inner.store.open_runs()?.into_iter().filter(|r| r.state.needs_person()) {
+            let wait = pipelines::run_snapshot(&self.inner, &run.id).map_or_else(|| pipelines::wait_of_run(&run), |s| pipelines::wait_of(&s));
+            out.extend(wait.map(|wait| (run.id.clone(), wait)));
+        }
+        Ok(out)
     }
 
     fn run_log(&self, id: &RunId, after_seq: u64, limit: usize) -> Result<Vec<RunLogLine>> {
@@ -148,8 +177,7 @@ impl RunApi for Engine {
     }
 
     fn start_run(&self, pipeline: &PipelineId, input: RunInput) -> Result<Run> {
-        let (graph, version) = pipelines::live_graph(&self.inner, pipeline)?;
-        self.start_graph(graph, version, input, false)
+        self.start_live_run(pipeline, input, None)
     }
 
     fn test_run(&self, pipeline: &PipelineId, input: RunInput) -> Result<Run> {
@@ -209,7 +237,12 @@ impl RunApi for Engine {
     fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()> {
         self.inner.run_or_fail(id)?;
         pipelines::check_limit(&self.inner)?;
-        pipelines::command(&self.inner, id, |h| h.raise_budget(usd))
+        pipelines::command(&self.inner, id, |h| h.raise_budget(usd))?;
+        // The observer resolves it as the run moves on; this covers a raise that changed nothing.
+        if pipelines::run_snapshot(&self.inner, id).is_some_and(|s| pipelines::wait_of(&s) != Some(RunWait::Budget)) {
+            pipelines::resolve(&self.inner, &pipelines::budget_inbox_id(id))?;
+        }
+        Ok(())
     }
 }
 

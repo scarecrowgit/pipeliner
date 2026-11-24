@@ -291,6 +291,17 @@ pub struct Session {
     pub pr_url: Option<String>,
 }
 
+impl Session {
+    /// A chat the person started (or brought over from the old app), as opposed to one an
+    /// agent spawned or a pipeline node opened. Only these belong in the sidebar's chat list.
+    pub fn started_by_person(&self) -> bool {
+        match self.origin {
+            SessionOrigin::Agent { .. } | SessionOrigin::Run { .. } => false,
+            SessionOrigin::Me | SessionOrigin::Imported => self.parent.is_none(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkMode {

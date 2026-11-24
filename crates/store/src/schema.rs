@@ -301,4 +301,6 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         ON CONFLICT (run) DO UPDATE SET snapshot = excluded.snapshot;
     DELETE FROM meta WHERE key LIKE 'run-graph:%' OR key LIKE 'run-snapshot:%';
     ",
+    // 6: a pipeline's runs, newest first, for the editor's "Last test run".
+    "CREATE INDEX runs_by_pipeline ON runs (pipeline, started DESC);",
 ];

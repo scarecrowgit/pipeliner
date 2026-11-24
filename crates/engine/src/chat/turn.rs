@@ -166,6 +166,10 @@ pub(crate) fn spec_for(inner: &Inner, session: &Session, catalog: &catalog::Cata
         spec.tools.allow.push(MCP_GRANT.to_string());
     }
     spec.limits = inner.limits.clone();
+    // A chat an autopilot started works under the autopilot's budget too.
+    if let Some(cap) = inner.store.marker(&super::budget_marker(&session.id))?.and_then(|v| v.parse::<f64>().ok()) {
+        spec.budget_usd = Some(spec.budget_usd.map_or(cap, |own| own.min(cap)));
+    }
     if let Ok(settings) = inner.store.settings() {
         spec.limits.compact_at = f64::from(settings.compact_at);
     }

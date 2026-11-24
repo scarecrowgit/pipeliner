@@ -62,3 +62,13 @@ fn prefixes_are_never_empty() {
         assert!(parse(&format(&p, 1)).is_some());
     }
 }
+
+#[test]
+fn typed_prefixes_are_letters_and_unique() {
+    assert_eq!(validate_prefix(" har ", ["PAY"]), Ok("HAR".to_string()));
+    assert_eq!(validate_prefix("", ["PAY"]), Err(PrefixProblem::Empty));
+    assert_eq!(validate_prefix("HA-1", ["PAY"]), Err(PrefixProblem::NotLetters));
+    assert_eq!(validate_prefix("ÄB", ["PAY"]), Err(PrefixProblem::NotLetters));
+    assert_eq!(validate_prefix("ABCDEFGHI", ["PAY"]), Err(PrefixProblem::NotLetters));
+    assert_eq!(validate_prefix("pay", ["PAY"]), Err(PrefixProblem::Taken));
+}

@@ -106,6 +106,17 @@ fn spend_by_runnable_keeps_the_top_and_sums_the_rest() {
 
     let all = store.spend_by_runnable(0, 1_000, 10).unwrap();
     assert_eq!(all.len(), 4, "no Others row without a rest");
+
+    let mut second = entry(10, "agent:review", 0.25);
+    second.created_by = Some(RunnableRef::agent("lead"));
+    store.record_usage(&second).unwrap();
+    let rows = store.spend_by_runnable(0, 1_000, 1).unwrap();
+    let tail: Vec<(&str, bool, f64)> = rows[1..].iter().map(|r| (r.name.as_str(), r.spawned, r.cost_usd)).collect();
+    assert_eq!(tail.len(), 2, "{tail:?}");
+    assert_eq!((tail[0].0, tail[0].1), ("Others", false));
+    assert!(close(tail[0].2, 2.5));
+    assert_eq!((tail[1].0, tail[1].1), ("Created by agents", true));
+    assert!(close(tail[1].2, 3.25), "agents' spend beyond the top stays marked as theirs");
 }
 
 #[test]

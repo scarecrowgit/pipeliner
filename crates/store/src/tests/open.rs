@@ -56,6 +56,7 @@ fn settings_start_from_defaults() {
         current_project: Some(ProjectId::new("harness")),
         sidebar_collapsed: true,
         compact_at: 0.8,
+        worktree_retention_days: 3,
     };
     store.set_settings(&settings).unwrap();
     assert_eq!(store.settings().unwrap(), settings);

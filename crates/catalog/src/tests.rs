@@ -423,3 +423,30 @@ fn the_self_edit_pipeline_is_a_sound_graph() {
         assert_eq!((n.pos.x - 20.0) % 190.0, 0.0, "{}", n.id);
     }
 }
+
+#[test]
+fn the_self_edit_template_leaves_unknown_folders_for_the_person_to_set() {
+    let f = fixture();
+    let cat = f.load();
+    assert!(templates().iter().any(|t| t.id == "self-edit" && t.kind == RunnableKind::Pipeline));
+    let Instance::Pipeline(graph) = instantiate(&cat, "self-edit", &TemplateContext::default()).unwrap() else { panic!() };
+    for id in ["code", "mockups"] {
+        let workdir = graph.workdir(id).unwrap();
+        assert!(workdir.path.as_os_str().is_empty(), "{id} is a placeholder, not read from $HOME");
+        assert!(workdir.env.is_empty(), "{id}: {:?}", workdir.env);
+    }
+    save_pipeline(&f.paths, &Place::Library, &graph).unwrap();
+    let cat = f.load();
+    assert!(cat.pipeline(&graph.id).is_some(), "{:?}", cat.problems());
+
+    let ctx = TemplateContext {
+        repo: Some(f.repo.clone()),
+        mockups_dir: Some(f.repo.join("mockups")),
+        cargo_target: Some(f.repo.join("target")),
+        ..Default::default()
+    };
+    let Instance::Pipeline(graph) = instantiate(&cat, "self-edit", &ctx).unwrap() else { panic!() };
+    let code = graph.workdir("code").unwrap();
+    assert_eq!((code.path.clone(), code.env["CARGO_TARGET_DIR"].clone()), (f.repo.clone(), f.repo.join("target").display().to_string()));
+    assert_eq!(graph.id.as_str(), "mockup-gpui-build-2", "a second copy gets a free id");
+}

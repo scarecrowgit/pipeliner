@@ -177,6 +177,39 @@ impl Store {
         })
     }
 
+    /// The newest `limit` runs of a pipeline, test runs included, newest first.
+    pub fn runs_for_pipeline(&self, pipeline: &PipelineId, limit: usize) -> Result<Vec<Run>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.read(|conn| {
+            query_all(
+                conn,
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE pipeline = ?1 ORDER BY started DESC, id DESC LIMIT ?2"),
+                params![pipeline.as_str(), limit],
+                "runs",
+                &["id"],
+                decode_run,
+            )
+        })
+    }
+
+    /// Real (not test) runs that ended `Done` or `Cancelled` before `before`, oldest first:
+    /// the candidates of the worktree sweep.
+    pub fn closed_runs_before(&self, before: i64) -> Result<Vec<Run>> {
+        self.read(|conn| {
+            query_all(
+                conn,
+                &format!(
+                    "SELECT {RUN_COLUMNS} FROM runs WHERE test = 0 AND state IN ('done', 'cancelled')
+                     AND finished IS NOT NULL AND finished < ?1 ORDER BY finished, id"
+                ),
+                [before],
+                "runs",
+                &["id"],
+                decode_run,
+            )
+        })
+    }
+
     /// The newest run on an issue.
     pub fn latest_run(&self, issue: &IssueKey) -> Result<Option<Run>> {
         self.read(|conn| {

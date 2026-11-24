@@ -84,6 +84,20 @@ fn edge(from: &str, port: &str, to: &str, kind: EdgeKind) -> EdgeDef {
 pub fn self_edit_pipeline(code_repo: &Path, mockups_dir: &Path, models: &SelfEditModels) -> GraphDef {
     let repo_name = code_repo.file_name().map_or_else(|| "repo".to_string(), |n| n.to_string_lossy().into_owned());
     let target = Paths::from_env().home.join(".harness/cargo-target").join(&repo_name);
+    self_edit_pipeline_with(code_repo, mockups_dir, Some(&target), models)
+}
+
+/// [`self_edit_pipeline`] without reading the environment: the build shares `cargo_target`
+/// when one is given, else each worktree builds in its own `target`. An empty path leaves
+/// that workdir's folder to be set; the validator flags it ("Workdir Code has no folder").
+pub fn self_edit_pipeline_with(
+    code_repo: &Path,
+    mockups_dir: &Path,
+    cargo_target: Option<&Path>,
+    models: &SelfEditModels,
+) -> GraphDef {
+    let env: BTreeMap<String, String> =
+        cargo_target.map(|t| ("CARGO_TARGET_DIR".to_string(), t.display().to_string())).into_iter().collect();
     let workdirs = vec![
         WorkdirDef {
             id: "mockups".into(),
@@ -101,7 +115,7 @@ pub fn self_edit_pipeline(code_repo: &Path, mockups_dir: &Path, models: &SelfEdi
             worktree: true,
             base_branch: "main".into(),
             setup: "nix-shell shell.nix --run 'cargo build' </dev/null".into(),
-            env: BTreeMap::from([("CARGO_TARGET_DIR".to_string(), target.display().to_string())]),
+            env,
             ..Default::default()
         },
     ];

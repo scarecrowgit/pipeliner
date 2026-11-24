@@ -50,6 +50,29 @@ pub struct Problem {
     pub reason: String,
 }
 
+/// What became of one old pipeline file. The engine converts the files (the store reads none);
+/// the report only carries the outcome.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PipelineOutcome {
+    /// Written to the library (in a dry run: would be). `problems` are the validator's
+    /// errors and warnings: a graph with errors is kept as a draft that cannot be deployed.
+    Converted { problems: Vec<String> },
+    /// A pipeline with this id is already in the library; nothing was written.
+    AlreadyThere,
+    /// Could not be read or converted.
+    Failed { reason: String },
+}
+
+/// One old pipeline file and its outcome.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PipelineImport {
+    /// The file name, as found in the old app's pipelines folder.
+    pub file: String,
+    /// The pipeline id it keeps (its file stem), so issues that name it find it.
+    pub id: String,
+    pub outcome: PipelineOutcome,
+}
+
 /// The outcome of [`crate::import_v1::import_v1`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ImportReport {
@@ -64,6 +87,8 @@ pub struct ImportReport {
     /// Render images copied to the blob store.
     pub images: Tally,
     pub problems: Vec<Problem>,
+    /// The old app's linear pipelines, converted into the library by the engine.
+    pub pipelines: Vec<PipelineImport>,
 }
 
 impl ImportReport {
@@ -123,6 +148,17 @@ impl ImportReport {
     pub fn failed_total(&self) -> usize {
         self.tallies().iter().map(|(_, t)| t.failed).sum::<usize>()
             + self.problems.iter().filter(|p| p.kind == Kind::Flags).count()
+            + self.pipelines.iter().filter(|p| matches!(p.outcome, PipelineOutcome::Failed { .. })).count()
+    }
+
+    fn pipeline_line(&self) -> String {
+        let count = |f: fn(&PipelineOutcome) -> bool| self.pipelines.iter().filter(|p| f(&p.outcome)).count();
+        let converted = count(|o| matches!(o, PipelineOutcome::Converted { .. }));
+        let drafts = count(|o| matches!(o, PipelineOutcome::Converted { problems } if !problems.is_empty()));
+        let there = count(|o| matches!(o, PipelineOutcome::AlreadyThere));
+        let failed = count(|o| matches!(o, PipelineOutcome::Failed { .. }));
+        let verb = if self.dry_run { "to convert" } else { "converted" };
+        format!("  {:<12} {converted} {verb} ({drafts} with problems), {there} already there, {failed} failed", "pipelines")
     }
 }
 
@@ -140,6 +176,19 @@ impl fmt::Display for ImportReport {
                 "  {name:<12} {} {verb}, {} already there, {} failed",
                 tally.imported, tally.skipped, tally.failed
             )?;
+        }
+        writeln!(f, "{}", self.pipeline_line())?;
+        for pipeline in &self.pipelines {
+            match &pipeline.outcome {
+                PipelineOutcome::Converted { problems } if problems.is_empty() => {
+                    writeln!(f, "    {} → {}", pipeline.file, pipeline.id)?;
+                }
+                PipelineOutcome::Converted { problems } => {
+                    writeln!(f, "    {} → {} (draft: {})", pipeline.file, pipeline.id, problems.join("; "))?;
+                }
+                PipelineOutcome::AlreadyThere => writeln!(f, "    {} → {} already there", pipeline.file, pipeline.id)?,
+                PipelineOutcome::Failed { reason } => writeln!(f, "    {} failed: {reason}", pipeline.file)?,
+            }
         }
         if !self.problems.is_empty() {
             writeln!(f, "Problems ({}):", self.problems.len())?;

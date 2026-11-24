@@ -4,6 +4,7 @@ mod contract;
 mod fixtures;
 mod misc;
 mod models;
+mod ops;
 mod pump;
 mod session;
 mod views;

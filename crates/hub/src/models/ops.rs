@@ -8,8 +8,8 @@ use std::time::Duration;
 use gpui::{Context, Task};
 
 use crate::api::{
-    Api, Autopilot, HomeStats, Need, Period, Project, Runtime, Settings, SpendBucket, SpendByRunnable, SpendToday,
-    Working,
+    Api, Autopilot, HomeStats, Millis, Need, Period, Project, ProjectCounts, ProjectId, RunnableRef, Runtime, Settings,
+    SpendBucket, SpendByRunnable, SpendToday, Working,
 };
 use crate::load::{Loadable, fetch, query};
 use crate::models::issues::current_project;
@@ -33,6 +33,8 @@ pub struct OpsModel {
     settings: Loadable<Settings>,
     projects: Loadable<Vec<Project>>,
     autopilots: Loadable<Vec<Autopilot>>,
+    project_counts: Loadable<Vec<ProjectCounts>>,
+    schedules: Loadable<Vec<(RunnableRef, Millis)>>,
     clock: Option<Task<()>>,
 }
 
@@ -50,6 +52,8 @@ impl OpsModel {
             settings: Loadable::default(),
             projects: Loadable::default(),
             autopilots: Loadable::default(),
+            project_counts: Loadable::default(),
+            schedules: Loadable::default(),
             clock: None,
         }
     }
@@ -109,6 +113,55 @@ impl OpsModel {
     /// Autopilots of the current project, once [`Self::ensure_autopilots`] asked for them.
     pub fn autopilots(&self) -> &Loadable<Vec<Autopilot>> {
         &self.autopilots
+    }
+
+    /// Open issues and working runs of every project, once [`Self::ensure_project_counts`]
+    /// asked for them. Kept current by issue, run and settings events.
+    pub fn project_counts(&self) -> &Loadable<Vec<ProjectCounts>> {
+        &self.project_counts
+    }
+
+    /// The counts of one project, once loaded.
+    pub fn counts_for(&self, project: &ProjectId) -> Option<&ProjectCounts> {
+        self.project_counts.value()?.iter().find(|counts| &counts.project == project)
+    }
+
+    /// Reads the project counts unless they are loaded or loading.
+    pub fn ensure_project_counts(&mut self, cx: &mut Context<Self>) {
+        if !self.project_counts.started() {
+            self.load_project_counts(cx);
+        }
+    }
+
+    /// When a runnable (a pipeline, an agent) next runs on an autopilot's schedule, once
+    /// [`Self::ensure_schedules`] asked for them: "02:00" on a scheduled pipeline's row.
+    pub fn next_scheduled_run(&self, runnable: &RunnableRef) -> Option<Millis> {
+        self.schedules.value()?.iter().find(|(target, _)| target == runnable).map(|(_, at)| *at)
+    }
+
+    /// Reads every runnable's next scheduled run unless loaded or loading; re-read when
+    /// autopilots change.
+    pub fn ensure_schedules(&mut self, cx: &mut Context<Self>) {
+        if !self.schedules.started() {
+            self.load_schedules(cx);
+        }
+    }
+
+    fn load_project_counts(&mut self, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        fetch(self, cx, &api, |this: &mut Self| &mut this.project_counts, |api| api.project_counts());
+    }
+
+    fn load_schedules(&mut self, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        fetch(self, cx, &api, |this: &mut Self| &mut this.schedules, |api| api.next_scheduled_runs());
+    }
+
+    /// Issues or runs changed: the project switcher's counts move.
+    pub(crate) fn counts_changed(&mut self, cx: &mut Context<Self>) {
+        if self.project_counts.started() {
+            self.load_project_counts(cx);
+        }
     }
 
     /// Loads what the app frame and Home need, and starts the clock.
@@ -280,11 +333,17 @@ impl OpsModel {
         if self.autopilots.started() {
             self.load_autopilots(cx);
         }
+        if self.project_counts.started() {
+            self.load_project_counts(cx);
+        }
     }
 
     pub(crate) fn autopilots_changed(&mut self, cx: &mut Context<Self>) {
         if self.autopilots.started() {
             self.load_autopilots(cx);
+        }
+        if self.schedules.started() {
+            self.load_schedules(cx);
         }
     }
 

@@ -6,7 +6,7 @@ use std::sync::Weak;
 
 use model::{
     Actor, Event, GraphDef, InboxId, InboxItem, InboxKind, IssueEventKind, Outcome, RequestId,
-    Review, ReviewState, Run, RunId, RunLogLine, RunState,
+    Review, ReviewState, Run, RunId, RunLogLine, RunState, RunWait,
 };
 use pipeline::InstanceKey;
 use pipeline::exec::{Observer, Snapshot};
@@ -26,6 +26,10 @@ pub(crate) struct RunObserver {
     pub followed: Option<RunState>,
     /// Questions posted to the Inbox and not answered yet.
     pub asked: BTreeMap<InstanceKey, InboxId>,
+    /// Why the run waits, as last published.
+    pub waiting: Option<RunWait>,
+    /// The budget stop of the latest snapshot, if the run stands still for its budget.
+    pub budget: Option<super::BudgetStop>,
 }
 
 impl RunObserver {
@@ -73,6 +77,53 @@ impl RunObserver {
         Ok(())
     }
 
+    /// Publishes why the run waits when that changed, and files or resolves the Inbox item
+    /// of a budget stop.
+    fn settle_wait(&mut self, inner: &Inner, run: &Run) -> anyhow::Result<()> {
+        let waiting = match run.state {
+            RunState::WaitingAnswer if self.budget.is_some() => Some(RunWait::Budget),
+            RunState::WaitingAnswer => Some(RunWait::Question),
+            RunState::WaitingReview => Some(RunWait::Review),
+            _ => None,
+        };
+        if waiting == self.waiting {
+            return Ok(());
+        }
+        let was_budget = self.waiting == Some(RunWait::Budget);
+        self.waiting = waiting;
+        inner.publish(Event::RunWaiting { run: run.id.clone(), waiting });
+        let id = super::budget_inbox_id(&run.id);
+        if was_budget {
+            resolve(inner, &id)?;
+        }
+        if waiting != Some(RunWait::Budget) || run.test {
+            return Ok(());
+        }
+        let stop = self.budget.unwrap_or_default();
+        let title = match stop.cap {
+            Some(cap) => format!("Out of budget: {} of {}", base::fmt::cost(stop.spent), base::fmt::cost(cap)),
+            None => format!("Out of budget: {} spent", base::fmt::cost(stop.spent)),
+        };
+        let item = InboxItem {
+            id,
+            kind: InboxKind::Failure,
+            title,
+            summary: format!("{} stopped when it reached its budget. Raise it to let the run go on.", run.title),
+            outcome: Some(Outcome::Blocked),
+            source: self.graph.name.clone(),
+            issue: run.issue.clone(),
+            session: None,
+            run: Some(run.id.clone()),
+            links: Vec::new(),
+            created: inner.now(),
+            read: false,
+            archived: false,
+        };
+        inner.store.upsert_inbox_item(&item)?;
+        inner.publish(Event::InboxChanged { item });
+        Ok(())
+    }
+
     /// Questions whose instance no longer waits are taken out of the Inbox.
     fn settle_questions(&mut self, inner: &Inner, run: &Run) -> anyhow::Result<()> {
         let answered: Vec<InstanceKey> = self
@@ -108,6 +159,7 @@ pub(crate) fn resolve(inner: &Inner, id: &InboxId) -> anyhow::Result<()> {
 impl Observer for RunObserver {
     fn snapshot(&mut self, snapshot: &Snapshot) {
         self.merged = snapshot.meta.iter().any(|m| !m.superseded && m.output.as_ref().is_some_and(|o| o.merged));
+        self.budget = super::budget_stop(snapshot);
         let Some(inner) = self.inner.upgrade() else { return };
         let stored = serde_json::to_string(snapshot).map_err(anyhow::Error::from).and_then(|text| {
             #[cfg(test)]
@@ -130,7 +182,8 @@ impl Observer for RunObserver {
             inner.store.upsert_run(run)?;
             inner.publish(Event::RunChanged { run: run.clone() });
             self.follow_issue(&inner, run)?;
-            self.settle_questions(&inner, run)
+            self.settle_questions(&inner, run)?;
+            self.settle_wait(&inner, run)
         };
         if let Err(error) = saved() {
             inner.notice_error(&format!("A pipeline run could not be saved: {error:#}"));
@@ -219,6 +272,7 @@ impl Observer for RunObserver {
             for id in &asked {
                 resolve(inner, id)?;
             }
+            resolve(inner, &super::budget_inbox_id(&run.id))?;
             if run.state == RunState::Failed && !run.test {
                 let item = InboxItem {
                     id: InboxId::new(format!("failed:{}", run.id)),

@@ -1,12 +1,12 @@
 //! Firing an autopilot: its target starts on its prompt, a pipeline as a run, an agent or an
-//! orchestrator as a chat in the project's repo. The scheduler that fires due autopilots on
-//! their clock is not here yet; [`crate::api::IssueApi::run_autopilot`] fires one by hand
-//! through the same step.
+//! orchestrator as a chat in the project's repo, under the autopilot's budget. The scheduler
+//! (`crate::scheduler`) fires due autopilots on their clock; [`crate::api::IssueApi::run_autopilot`]
+//! fires one by hand through the same step. Today's spend limit blocks a fire.
 
 use anyhow::{Result, anyhow, bail};
 use model::{Autopilot, AutopilotTrigger, Event, PipelineId, WorkMode};
 
-use crate::api::{ChatApi as _, NewSession, RunApi as _, RunInput, UserMessage, WorkdirChoice};
+use crate::api::{ChatApi as _, NewSession, RunInput, UserMessage, WorkdirChoice};
 use crate::engine::Engine;
 
 /// Prefix of the branches autopilot chats get.
@@ -16,14 +16,27 @@ impl Engine {
     /// Starts the autopilot's target now and records the tick: `last_run`, `last_result`,
     /// and the next `next_run` of a schedule that is on. A failed start is recorded too, and
     /// returned.
-    pub(crate) fn fire_autopilot(&self, mut autopilot: Autopilot) -> Result<()> {
+    ///
+    /// Fires are serialised, and a scheduled fire (`scheduled`) of an autopilot that is no
+    /// longer due by the time it gets its turn (someone fired it by hand) does nothing.
+    pub(crate) fn fire_autopilot(&self, autopilot: Autopilot, scheduled: bool) -> Result<()> {
         let inner = &self.inner;
-        let started = self.start_autopilot_target(&autopilot);
+        let _firing = crate::bus::lock(&inner.autopilot_fires);
+        let Some(mut autopilot) = inner.store.autopilots(None)?.into_iter().find(|a| a.id == autopilot.id) else {
+            bail!("There is no autopilot {}", autopilot.id);
+        };
+        if scheduled && issues::autopilot::due(std::slice::from_ref(&autopilot), inner.now()).is_empty() {
+            return Ok(());
+        }
+        let started = match crate::pipelines::check_limit(inner) {
+            Ok(()) => self.start_autopilot_target(&autopilot).map_err(|error| format!("failed: {}", base::fmt::first_line(&format!("{error:#}")))),
+            Err(error) => Err(format!("skipped: {}", base::fmt::first_line(&format!("{error:#}")))),
+        };
         let now = inner.now();
         autopilot.last_run = Some(now);
         autopilot.last_result = match &started {
             Ok(result) => result.clone(),
-            Err(error) => format!("failed: {}", base::fmt::first_line(&format!("{error:#}"))),
+            Err(reason) => reason.clone(),
         };
         if let AutopilotTrigger::Schedule { schedule } = &autopilot.trigger
             && autopilot.enabled
@@ -32,7 +45,7 @@ impl Engine {
         }
         inner.store.upsert_autopilot(&autopilot)?;
         inner.publish(Event::AutopilotsChanged);
-        started.map(|_| ())
+        started.map(|_| ()).map_err(|reason| anyhow!("{} {reason}", autopilot.name))
     }
 
     /// Starts the target on the prompt; what happened, in a few words ("started a run").
@@ -47,7 +60,7 @@ impl Engine {
         match target.scheme() {
             "pipeline" => {
                 let input = RunInput { title: autopilot.name.clone(), text };
-                self.start_run(&PipelineId::new(target.id()), input)?;
+                self.start_live_run(&PipelineId::new(target.id()), input, autopilot.budget_usd)?;
                 Ok("started a run".to_string())
             }
             "agent" | "orchestrator" => {
@@ -65,6 +78,9 @@ impl Engine {
                     forced_skills: Vec::new(),
                     issue: None,
                 })?;
+                if let Some(usd) = autopilot.budget_usd {
+                    self.inner.store.set_marker(&crate::chat::budget_marker(&session.id), &usd.to_string())?;
+                }
                 self.send(&session.id, UserMessage { text, images: Vec::new() })?;
                 Ok("started a chat".to_string())
             }

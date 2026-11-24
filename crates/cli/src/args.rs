@@ -23,7 +23,7 @@ Commands:
   sessions        lists the chats, most recent first
   models          lists the configured providers and their models
   import [--dry-run]
-        imports chats, issues and the Inbox of the old app
+        imports chats, issues, the Inbox and the pipelines of the old app
 
   issue new <title> [--body <text>] [--pipeline <id>] [--project <id>]
         files an issue (the pipeline is attached but not started)
@@ -36,6 +36,8 @@ Commands:
   run cancel <id> | run resume <id> | run answer <id> <text> [--node <id>]
   run discard <id>
         throws a test run away with its throwaway worktrees and branches
+  run sweep [--dry-run]
+        removes worktrees of runs finished long ago whose branch is merged or has a pull request
   review list | review show <id>
   review ship <id> [variant] | review skip <id>
   review send-back <id> <note> [--from all|over|variant:N] [--variants N]
