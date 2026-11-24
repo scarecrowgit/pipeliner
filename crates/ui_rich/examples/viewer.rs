@@ -39,6 +39,7 @@ impl Render for Page {
                 .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(images[ix].name.clone()))
                 .child(
                     ImageThumb::new(("thumb", ix), images.clone(), ix)
+                        .tooltip("Open image")
                         .w(px(240.))
                         .h(px(160.))
                         .rounded(px(RADIUS_LG))

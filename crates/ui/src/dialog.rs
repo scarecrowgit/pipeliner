@@ -14,7 +14,7 @@ use crate::components::{
 };
 use crate::focus;
 use crate::keys::{self, Cancel, Confirm};
-use crate::layout::{col, grow, row};
+use crate::layout::{col, grow, row, truncate_block};
 use crate::motion::{self, Look};
 use crate::overlay::{Callback, LayerId, current_layer, overlays};
 use crate::theme::*;
@@ -189,7 +189,8 @@ impl RenderOnce for Dialog {
             .child(
                 col()
                     .flex_1()
-                    .child(div().type_style(TITLE_SM).child(self.title))
+                    // A long title (a name) ends in `…` inside the dialog.
+                    .child(truncate_block(self.title, TITLE_SM.line).type_style(TITLE_SM))
                     .when_some(self.sub, |d, s| {
                         d.child(div().mt(px(SPACE_0_5)).type_style(LABEL).text_color(TEXT_MUTED).child(s))
                     }),

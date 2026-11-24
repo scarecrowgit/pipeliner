@@ -85,6 +85,20 @@ fn duration_tiers() {
 }
 
 #[test]
+fn duration_clock_tiers() {
+    assert_eq!(duration_clock(0), "0:00");
+    assert_eq!(duration_clock(7), "0:07");
+    assert_eq!(duration_clock(30), "0:30");
+    assert_eq!(duration_clock(60), "1:00");
+    assert_eq!(duration_clock(90), "1:30");
+    assert_eq!(duration_clock(3_599), "59:59");
+    assert_eq!(duration_clock(3_600), "1:00:00");
+    assert_eq!(duration_clock(3_727), "1:02:07");
+    assert_eq!(duration_clock(90_187), "25:03:07");
+    assert!(duration_clock(u64::MAX).contains(':'));
+}
+
+#[test]
 fn duration_words_tiers() {
     assert_eq!(duration_words(0), "0s");
     assert_eq!(duration_words(6), "6s");

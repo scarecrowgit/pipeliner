@@ -61,6 +61,10 @@ pub const SURFACE: Hsla = hex(0x0f1011);
 pub const SURFACE_RAISED: Hsla = hex(0x141518);
 /// Active nav item, selected list row, segmented-control thumb.
 pub const SURFACE_HOVER: Hsla = hex(0x1c1d21);
+/// Fill of a neutral tag: a light veil rather than a ground, so the tag reads as
+/// `surface-hover` on a card (the mockups' `.tag`) and stays a step lighter than the row on
+/// a hovered (`surface-raised`) or selected (`surface-hover`) row. Not in the token file.
+pub const TAG_FILL: Hsla = with_alpha(TEXT, 0.055);
 /// Fully transparent, the rest colour of a hover fade.
 pub const TRANSPARENT: Hsla = Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 };
 
@@ -457,6 +461,22 @@ mod tests {
         assert!((c.b * 255. - 13.).abs() < 0.6);
         assert_eq!(TEXT.a, 1.);
         assert_eq!(SCRIM.a, 0.72);
+    }
+
+    /// `fill` over `ground`, as the 0–255 grey of its red channel.
+    fn over(fill: Hsla, ground: Hsla) -> f32 {
+        let (f, g) = (fill.to_rgb(), ground.to_rgb());
+        (f.r * fill.a + g.r * (1. - fill.a)) * 255.
+    }
+
+    #[test]
+    fn a_neutral_tag_reads_as_surface_hover_on_a_card_and_stays_visible_on_a_selected_row() {
+        let hover = SURFACE_HOVER.to_rgb().r * 255.;
+        assert!((over(TAG_FILL, SURFACE) - hover).abs() < 2., "{}", over(TAG_FILL, SURFACE));
+        for ground in [SURFACE_RAISED, SURFACE_HOVER, BG, BG_SIDEBAR] {
+            let g = ground.to_rgb().r * 255.;
+            assert!(over(TAG_FILL, ground) - g > 10., "the tag shows on {ground:?}");
+        }
     }
 
     #[test]

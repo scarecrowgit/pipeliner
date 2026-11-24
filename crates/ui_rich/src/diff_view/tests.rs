@@ -6,6 +6,7 @@ use gpui::{Context, IntoElement, Modifiers, Render, TestAppContext, Window, div,
 
 use super::*;
 
+mod long_lines;
 mod selection;
 
 fn line(kind: DiffLineKind, old: Option<u32>, new: Option<u32>, text: &str) -> DiffLine {

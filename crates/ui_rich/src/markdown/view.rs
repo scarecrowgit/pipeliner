@@ -15,6 +15,7 @@ use ui::theme::{BODY, SPACE_3, TEXT, TypeStyle};
 
 use super::cache::parse_cached;
 use super::element::{Shared, Tracker};
+use super::group::SelectionGroup;
 use super::parse::Document;
 use super::render::Renderer;
 use super::rich::{Unit, UnitKind, units, verbatim_unit};
@@ -92,6 +93,7 @@ pub struct Markdown {
     verbatim: bool,
     copied: Option<usize>,
     copied_reset: Option<Task<()>>,
+    group: Option<(SelectionGroup, usize)>,
 }
 
 impl Markdown {
@@ -134,7 +136,38 @@ impl Markdown {
             verbatim,
             copied: None,
             copied_reset: None,
+            group: None,
         }
+    }
+
+    /// Share one selection with the other views of `group`, as member `key` (keys order the
+    /// members: a drag selects every member between its ends, a copy joins them in key
+    /// order). See [`SelectionGroup`].
+    pub fn group(mut self, group: &SelectionGroup, key: usize) -> Self {
+        self.group = Some((group.clone(), key));
+        self
+    }
+
+    /// Join `group` as member `key`, or leave any group with `None`; the view's own selection
+    /// is dropped either way.
+    pub fn set_group(&mut self, group: Option<(&SelectionGroup, usize)>, cx: &mut Context<Self>) {
+        let next = group.map(|(g, k)| (g.clone(), k));
+        let same = match (&self.group, &next) {
+            (Some((a, ka)), Some((b, kb))) => a.ptr_eq(b) && ka == kb,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.group = next;
+        self.shared.borrow_mut().sel.clear();
+        cx.notify();
+    }
+
+    /// The group the view shares its selection with, if any.
+    pub fn selection_group(&self) -> Option<&SelectionGroup> {
+        self.group.as_ref().map(|(g, _)| g)
     }
 
     /// The type style of body text (paragraphs, list items, table cells; all of a verbatim
@@ -244,13 +277,21 @@ impl Markdown {
         &self.doc
     }
 
-    /// The selected text as it would be copied, if anything is selected.
+    /// The selected text of this view, if anything of it is selected. In a group, only this
+    /// view's part; [`SelectionGroup::selected_text`] is what a copy gives.
     pub fn selected_text(&self) -> Option<String> {
         self.shared.borrow().sel.text(&self.units)
     }
 
-    /// Select all text.
+    /// Select all text (in a group: everything the group knows).
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        if let Some((group, key)) = self.group.clone() {
+            // This view is borrowed: join first so the group reaches it, then select.
+            let id = cx.entity_id();
+            group.join(key, &self.shared, &self.units, id, &self.focus);
+            group.select_all(cx);
+            return;
+        }
         self.shared.borrow_mut().sel.select_all(&self.units);
         cx.notify();
     }
@@ -262,7 +303,11 @@ impl Markdown {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        match self.selected_text() {
+        let text = match &self.group {
+            Some((group, _)) => group.selected_text(),
+            None => self.selected_text(),
+        };
+        match text {
             Some(t) => cx.write_to_clipboard(ClipboardItem::new_string(t)),
             None => cx.propagate(),
         }
@@ -309,12 +354,16 @@ impl Focusable for Markdown {
 impl Render for Markdown {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.shared.borrow_mut().frame.clear();
+        if let Some((group, key)) = &self.group {
+            group.join(*key, &self.shared, &self.units, cx.entity_id(), &self.focus);
+        }
+        let focused = self.focus.is_focused(window) || self.group.as_ref().is_some_and(|(g, _)| g.focused(window));
         let doc = self.doc.clone();
         let units = self.units.clone();
         let mut r = Renderer::new(
             &units,
             self.shared.clone(),
-            self.focus.is_focused(window),
+            focused,
             self.color,
             self.style,
             self.copied,
@@ -329,6 +378,7 @@ impl Render for Markdown {
             view: cx.entity().downgrade(),
             focus: self.focus.clone(),
             on_link: self.on_link.clone(),
+            group: self.group.clone(),
         };
         col()
             .relative()

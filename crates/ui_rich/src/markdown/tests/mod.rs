@@ -1,6 +1,7 @@
 //! Markdown tests: the parser and streaming, the text model and selection (GPUI-free), and
 //! the view in a test window.
 
+mod group;
 mod parse;
 mod runs;
 mod text;

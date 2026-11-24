@@ -202,6 +202,15 @@ impl RenderOnce for DiffView {
                 all_of.borrow_mut().select_all();
                 select_all_notify(cx);
             })
+            // A sideways wheel moves the code (the list scrolls first); it must not also
+            // scroll the page around the diff, which would take a sideways delta as a
+            // vertical one.
+            .on_scroll_wheel(|e, window, cx| {
+                let d = e.delta.pixel_delta(window.line_height());
+                if d.x.abs() > d.y.abs() {
+                    cx.stop_propagation();
+                }
+            })
             .child(select::tracker(shared, focus, notify));
         if self.fill {
             body.flex_1()

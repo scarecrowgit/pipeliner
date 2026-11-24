@@ -22,8 +22,9 @@ enum Entry {
 
 /// A list of [`MenuItem`]s with [`PopLabel`] headings and [`PopSeparator`]s. One row is
 /// selected (`surface-hover`) and follows both the pointer and the keyboard: Up and Down move
-/// and wrap, Home and End jump to the ends, a typed letter jumps to the next row starting
-/// with it, Enter chooses, Escape closes the popover. Disabled rows are skipped. Choosing a
+/// and wrap, Home and End jump to the ends, the key of a row's one-character key cap
+/// ([`MenuItem::kbd`] "A") chooses that row, another typed letter jumps to the next row
+/// starting with it, Enter chooses, Escape closes the popover. Disabled rows are skipped. Choosing a
 /// row in a popover closes the popover first, then calls the row's `on_click`.
 ///
 /// The menu takes keyboard focus when it first appears (turn that off with
@@ -120,7 +121,27 @@ struct MenuState {
 struct Row {
     label: SharedString,
     enabled: bool,
+    /// The one-character key cap shown on the row, lower case.
+    cap: Option<char>,
     on_click: Option<ClickHandler>,
+}
+
+/// The key a row's cap stands for: a cap of one character ("A", "/"), lower case. Longer caps
+/// ("⌘N") are shortcuts of the app, not of the menu.
+pub(crate) fn cap_key(kbd: &str) -> Option<char> {
+    let mut chars = kbd.trim().chars();
+    let (Some(ch), None) = (chars.next(), chars.next()) else { return None };
+    ch.to_lowercase().next()
+}
+
+/// What a typed character does in a menu: the row whose cap it is (`Some(Ok)` when that row
+/// is enabled, `Some(Err)` when it is off and the key does nothing), else `None` (the
+/// character jumps by label).
+pub(crate) fn cap_target(caps: &[(Option<char>, bool)], ch: char) -> Option<Result<usize, ()>> {
+    let ch = ch.to_lowercase().next()?;
+    let ix = caps.iter().position(|(cap, enabled)| *cap == Some(ch) && *enabled)
+        .or_else(|| caps.iter().position(|(cap, _)| *cap == Some(ch)))?;
+    Some(if caps[ix].1 { Ok(ix) } else { Err(()) })
 }
 
 /// The enabled row a move lands on from `from` (`None`: nothing selected yet).
@@ -160,6 +181,7 @@ impl RenderOnce for Menu {
                 Entry::Item(it) => Some(Row {
                     label: it.label.clone(),
                     enabled: !it.disabled,
+                    cap: it.kbd.as_ref().and_then(|k| cap_key(k)),
                     on_click: it.on_click.clone(),
                 }),
                 _ => None,
@@ -199,6 +221,7 @@ impl RenderOnce for Menu {
         let enabled: Rc<Vec<bool>> = Rc::new(rows.iter().map(|r| r.enabled).collect());
         let labels: Rc<Vec<(SharedString, bool)>> =
             Rc::new(rows.iter().map(|r| (r.label.clone(), r.enabled)).collect());
+        let caps: Vec<(Option<char>, bool)> = rows.iter().map(|r| (r.cap, r.enabled)).collect();
 
         let layer = self.layer;
         let activate = {
@@ -278,6 +301,7 @@ impl RenderOnce for Menu {
             .collect();
 
         let confirm = activate.clone();
+        let by_cap = activate.clone();
         let jump = {
             let (state, select, reveal) = (state.clone(), select.clone(), reveal.clone());
             move |ev: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
@@ -287,6 +311,19 @@ impl RenderOnce for Menu {
                 }
                 let mut chars = k.key.chars();
                 let (Some(ch), None) = (chars.next(), chars.next()) else { return };
+                // A row's key cap activates that row; a cap of a row that is off does nothing.
+                match cap_target(&caps, ch) {
+                    Some(Ok(ix)) => {
+                        cx.stop_propagation();
+                        by_cap(ix, window, cx);
+                        return;
+                    }
+                    Some(Err(())) => {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    None => {}
+                }
                 if !ch.is_alphanumeric() {
                     return;
                 }
@@ -337,6 +374,19 @@ mod tests {
         assert_eq!(step_enabled(&en, Some(2), Step::Prev), Some(0));
         assert_eq!(step_enabled(&en, Some(2), Step::Last), Some(3));
         assert_eq!(step_enabled(&[false, false], None, Step::Next), None);
+    }
+
+    #[test]
+    fn a_key_cap_names_its_row_and_only_single_characters_are_caps() {
+        assert_eq!(cap_key("A"), Some('a'));
+        assert_eq!(cap_key(" / "), Some('/'));
+        assert_eq!(cap_key("⌘N"), None);
+        assert_eq!(cap_key(""), None);
+        let caps = [(Some('a'), true), (None, true), (Some('p'), false), (Some('t'), true)];
+        assert_eq!(cap_target(&caps, 'A'), Some(Ok(0)));
+        assert_eq!(cap_target(&caps, 't'), Some(Ok(3)));
+        assert_eq!(cap_target(&caps, 'p'), Some(Err(())), "the cap of a row that is off does nothing");
+        assert_eq!(cap_target(&caps, 'x'), None, "a key that is no cap jumps by label");
     }
 
     #[test]

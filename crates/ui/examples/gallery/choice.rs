@@ -149,6 +149,8 @@ impl Gallery {
             ("value", w(InputFrame::new("in-2").value("Fix double charge on retry").into_any_element())),
             ("focused", w(InputFrame::new("in-3").value("PAY-1423").focused(true).into_any_element())),
             ("small", w(InputFrame::new("in-4").placeholder("Filter").icon(IconName::Filter).small().into_any_element())),
+            ("compact", w(ui::dev::Probe::probe(InputFrame::new("in-6").placeholder("Filter by name, model or runtime").icon(IconName::Search).kbd("F").compact(), "gallery-compact").into_any_element())),
+            ("shrinking button", w(ui::dev::Probe::probe(row().w(px(200.)).child(Button::new("b-long", "Archive Payments lead and everything it made").small().icon(IconName::Archive).shrinks()), "gallery-button").into_any_element())),
             ("textarea", w(InputFrame::new("in-5").placeholder("Describe what to change").multiline().into_any_element())),
         ]);
         let fields = row()

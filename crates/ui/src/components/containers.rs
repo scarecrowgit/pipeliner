@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use super::{CountBadge, Status, StatusDot};
-use crate::layout::{col, grow, row};
+use crate::layout::{col, grow, row, truncate_lh};
 use crate::theme::*;
 
 /// The basic container: `surface` fill, 1px `line` border, `radius-xl`, no shadow. Children
@@ -233,17 +233,19 @@ impl RenderOnce for Stat {
                     .gap(px(SPACE_1))
                     .child(
                         div()
+                            .flex_none()
                             .type_style(if self.large { STAT } else { STAT_SM })
                             .tabular()
                             .text_color(if self.warning { WARNING } else { TEXT })
                             .child(self.value),
                     )
+                    // The sub shrinks and ends in `…` inside the cell; the value never does.
                     .when_some(self.sub, |d, s| {
                         d.child(
-                            div()
+                            truncate_lh(s, LABEL.line)
+                                .debug_selector(|| "stat-sub".into())
                                 .type_style(LABEL)
-                                .text_color(if self.spawn { SPAWN_TEXT } else { TEXT_MUTED })
-                                .child(s),
+                                .text_color(if self.spawn { SPAWN_TEXT } else { TEXT_MUTED }),
                         )
                     }),
             )

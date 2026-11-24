@@ -294,7 +294,7 @@ pub struct MenuItem {
     hint_tone: HintTone,
     matched: usize,
     suffix: Option<SharedString>,
-    kbd: Option<SharedString>,
+    pub(crate) kbd: Option<SharedString>,
     tooltip: Option<SharedString>,
     pub(crate) probe: Option<SharedString>,
     check_column: bool,

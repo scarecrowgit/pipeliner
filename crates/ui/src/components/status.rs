@@ -246,12 +246,35 @@ pub struct Tag {
     text: SharedString,
     tone: TagTone,
     mono: bool,
+    cut: Option<TagCut>,
+}
+
+/// Where a [`Tag`] that shrinks loses its text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagCut {
+    End,
+    Middle,
 }
 
 impl Tag {
     /// A neutral sans tag.
     pub fn new(text: impl Into<SharedString>) -> Self {
-        Self { text: text.into(), tone: TagTone::Neutral, mono: false }
+        Self { text: text.into(), tone: TagTone::Neutral, mono: false, cut: None }
+    }
+
+    /// For text that can be long (a name): in a row too narrow for it the tag shrinks and
+    /// its text ends in `…` instead of leaving the row. By default a tag keeps its text's
+    /// width.
+    pub fn shrinks(mut self) -> Self {
+        self.cut = Some(TagCut::End);
+        self
+    }
+
+    /// [`shrinks`](Self::shrinks) for a path: the text keeps its head and its tail and loses
+    /// the middle (`~/…/payments-api/refunds.ts`), see [`crate::truncate::truncate_middle`].
+    pub fn shrinks_in_middle(mut self) -> Self {
+        self.cut = Some(TagCut::Middle);
+        self
     }
 
     /// Set the colour family.
@@ -270,21 +293,27 @@ impl Tag {
 impl RenderOnce for Tag {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let (bg, fg) = match self.tone {
-            TagTone::Neutral => (SURFACE_HOVER, TEXT_SECONDARY),
+            TagTone::Neutral => (TAG_FILL, TEXT_SECONDARY),
             TagTone::Spawn => (SPAWN_SOFT, SPAWN_TEXT),
             TagTone::Accent => (ACCENT_SOFT, ACCENT_TEXT),
         };
+        let style = if self.mono { MONO_SM } else { LABEL_TIGHT };
+        let text = self.text;
         row()
-            .flex_none()
+            .map(|d| if self.cut.is_some() { d.flex_shrink().min_w_0() } else { d.flex_none() })
             .gap(px(SPACE_1))
             .h(px(20.))
             .px(px(SPACE_1_5))
             .rounded(px(RADIUS_MD))
             .bg(bg)
             .text_color(fg)
-            .type_style(if self.mono { MONO_SM } else { LABEL_TIGHT })
+            .type_style(style)
             .whitespace_nowrap()
-            .child(self.text)
+            .map(|d| match self.cut {
+                None => d.child(text),
+                Some(TagCut::End) => d.child(truncate_lh(text, style.line)),
+                Some(TagCut::Middle) => d.child(crate::truncate::truncate_middle(text, style.line)),
+            })
     }
 }
 

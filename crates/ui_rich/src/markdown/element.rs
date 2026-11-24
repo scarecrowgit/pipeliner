@@ -14,6 +14,7 @@ use gpui::{
 };
 use ui::theme::{ACCENT, with_alpha};
 
+use super::group::{GroupPoint, SelectionGroup, nearest};
 use super::layout::{InlineLayout, Look};
 use super::rich::RichText;
 use super::selection::{Selection, TextPoint, word_range};
@@ -80,7 +81,7 @@ impl Shared {
         }
     }
 
-    fn hovered(&self, window: &Window) -> Option<&FrameUnit> {
+    pub(crate) fn hovered(&self, window: &Window) -> Option<&FrameUnit> {
         self.frame.iter().find(|f| f.hitbox.is_hovered(window))
     }
 }
@@ -288,6 +289,8 @@ pub(crate) struct Tracker {
     pub view: WeakEntity<Markdown>,
     pub focus: FocusHandle,
     pub on_link: Option<LinkHandler>,
+    /// The selection group the view is in, and its key there.
+    pub group: Option<(SelectionGroup, usize)>,
 }
 
 impl IntoElement for Tracker {
@@ -352,6 +355,10 @@ impl Element for Tracker {
         window: &mut Window,
         _: &mut App,
     ) {
+        if let Some((group, key)) = self.group.clone() {
+            self.paint_grouped(group, key, window);
+            return;
+        }
         let (shared, view, focus) = (self.shared.clone(), self.view.clone(), self.focus.clone());
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
@@ -431,6 +438,96 @@ impl Element for Tracker {
             let url = s
                 .hovered(window)
                 .filter(|f| f.unit == unit && s.sel.is_empty())
+                .filter(|f| f.layout.link_under(e.position - f.bounds.origin) == Some(link))
+                .and_then(|f| f.layout.rich.links.get(link).map(|(_, u)| u.clone()));
+            drop(s);
+            if let (Some(url), Some(f)) = (url, on_link.as_ref()) {
+                f(&url, window, cx);
+            }
+        });
+    }
+}
+
+impl Tracker {
+    /// The mouse handlers of a view in a [`SelectionGroup`]: presses start the group's
+    /// selection, drags are resolved across all members drawn this frame, a press on no
+    /// member clears it. Link hover and clicks stay the view's own.
+    fn paint_grouped(&mut self, group: SelectionGroup, key: usize, window: &mut Window) {
+        let (shared, focus, g) = (self.shared.clone(), self.focus.clone(), group.clone());
+        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
+            if e.button != MouseButton::Left {
+                return;
+            }
+            if phase == DispatchPhase::Capture {
+                let hovered = shared.borrow().hovered(window).is_some();
+                g.offer(e.position, key, None, hovered);
+                return;
+            }
+            let poll = g.take_poll();
+            let hit = {
+                let mut s = shared.borrow_mut();
+                s.pressed_link = None;
+                s.hovered(window).map(|f| (f.unit, e.position - f.bounds.origin, f.layout.clone()))
+            };
+            let Some((unit, local, layout)) = hit else {
+                // The first member to hear a press that is on no member's text clears.
+                if poll.is_some_and(|(_, hovered)| !hovered) {
+                    g.clear(cx);
+                }
+                return;
+            };
+            let text = &layout.rich.text;
+            let offset = layout.offset_at(local);
+            let at = |offset| GroupPoint { key, at: TextPoint { unit, offset } };
+            match e.click_count {
+                2 => {
+                    let r = word_range(text, layout.offset_under(local).unwrap_or(offset));
+                    g.select(at(r.start), at(r.end), cx);
+                }
+                n if n >= 3 => g.select(at(0), at(text.len()), cx),
+                _ if e.modifiers.shift && g.extend(at(offset), cx) => {}
+                _ => g.press(at(offset), true, cx),
+            }
+            if e.click_count <= 1 && !e.modifiers.shift {
+                shared.borrow_mut().pressed_link = layout.link_under(local).map(|l| (unit, l));
+            }
+            window.focus(&focus);
+        });
+
+        let (shared, view, g) = (self.shared.clone(), self.view.clone(), group.clone());
+        window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+            if g.dragging() && e.pressed_button == Some(MouseButton::Left) {
+                if phase == DispatchPhase::Capture {
+                    let near = nearest(&shared.borrow().frame, e.position);
+                    g.offer(e.position, key, near, false);
+                } else if let Some((Some(p), _)) = g.take_poll() {
+                    g.drag_to(p, cx);
+                }
+                return;
+            }
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            let mut s = shared.borrow_mut();
+            let hover = s.hovered(window).and_then(|f| f.layout.link_under(e.position - f.bounds.origin).map(|l| (f.unit, l)));
+            if hover != s.hover_link {
+                s.hover_link = hover;
+                drop(s);
+                notify(&view, cx);
+            }
+        });
+
+        let (shared, on_link, g) = (self.shared.clone(), self.on_link.clone(), group);
+        window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
+                return;
+            }
+            g.release();
+            let mut s = shared.borrow_mut();
+            let Some((unit, link)) = s.pressed_link.take() else { return };
+            let url = s
+                .hovered(window)
+                .filter(|f| f.unit == unit && g.is_empty())
                 .filter(|f| f.layout.link_under(e.position - f.bounds.origin) == Some(link))
                 .and_then(|f| f.layout.rich.links.get(link).map(|(_, u)| u.clone()));
             drop(s);

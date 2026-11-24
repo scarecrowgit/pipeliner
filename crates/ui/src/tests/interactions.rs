@@ -289,6 +289,59 @@ fn a_long_link_and_spawn_chip_can_shrink_inside_their_row(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+fn tags_buttons_stat_subs_and_dialog_titles_can_end_inside_their_box(cx: &mut TestAppContext) {
+    let path = "~/code/acme/services/payments-api/src/refunds/very/deep/folder/retry.ts";
+    let name = "Run Payments lead with an unreasonably long name that never fits";
+    let fired = Rc::new(Cell::new(0));
+    let f = fired.clone();
+    let cx = window(cx, move || {
+        let f = f.clone();
+        let fixed = || div().flex_none().w(px(60.)).h(px(18.));
+        // What follows the component in its row is pushed out unless the component shrinks.
+        let boxed = |selector: &'static str, el: AnyElement| {
+            row()
+                .debug_selector(move || format!("{selector}-row"))
+                .w_full()
+                .child(fixed())
+                .child(el)
+                .child(div().debug_selector(move || format!("{selector}-after")).flex_none().w(px(12.)).h(px(12.)))
+        };
+        col()
+            .w(px(240.))
+            .child(boxed("tag", Tag::new(name).shrinks().into_any_element()))
+            .child(boxed("path", Tag::new(path).mono().shrinks_in_middle().into_any_element()))
+            .child(boxed("button", Button::new("button", name).small().icon(IconName::Play).shrinks().on_click(move |_, _, _| f.set(f.get() + 1)).into_any_element()))
+            .child(row().child(div().debug_selector(|| "plain-tag".into()).flex().flex_none().child(Tag::new(name))))
+            .child(row().child(div().flex_none().child(Button::new("plain-button", name))))
+            .child(
+                div()
+                    .debug_selector(|| "stat-cell".into())
+                    .w(px(120.))
+                    .child(div().debug_selector(|| "stat".into()).child(Stat::new("Spend", "$3.81").suffix("of $10.00 this week for every agent"))),
+            )
+            .child(div().debug_selector(|| "dialog-box".into()).w(px(240.)).child(Dialog::new("dlg", name).width(240.)))
+            .into_any_element()
+    });
+    cx.run_until_parked();
+    let bounds = |cx: &mut VisualTestContext, selector: &'static str| {
+        cx.debug_bounds(selector).unwrap_or_else(|| panic!("`{selector}` was not laid out"))
+    };
+    for (sel, row, after) in [("tag", "tag-row", "tag-after"), ("path", "path-row", "path-after"), ("button", "button-row", "button-after")] {
+        let (row, after) = (bounds(cx, row), bounds(cx, after));
+        assert!(after.right() <= row.right() + px(0.5), "`{sel}` shrinks and leaves room after it: {after:?} in {row:?}");
+        assert!(after.left() > row.left() + px(160.), "after taking the room the row has: {after:?}");
+    }
+    assert!(bounds(cx, "plain-tag").size.width > px(240.), "without `shrinks` a tag keeps its text's width");
+    assert!(bounds(cx, "plain-button").size.width > px(240.), "without `shrinks` a button keeps its label's width");
+    let (cell, stat) = (bounds(cx, "stat-cell"), bounds(cx, "stat-sub"));
+    assert!(stat.right() <= cell.right() + px(0.5), "the stat's sub ends inside its cell: {stat:?} in {cell:?}");
+    let (dialog, close) = (bounds(cx, "dlg"), bounds(cx, "dlg-close"));
+    assert!(close.right() <= dialog.right() + px(0.5) && close.size.width > px(20.), "a long title leaves the close button in the head: {close:?} in {dialog:?}");
+    click(cx, "button");
+    assert_eq!(fired.get(), 1, "a shortened button still fires");
+}
+
+#[gpui::test]
 fn static_components_render_in_a_window(cx: &mut TestAppContext) {
     let cx = window(cx, || {
         col()

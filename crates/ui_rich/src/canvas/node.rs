@@ -6,6 +6,7 @@ use gpui::{
 };
 use ui::assets::{IconName, icon};
 use ui::components::TileTone;
+use ui::layout::truncate_block;
 use ui::theme::*;
 
 use super::geometry::{
@@ -253,34 +254,21 @@ impl NodeFrame {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
+                    // Cut at prepaint against the shaped width at this zoom and clipped to
+                    // the box, so the `…` lands before the check mark at every zoom.
                     .child(
-                        div()
-                            .h(z(18.0))
-                            .relative()
-                            .child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .truncate()
-                                    .text_size(z(BODY.size))
-                                    .line_height(z(18.0))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(TEXT)
-                                    .child(self.title),
-                            ),
+                        truncate_block(self.title, vp.scale(18.0))
+                            .text_size(z(BODY.size))
+                            .line_height(z(18.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT),
                     )
                     .child(
-                        div().h(z(MONO_SM.line)).relative().child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .truncate()
-                                .font_family(FONT_MONO)
-                                .text_size(z(MONO_SM.size))
-                                .line_height(z(MONO_SM.line))
-                                .text_color(TEXT_MUTED)
-                                .child(self.subtitle),
-                        ),
+                        truncate_block(self.subtitle, vp.scale(MONO_SM.line))
+                            .font_family(FONT_MONO)
+                            .text_size(z(MONO_SM.size))
+                            .line_height(z(MONO_SM.line))
+                            .text_color(TEXT_MUTED),
                     ),
             )
             .when(selected, |d| {

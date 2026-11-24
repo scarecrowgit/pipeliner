@@ -13,7 +13,7 @@ use ui::OverlayHost;
 
 use super::geometry::{MARGIN, MAX_SCALE, Mode, Viewport};
 use super::view::{ImageViewer, TOOLBAR_H};
-use super::{ImageThumb, ViewerImage, is_image_viewer_open};
+use super::{ImageThumb, ViewerCurrent, ViewerImage, image_viewer_current, is_image_viewer_open};
 
 thread_local! {
     /// The viewer the last `open_image_viewer` made.
@@ -26,21 +26,38 @@ const WINDOW_H: f32 = 748.;
 struct Page {
     images: Vec<ViewerImage>,
     focus: FocusHandle,
+    /// The thumbnail has a tooltip that counts how often it is drawn.
+    tooltip: bool,
+}
+
+thread_local! {
+    /// Frames the thumbnail's counting tooltip was drawn in.
+    static TOOLTIP_DRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A tooltip that counts its frames.
+struct CountingTooltip;
+
+impl Render for CountingTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        TOOLTIP_DRAWS.with(|n| n.set(n.get() + 1));
+        div().w(px(80.)).h(px(20.)).child("Open image")
+    }
 }
 
 impl Render for Page {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let thumb = ImageThumb::new("thumb", self.images.clone(), 0)
+            .absolute()
+            .left(px(100.))
+            .top(px(100.))
+            .w(px(120.))
+            .h(px(80.));
+        let thumb = if self.tooltip { thumb.tooltip_view(|_, cx| cx.new(|_| CountingTooltip).into()) } else { thumb };
         ui::root()
             .relative()
             .child(div().id("page-field").track_focus(&self.focus).size(px(20.)))
-            .child(
-                ImageThumb::new("thumb", self.images.clone(), 0)
-                    .absolute()
-                    .left(px(100.))
-                    .top(px(100.))
-                    .w(px(120.))
-                    .h(px(80.)),
-            )
+            .child(thumb)
     }
 }
 
@@ -107,6 +124,10 @@ fn pages() -> Vec<ViewerImage> {
 }
 
 fn setup(cx: &mut TestAppContext, images: Vec<ViewerImage>) -> (Entity<Page>, &mut VisualTestContext) {
+    setup_with(cx, images, false)
+}
+
+fn setup_with(cx: &mut TestAppContext, images: Vec<ViewerImage>, tooltip: bool) -> (Entity<Page>, &mut VisualTestContext) {
     ui::motion::set_reduced(true);
     cx.update(|cx| {
         ui::init(cx);
@@ -114,7 +135,7 @@ fn setup(cx: &mut TestAppContext, images: Vec<ViewerImage>) -> (Entity<Page>, &m
     });
     let slot: RefCell<Option<Entity<Page>>> = RefCell::default();
     let (_, cx) = cx.add_window_view(|window, cx| {
-        let page = cx.new(|cx| Page { images, focus: cx.focus_handle() });
+        let page = cx.new(|cx| Page { images, focus: cx.focus_handle(), tooltip });
         *slot.borrow_mut() = Some(page.clone());
         OverlayHost::new(window, cx).with_content(page)
     });
@@ -180,6 +201,62 @@ fn wheel(cx: &mut VisualTestContext, x: f32, y: f32, dy: f32, modifiers: Modifie
 
 fn page_focused(page: &Entity<Page>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| page.read(cx).focus.is_focused(window))
+}
+
+#[gpui::test]
+fn the_current_image_can_be_read_while_the_viewer_is_open(cx: &mut TestAppContext) {
+    let (_, cx) = setup(cx, pages());
+    let current = |cx: &mut VisualTestContext| cx.update(|window, cx| image_viewer_current(window, cx));
+    assert_eq!(current(cx), None, "nothing while closed");
+    open(cx);
+    assert_eq!(current(cx), Some(ViewerCurrent { index: 0, name: "page.png".into() }));
+    keys(cx, "right");
+    assert_eq!(current(cx).map(|c| (c.index, c.name)), Some((1, "wide.png".into())));
+    keys(cx, "escape");
+    assert_eq!(current(cx), None, "nothing once closed");
+}
+
+/// Draws a few frames and tells how many of them drew the thumbnail's tooltip.
+fn tooltip_frames(cx: &mut VisualTestContext) -> usize {
+    let before = TOOLTIP_DRAWS.with(|n| n.get());
+    for _ in 0..3 {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+    TOOLTIP_DRAWS.with(|n| n.get()) - before
+}
+
+#[gpui::test]
+fn the_thumbnail_tooltip_never_draws_over_the_viewer(cx: &mut TestAppContext) {
+    let (_, cx) = setup_with(cx, pages(), true);
+    let Some(thumb) = cx.debug_bounds("thumb") else { panic!("the thumbnail was not laid out") };
+    let wait = std::time::Duration::from_secs(2);
+    // Hovered long enough, the tooltip shows.
+    cx.simulate_mouse_move(thumb.center(), None, Modifiers::none());
+    cx.executor().advance_clock(wait);
+    assert!(tooltip_frames(cx) > 0, "the tooltip shows on hover");
+    // A click opens the viewer: the tooltip goes, and stays gone while the pointer rests there.
+    cx.simulate_click(thumb.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(is_open(cx));
+    cx.executor().advance_clock(wait);
+    assert_eq!(tooltip_frames(cx), 0, "no tooltip over the viewer after the click");
+    cx.simulate_mouse_move(thumb.center() + point(px(2.), px(2.)), None, Modifiers::none());
+    cx.executor().advance_clock(wait);
+    assert_eq!(tooltip_frames(cx), 0, "nor after the pointer moves over the viewer");
+    keys(cx, "escape");
+    assert!(!is_open(cx));
+
+    // A click before the tooltip's delay: the tooltip that was waiting does not show over it.
+    cx.simulate_mouse_move(point(px(5.), px(500.)), None, Modifiers::none());
+    cx.executor().advance_clock(wait);
+    cx.run_until_parked();
+    cx.simulate_mouse_move(thumb.center(), None, Modifiers::none());
+    cx.simulate_click(thumb.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(is_open(cx));
+    cx.executor().advance_clock(wait);
+    assert_eq!(tooltip_frames(cx), 0, "the tooltip that was waiting stays away");
 }
 
 #[gpui::test]

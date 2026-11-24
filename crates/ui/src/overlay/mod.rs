@@ -558,6 +558,14 @@ impl Overlays {
         self.read(cx, |h| h.layers.iter().any(|l| l.open && l.key == key)).unwrap_or(false)
     }
 
+    /// Whether the popover, dialog or full view opened as `id` is on screen: open, or still
+    /// fading out after a close. What sits under it should not draw on top of it meanwhile
+    /// (a tooltip of the control that opened it).
+    pub fn is_shown(&self, id: impl Into<ElementId>, cx: &App) -> bool {
+        let key = id.into();
+        self.read(cx, |h| h.layers.iter().any(|l| l.key == key)).unwrap_or(false)
+    }
+
     /// Number of open popovers and dialogs.
     pub fn open_count(&self, cx: &App) -> usize {
         self.read(cx, |h| h.layers.iter().filter(|l| l.open).count()).unwrap_or(0)

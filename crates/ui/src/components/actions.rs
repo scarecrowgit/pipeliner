@@ -52,6 +52,7 @@ pub struct Button {
     selected: bool,
     full_width: bool,
     keep_focus: bool,
+    shrinks: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -70,6 +71,7 @@ impl Button {
             selected: false,
             full_width: false,
             keep_focus: false,
+            shrinks: false,
             on_click: None,
         }
     }
@@ -149,6 +151,14 @@ impl Button {
         self
     }
 
+    /// For a label that can be long (a name): in a row too narrow for it the button shrinks
+    /// and its label ends in `…`; icons and the key cap keep their size. By default a button
+    /// keeps its label's width.
+    pub fn shrinks(mut self) -> Self {
+        self.shrinks = true;
+        self
+    }
+
     /// Called when the button is clicked (never when disabled).
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(f));
@@ -190,9 +200,10 @@ impl RenderOnce for Button {
         let el = div().id(self.id).debug_selector(move || selector);
         let el = focus::tab_stop(el, disabled, cx);
         let el = if self.keep_focus { keep_focus_on_press(el) } else { el };
+        let shrinks = self.shrinks;
         let el = el
             .flex()
-            .flex_none()
+            .map(|d| if shrinks { d.flex_shrink().min_w_0() } else { d.flex_none() })
             .items_center()
             .justify_center()
             .gap(px(gap))
@@ -205,15 +216,18 @@ impl RenderOnce for Button {
             .whitespace_nowrap()
             .when(disabled, |d| d.opacity(0.45).cursor_not_allowed())
             .when(!disabled, |d| d.cursor_pointer());
+        let glyph = move |name: IconName| div().flex().flex_none().child(icon(name, icon_size, icon_color));
+        let label = self.label;
+        let line = if sm { LABEL_STRONG.line } else { BODY_STRONG.line };
         faded
             .apply(el)
-            .when_some(self.icon, |d, name| d.child(icon(name, icon_size, icon_color)))
-            .child(self.label)
-            .when_some(self.trailing_icon, |d, name| d.child(icon(name, icon_size, icon_color)))
+            .when_some(self.icon, |d, name| d.child(glyph(name)))
+            .map(|d| if shrinks { d.child(crate::truncate::fit_styled(label, Vec::new(), line)) } else { d.child(label) })
+            .when_some(self.trailing_icon, |d, name| d.child(glyph(name)))
             .when_some(self.kbd, |d, keys| {
                 let kbd = Kbd::new(keys);
                 let kbd = if self.kind == ButtonKind::Primary { kbd.on_accent() } else { kbd };
-                d.child(div().ml(px(SPACE_0_5)).child(kbd))
+                d.child(div().flex_none().ml(px(SPACE_0_5)).child(kbd))
             })
             .when_some(on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
     }

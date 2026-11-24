@@ -324,6 +324,47 @@ fn menu_keys_move_wrap_skip_disabled_rows_and_choose(cx: &mut TestAppContext) {
     assert_eq!(log_of(&page, &mut cx).len(), before);
 }
 
+/// The agents screen's "New" menu: rows with key caps, one of them off.
+fn menu_with_caps(log: Log) -> impl Fn(&mut Window, &mut App) -> Menu + 'static {
+    move |_, _| {
+        let row = |id: &'static str, label: &'static str, cap: &'static str| {
+            let log = log.clone();
+            MenuItem::new(id, label).kbd(cap).on_click(move |_, _, _| push(&log, id))
+        };
+        Menu::new("menu-caps")
+            .width(240.)
+            .item(row("agent", "Agent", "A"))
+            .item(row("archive", "Archive", "R").coming_soon())
+            .item(row("pipeline", "Pipeline", "P"))
+            .item(row("template", "Pipeline from template", "T"))
+    }
+}
+
+#[gpui::test]
+fn a_key_cap_chooses_its_row_and_the_cap_of_a_row_that_is_off_does_nothing(cx: &mut TestAppContext) {
+    let (page, mut cx) = setup(cx);
+    let open = |cx: &mut VisualTestContext, page: &Entity<Page>| {
+        let log = cx.update(|_, cx| page.read(cx).log.clone());
+        cx.update(|window, cx| {
+            let anchor = Anchor::of("b", window, cx);
+            overlays(window, cx).open_menu(anchor, Placement::below(), menu_with_caps(log), window, cx);
+        });
+        cx.run_until_parked();
+        assert!(is_open(cx, "b"));
+    };
+    open(&mut cx, &page);
+    cx.simulate_keystrokes("t");
+    assert!(!is_open(&mut cx, "b"), "the cap chose its row and closed the menu");
+    assert_eq!(log_of(&page, &mut cx), vec!["template"], "T is the template row's cap, not a jump to a row starting with t");
+    open(&mut cx, &page);
+    cx.simulate_keystrokes("r");
+    assert!(is_open(&mut cx, "b"), "the cap of a row that is off does nothing");
+    assert_eq!(log_of(&page, &mut cx).len(), 1);
+    cx.simulate_keystrokes("shift-p");
+    assert!(!is_open(&mut cx, "b"));
+    assert_eq!(log_of(&page, &mut cx).last().map(String::as_str), Some("pipeline"));
+}
+
 #[gpui::test]
 fn a_toast_goes_after_four_seconds_unless_hovered(cx: &mut TestAppContext) {
     let (_, mut cx) = setup(cx);

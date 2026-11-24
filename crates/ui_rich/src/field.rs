@@ -21,6 +21,7 @@ pub struct TextField {
     icon: Option<IconName>,
     kbd: Option<SharedString>,
     small: bool,
+    compact: bool,
     danger: bool,
     mono: bool,
 }
@@ -33,6 +34,7 @@ pub fn text_field(id: impl Into<ElementId>, input: &Entity<TextInput>) -> TextFi
         icon: None,
         kbd: None,
         small: false,
+        compact: false,
         danger: false,
         mono: false,
     }
@@ -54,6 +56,13 @@ impl TextField {
     /// The 32px compact frame.
     pub fn small(mut self) -> Self {
         self.small = true;
+        self
+    }
+
+    /// The 28px frame with small (12px) text and icon, for a filter field in a toolbar row
+    /// ([`InputFrame::compact`]).
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
         self
     }
 
@@ -97,6 +106,7 @@ impl RenderOnce for TextField {
             .focused(focused)
             .danger(self.danger)
             .when(self.small, |f| f.small())
+            .when(self.compact, |f| f.compact())
             .when_some(self.icon, |f, i| f.icon(i))
             .when_some(self.kbd, |f, k| f.kbd(k))
             .child(mono_wrap(self.mono, self.input.clone().into_any_element()));

@@ -67,6 +67,14 @@ pub fn duration(secs: u64) -> String {
     }
 }
 
+/// An elapsed time as a stopwatch, always with minutes: `0:00`, `0:30`, `1:42`, `59:59`,
+/// and past an hour `1:00:00`, `25:03:07` (hours keep counting, no days). For the marks of
+/// a time axis, where every label has the same shape.
+pub fn duration_clock(secs: u64) -> String {
+    let (h, m, s) = (secs / 3_600, secs % 3_600 / 60, secs % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
 /// An elapsed time in words: `6s`, `4m 12s`, `2h`, `1h 1m`, `1d 1h`.
 ///
 /// Shows the two largest units and leaves the second out when it is zero.

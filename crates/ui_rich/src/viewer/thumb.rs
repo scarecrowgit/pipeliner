@@ -6,12 +6,16 @@ use gpui::{
 };
 use ui::prelude::*;
 
-use super::{ViewerImage, open_image_viewer};
+use super::{VIEWER_ID, ViewerImage, open_image_viewer};
+
+/// Builds the view of a tooltip.
+type TooltipBuilder = std::rc::Rc<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>;
 
 /// A clickable frame around an image preview: a click opens the viewer on `images` at
 /// `start`. It draws a 1px border that brightens on hover (150ms fade, `line-strong` to
 /// `text-disabled`; change the resting colour with [`ImageThumb::border`]), a pointer cursor,
-/// and a tooltip when given one. The click does not reach the elements under the thumbnail
+/// and a tooltip when given one (never drawn while the viewer is on screen). The click does
+/// not reach the elements under the thumbnail
 /// (a card or row that opens something else).
 ///
 /// Style it like a `div` (size, radius, background, `overflow_hidden`) and put the picture in
@@ -32,7 +36,7 @@ pub struct ImageThumb {
     images: Vec<ViewerImage>,
     start: usize,
     rest: Hsla,
-    tooltip: Option<SharedString>,
+    tooltip: Option<TooltipBuilder>,
 }
 
 impl ImageThumb {
@@ -63,7 +67,14 @@ impl ImageThumb {
 
     /// A tooltip shown on hover ("Open image").
     pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(text.into());
+        self.tooltip = Some(std::rc::Rc::new(ui::components::Tooltip::text(text)));
+        self
+    }
+
+    /// A tooltip of any view, for tests that count how often it is drawn.
+    #[cfg(test)]
+    pub(crate) fn tooltip_view(mut self, build: impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static) -> Self {
+        self.tooltip = Some(std::rc::Rc::new(build));
         self
     }
 }
@@ -103,6 +114,11 @@ impl RenderOnce for ImageThumb {
             cx,
         );
         let (images, start) = (self.images, self.start);
+        // GPUI keeps a tooltip up while the pointer is inside the thumbnail's bounds, even when
+        // the viewer covers it, and shows one that was waiting for its delay when the click
+        // came: leave the tooltip out while the viewer is on screen.
+        let covered = overlays(window, cx).is_shown(VIEWER_ID, cx);
+        let tooltip = self.tooltip.filter(|_| !covered);
         self.el
             .border_1()
             .border_color(border)
@@ -117,7 +133,7 @@ impl RenderOnce for ImageThumb {
                     }
                 })
             })
-            .when_some(self.tooltip, |d, t| d.tooltip(ui::components::Tooltip::text(t)))
+            .when_some(tooltip, |d, t| d.tooltip(move |window, cx| t(window, cx)))
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 open_image_viewer(images.clone(), start, window, cx);

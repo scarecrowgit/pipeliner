@@ -181,6 +181,8 @@ pub fn open_image_viewer(images: Vec<ViewerImage>, start: usize, window: &mut Wi
     }
     bind_keys(cx);
     let view = cx.new(|cx| ImageViewer::new(images, start, cx));
+    let window_id = window.window_handle().window_id();
+    cx.default_global::<OpenViewers>().0.insert(window_id, view.downgrade());
     #[cfg(test)]
     tests::LAST.with(|last| *last.borrow_mut() = Some(view.downgrade()));
     overlays(window, cx).open_full_view(VIEWER_ID, view, |_, _| {}, window, cx);
@@ -195,6 +197,37 @@ pub fn close_image_viewer(window: &mut Window, cx: &mut App) {
 pub fn is_image_viewer_open(window: &Window, cx: &App) -> bool {
     overlays(window, cx).is_open(VIEWER_ID, cx)
 }
+
+/// The image the open viewer shows: its place in the list the viewer was opened on, and its
+/// name (the toolbar's title).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewerCurrent {
+    /// Index into the images the viewer was opened on.
+    pub index: usize,
+    /// [`ViewerImage::name`] of that image.
+    pub name: SharedString,
+}
+
+/// The image the viewer in this window is showing, `None` when it is not open (or leaving).
+///
+/// ```ignore
+/// assert_eq!(image_viewer_current(window, cx).map(|c| c.index), Some(1));
+/// ```
+pub fn image_viewer_current(window: &Window, cx: &App) -> Option<ViewerCurrent> {
+    if !is_image_viewer_open(window, cx) {
+        return None;
+    }
+    let view = cx.try_global::<OpenViewers>()?.0.get(&window.window_handle().window_id())?.upgrade()?;
+    let viewer = view.read(cx);
+    let image = viewer.images.get(viewer.index)?;
+    Some(ViewerCurrent { index: viewer.index, name: image.name.clone() })
+}
+
+/// The last viewer opened in each window.
+#[derive(Default)]
+struct OpenViewers(std::collections::HashMap<gpui::WindowId, gpui::WeakEntity<ImageViewer>>);
+
+impl Global for OpenViewers {}
 
 /// Every key binding of the viewer, in [`KEY_CONTEXT`].
 pub fn bindings() -> Vec<KeyBinding> {

@@ -41,6 +41,24 @@ impl Gallery {
             ("tag mono", Tag::new("fix/retry-budget").mono().into_any_element()),
             ("tag spawn", Tag::new("agent-made").tone(TagTone::Spawn).into_any_element()),
             ("tag accent", Tag::new("edited").tone(TagTone::Accent).into_any_element()),
+            (
+                "tags on rows",
+                ui::dev::Probe::probe(
+                    col()
+                        .w(px(220.))
+                        .child(row().gap(px(SPACE_1_5)).p(px(SPACE_2)).bg(SURFACE_RAISED).child("Hovered").child(Tag::new("Paused")))
+                        .child(row().gap(px(SPACE_1_5)).p(px(SPACE_2)).bg(SURFACE_HOVER).child("Selected").child(Tag::new("Paused")))
+                        .child(
+                            row()
+                                .w(px(220.))
+                                .gap(px(SPACE_1_5))
+                                .p(px(SPACE_2))
+                                .child(Tag::new("~/code/acme/services/payments-api/src/retry.ts").mono().shrinks_in_middle()),
+                        ),
+                    "gallery-tag-rows",
+                )
+                .into_any_element(),
+            ),
             ("kbd", Kbd::new("⌘K").into_any_element()),
             ("key hints", KeyHints::new().hint(["↑", "↓"], "move").hint(["↵"], "open").hint(["⌘↵"], "open beside").into_any_element()),
         ]);

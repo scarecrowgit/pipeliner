@@ -65,6 +65,7 @@ pub struct InputFrame {
     icon: Option<IconName>,
     kbd: Option<SharedString>,
     small: bool,
+    compact: bool,
     multiline: bool,
     focused: bool,
     danger: bool,
@@ -82,6 +83,7 @@ impl InputFrame {
             icon: None,
             kbd: None,
             small: false,
+            compact: false,
             multiline: false,
             focused: false,
             danger: false,
@@ -117,6 +119,14 @@ impl InputFrame {
     /// 32px tall with 10px padding.
     pub fn small(mut self) -> Self {
         self.small = true;
+        self
+    }
+
+    /// 28px tall with 10px padding, small (12px) text and a 12px icon: a filter field in a
+    /// toolbar row (the agent list's "Filter by name, model or runtime"). [`small`](Self::small)
+    /// keeps body text.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
         self
     }
 
@@ -164,19 +174,21 @@ impl RenderOnce for InputFrame {
             cx,
         );
         let selector = self.id.to_string();
+        let compact = self.compact && !self.multiline;
+        let style = if compact { LABEL } else { BODY };
         let body: AnyElement = if !self.content.is_empty() {
             div().flex_1().min_w_0().children(self.content).into_any_element()
         } else if let Some(v) = self.value {
             if self.multiline {
                 div().flex_1().min_w_0().child(v).into_any_element()
             } else {
-                truncate_lh(v, BODY.line).text_color(TEXT).into_any_element()
+                truncate_lh(v, style.line).text_color(TEXT).into_any_element()
             }
         } else if let Some(p) = self.placeholder {
             if self.multiline {
                 div().flex_1().min_w_0().text_color(TEXT_MUTED).child(p).into_any_element()
             } else {
-                truncate_lh(p, BODY.line).text_color(TEXT_MUTED).into_any_element()
+                truncate_lh(p, style.line).text_color(TEXT_MUTED).into_any_element()
             }
         } else {
             div().flex_1().into_any_element()
@@ -184,6 +196,8 @@ impl RenderOnce for InputFrame {
         let frame = row().id(self.id).debug_selector(move || selector);
         let frame = if self.multiline {
             frame.items_start().min_h(px(72.)).px(px(SPACE_3)).py(px(SPACE_2_5))
+        } else if compact {
+            frame.h(px(CONTROL_HEIGHT_SM)).px(px(SPACE_2_5))
         } else if self.small {
             frame.h(px(CONTROL_HEIGHT_MD)).px(px(SPACE_2_5))
         } else {
@@ -197,10 +211,10 @@ impl RenderOnce for InputFrame {
             .rounded(px(RADIUS_LG))
             .bg(if self.sunken { SURFACE } else { SURFACE_RAISED })
             .text_color(TEXT)
-            .type_style(BODY)
+            .type_style(style)
             .when(self.danger, |d| d.shadow(danger_glow()))
             .when(self.focused && !self.danger, |d| d.shadow(input_glow()))
-            .when_some(self.icon, |d, i| d.child(icon(i, 14., TEXT_MUTED)))
+            .when_some(self.icon, |d, i| d.child(icon(i, if compact { 12. } else { 14. }, TEXT_MUTED)))
             .child(body)
             .when_some(self.kbd, |d, k| d.child(Kbd::new(k)))
     }

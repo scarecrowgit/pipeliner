@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use gpui::{App, Context, Entity, IntoElement, Render, SharedString, Window, div, prelude::*, px};
 use ui::prelude::*;
+use ui::dev::Probe;
 use ui_rich::diff_view::{DiffCard, DiffCardState, DiffFile, DiffHunk, DiffLine, DiffLineKind};
 use ui_rich::markdown::{self, Markdown};
 
@@ -120,7 +121,7 @@ fn retry_diff() -> DiffFile {
                 46,
                 "  const res = await gateway.charge(charge.amount, charge.card, { idempotencyKey: key });",
             ),
-            ctx(46, 47, "  if (res.status === 'timeout') {"),
+            ctx(46, 47, "  if (res.status === 'timeout') { // the gateway timed out: retry once with the same idempotency key so a second charge is never created, then give up and report the failure to the caller with the gateway's own reason attached", ),
             del(47, "    return retryCharge(charge);"),
             add(
                 48,
@@ -381,7 +382,8 @@ impl Render for Demo {
                             .compact()
                             .collapsible()
                             .collapse_after(12)
-                            .footer(lsp),
+                            .footer(lsp)
+                            .probe("diff-edit"),
                     )
                     .child({
                         let me = cx.entity();
