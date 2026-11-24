@@ -5,6 +5,7 @@ mod actions;
 mod agents;
 mod pattern;
 mod router;
+mod safety;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,10 @@ impl AgentSessions for FakeSessions {
 
     fn spent(&self, _: &SessionId) -> f64 {
         0.0
+    }
+
+    fn has_conversation(&self, session: &SessionId) -> bool {
+        self.runs.lock().unwrap().iter().any(|(_, env, _)| &env.session == session)
     }
 
     fn run(
@@ -214,7 +219,15 @@ impl Fx {
         repo
     }
 
+    pub fn config(&self) -> RunnerConfig {
+        RunnerConfig::new(self.worktrees(), self.root().join("state"))
+    }
+
     pub fn runner(&self, workdirs: Vec<WorkdirDef>) -> Runner {
+        self.runner_with(workdirs, self.config())
+    }
+
+    pub fn runner_with(&self, workdirs: Vec<WorkdirDef>, config: RunnerConfig) -> Runner {
         let graph = GraphDef {
             schema: 1,
             id: PipelineId::new("demo"),
@@ -233,7 +246,7 @@ impl Fx {
             tracker: self.tracker.clone(),
             gh: self.gh.clone(),
         };
-        Runner::new(&graph, services, RunnerConfig::new(self.worktrees(), self.root().join("state")))
+        Runner::new(&graph, services, config)
     }
 }
 

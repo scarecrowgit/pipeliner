@@ -42,7 +42,7 @@ fn decide(ctx: &Ctx, rule: &RouterRule, output: &mut NodeOutput) -> Result<Optio
             None
         } else {
             let wd = ctx.workdir(&ask.workdir).map_err(|e| format!("Rule “{}”: {e:#}", label(rule)))?;
-            Some(ctx.read_place(wd))
+            Some(ctx.read_place(wd).map_err(|e| format!("Rule “{}”: {e:#}", label(rule)))?)
         };
         let question = Question {
             run: ctx.job.run.clone(),

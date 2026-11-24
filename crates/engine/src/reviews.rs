@@ -45,6 +45,35 @@ impl Engine {
     }
 }
 
+impl Engine {
+    /// Whether an agent or orchestrator follows the review's node along route edges.
+    fn agents_after(&self, review: &Review) -> bool {
+        let Some(graph) = self
+            .inner
+            .store
+            .marker(&pipelines::graph_marker(&review.run))
+            .ok()
+            .flatten()
+            .and_then(|t| pipelines::parse_graph(&t).ok())
+        else {
+            return true;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack = vec![review.node.clone()];
+        while let Some(node) = stack.pop() {
+            for edge in graph.edges_from(&node).filter(|e| e.kind == model::EdgeKind::Route) {
+                if seen.insert(edge.to.clone()) {
+                    if graph.node(&edge.to).is_some_and(|d| matches!(d.kind, NodeKind::Agent(_) | NodeKind::Orchestrator(_))) {
+                        return true;
+                    }
+                    stack.push(edge.to.clone());
+                }
+            }
+        }
+        false
+    }
+}
+
 impl InboxApi for Engine {
     fn inbox(&self, archived: bool) -> Result<Vec<InboxItem>> {
         self.inner.store.inbox(archived)
@@ -101,12 +130,16 @@ impl InboxApi for Engine {
         if review.state != model::ReviewState::Open {
             bail!("The review was already decided");
         }
-        // Sending back starts new work; shipping or skipping only finishes what is there.
-        if matches!(decision, ReviewDecision::SendBack { .. }) {
+        // Sending back starts agent work, and so does shipping into agents after the review.
+        let starts_agents = match decision {
+            ReviewDecision::SendBack { .. } => true,
+            ReviewDecision::Ship { .. } => self.agents_after(&review),
+            ReviewDecision::Skip => false,
+        };
+        if starts_agents {
             pipelines::check_limit(&self.inner)?;
         }
-        let handle = pipelines::handle(&self.inner, &review.run)?;
-        handle.decide(id.clone(), decision).map_err(|e| anyhow!("{e}"))
+        pipelines::command(&self.inner, &review.run, |h| h.decide(id.clone(), decision.clone()))
     }
 
     fn pull_request(&self, url: &str) -> Result<PullRequest> {

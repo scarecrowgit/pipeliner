@@ -87,6 +87,10 @@ impl AgentSessions for Sessions {
         self.0.upgrade().and_then(|inner| inner.spent_below(session).ok()).unwrap_or(0.0)
     }
 
+    fn has_conversation(&self, session: &SessionId) -> bool {
+        self.0.upgrade().and_then(|inner| inner.store.model_messages(session).ok()).is_some_and(|m| !m.is_empty())
+    }
+
     fn run(
         &self,
         spec: &AgentSpec,

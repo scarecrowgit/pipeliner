@@ -278,6 +278,12 @@ pub fn run(engine: &Engine, cmd: RunCmd, deps: &mut Deps) -> Result<i32> {
             engine.resume_run(&id)?;
             followed(engine, &id, after, deps)
         }
+        RunCmd::Discard { id } => {
+            let id = RunId::new(id);
+            engine.discard_run(&id)?;
+            writeln!(deps.out, "run {id} discarded")?;
+            Ok(0)
+        }
         RunCmd::Answer { id, text, node } => {
             let id = RunId::new(id);
             let after = last_seq(engine, &id);

@@ -94,7 +94,7 @@ fn run_inner(ctx: &Ctx, node: &AgentNode) -> Result<JobResult> {
         Some(wd) => Some(ctx.work_place(wd)?),
         None => None,
     };
-    let task = ctx.task(place.as_ref(), &node.workdir, &node.files_out);
+    let task = ctx.task(place.as_ref(), &node.workdir, &node.files_out)?;
 
     // A sent-back attempt keeps its conversation only when it also keeps its folder.
     let kept = job.retry.as_ref().filter(|retry| {
@@ -106,6 +106,8 @@ fn run_inner(ctx: &Ctx, node: &AgentNode) -> Result<JobResult> {
         (Some(session), _) => {
             let input = match &job.answer {
                 Some(answer) => Input::User(agent::UserInput::text(answer.clone())),
+                // Stopped before the task was even stored: hand it over again.
+                None if !sessions.has_conversation(session) => Input::Item(task.text.clone()),
                 None => Input::Continue,
             };
             (session.clone(), input)
@@ -245,7 +247,14 @@ fn finish(
                 return JobResult::Failed { error: format!("{name} stopped without calling step_done"), output };
             };
             output.summary = payload.get("summary").and_then(|s| s.as_str()).unwrap_or_default().trim().to_string();
-            let missing: Vec<&str> = required.iter().filter(|f| !f.path.exists()).map(|f| f.shown.as_str()).collect();
+            let mut missing: Vec<&str> = Vec::new();
+            for file in required {
+                match file.check() {
+                    Ok(true) => {}
+                    Ok(false) => missing.push(file.shown.as_str()),
+                    Err(error) => return JobResult::Failed { error: format!("{name}: {error:#}"), output },
+                }
+            }
             if !missing.is_empty() {
                 let error = format!("{name} finished without writing {}", missing.join(", "));
                 return JobResult::Failed { error, output };

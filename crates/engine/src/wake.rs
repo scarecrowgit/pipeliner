@@ -83,9 +83,10 @@ impl Engine {
 
     fn wake_pipeline(&self, issue: &Issue, intent: &WakeIntent) -> Result<(Option<RunId>, u32)> {
         let pipeline = PipelineId::new(intent.target.id());
-        let latest = self.inner.store.latest_run(&issue.key)?.filter(|run| run.state.is_open() && run.pipeline == pipeline);
-        let text = match (intent.mode, latest) {
-            (WakeMode::Continue, Some(run)) if run.state == RunState::WaitingAnswer => {
+        // Any open run on the issue counts, whichever pipeline it runs.
+        let open = self.inner.store.runs_for_issue(&issue.key)?.into_iter().find(|run| run.state.is_open());
+        let text = match (intent.mode, open) {
+            (WakeMode::Continue, Some(run)) if run.state == RunState::WaitingAnswer && run.pipeline == pipeline => {
                 self.answer_run(&run.id, None, &intent.input)?;
                 return Ok((Some(run.id), run.number));
             }
@@ -96,7 +97,8 @@ impl Engine {
             (WakeMode::Continue, None) => format!("{}\n\n## New comment\n\n{}", issue_input(issue), intent.input.trim()),
             (WakeMode::Start, None) => intent.input.clone(),
         };
-        let run = self.start_issue_run(issue, &pipeline, &text)?;
+        // Checked again, atomically, where the run starts.
+        let run = self.start_issue_run(issue, &pipeline, &text, false)?;
         Ok((Some(run.id), run.number))
     }
 

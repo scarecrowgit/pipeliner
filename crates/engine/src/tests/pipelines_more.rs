@@ -15,16 +15,16 @@ use super::pipelines::{deploy, pipeline_fx, scripted, wait_run};
 use super::git;
 use crate::api::{CatalogApi, InboxApi, OpsApi, RunApi, RunInput};
 
-fn node(id: &str, kind: NodeKind) -> NodeDef {
+pub(super) fn node(id: &str, kind: NodeKind) -> NodeDef {
     NodeDef { id: id.into(), name: id.to_uppercase(), pos: Default::default(), kind }
 }
 
-fn route(from: &str, port: &str, to: &str) -> EdgeDef {
+pub(super) fn route(from: &str, port: &str, to: &str) -> EdgeDef {
     EdgeDef { from: from.into(), port: port.into(), to: to.into(), kind: EdgeKind::Route }
 }
 
 /// Manual source → coder (×`variants`) → review → merge, on `repo`.
-fn graph(repo: &std::path::Path, variants: u32) -> GraphDef {
+pub(super) fn graph(repo: &std::path::Path, variants: u32) -> GraphDef {
     GraphDef {
         schema: 1,
         id: PipelineId::new("variants"),
@@ -64,7 +64,7 @@ fn graph(repo: &std::path::Path, variants: u32) -> GraphDef {
     }
 }
 
-fn input() -> RunInput {
+pub(super) fn input() -> RunInput {
     RunInput { title: "Shorter greeting".into(), text: "Make the greeting shorter.".into() }
 }
 

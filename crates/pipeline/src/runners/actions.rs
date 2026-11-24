@@ -32,7 +32,9 @@ pub(crate) fn run(ctx: &Ctx, action: &ActionNode) -> JobResult {
 /// Where a command or render works: the upstream worktree, else a new one.
 fn place(ctx: &Ctx, workdir: &str) -> Result<Place> {
     let wd = ctx.workdir(workdir)?;
-    match ctx.found_place(wd) {
+    // A registered worktree that is gone fails the job; only a workdir nobody worked in yet
+    // gets a fresh worktree.
+    match ctx.found_place(wd)? {
         Some(place) => Ok(place),
         None => ctx.work_place(wd),
     }
@@ -120,18 +122,19 @@ fn render_one(ctx: &Ctx, place: &Place, path: &str) -> Result<Render> {
     let services = ctx.services();
     let after = services.renderer.render(&place.path.join(path), ctx.cancel)?;
     let after_blob = services.records.put_blob(&after.png)?;
-    let before = match super::git::git(&place.path, &["show", &format!("{}:{path}", place.base)], ctx.cancel) {
-        Ok(text) => {
-            let file = place.path.join(path);
-            let stem = Path::new(path).file_stem().map_or_else(|| "file".into(), |s| s.to_string_lossy().into_owned());
-            let copy = file.with_file_name(format!(".harness-before-{stem}.html"));
-            std::fs::write(&copy, text).with_context(|| format!("writing {}", copy.display()))?;
-            let picture = services.renderer.render(&copy, ctx.cancel);
-            let _ = std::fs::remove_file(&copy);
-            Some(services.records.put_blob(&picture?.png)?)
-        }
+    let before = if super::git::exists_in(&place.path, &place.base, path, ctx.cancel)? {
+        let text = super::git::git(&place.path, &["show", &format!("{}:{path}", place.base)], ctx.cancel)
+            .with_context(|| format!("reading {path} as it is on {}", place.base))?;
+        let file = place.path.join(path);
+        let stem = Path::new(path).file_stem().map_or_else(|| "file".into(), |s| s.to_string_lossy().into_owned());
+        let copy = file.with_file_name(format!(".harness-before-{stem}.html"));
+        std::fs::write(&copy, text).with_context(|| format!("writing {}", copy.display()))?;
+        let picture = services.renderer.render(&copy, ctx.cancel);
+        let _ = std::fs::remove_file(&copy);
+        Some(services.records.put_blob(&picture?.png)?)
+    } else {
         // A new file has no before.
-        Err(_) => None,
+        None
     };
     Ok(Render { path: path.to_string(), before, after: after_blob, width: after.width, height: after.height })
 }

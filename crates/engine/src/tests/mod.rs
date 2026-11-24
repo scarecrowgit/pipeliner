@@ -6,6 +6,7 @@ mod chat;
 mod other;
 mod permission;
 mod pipelines;
+mod pipelines_fixes;
 mod pipelines_more;
 
 use std::path::{Path, PathBuf};

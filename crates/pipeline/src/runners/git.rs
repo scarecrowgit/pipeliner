@@ -33,20 +33,42 @@ pub(crate) fn dirty(dir: &Path, cancel: &CancelToken) -> Result<bool> {
     Ok(!git(dir, &["status", "--porcelain", "--untracked-files=all"], cancel)?.trim().is_empty())
 }
 
+/// Whether `path` exists on `base`. An unknown base or a failing git is an error, not "no".
+pub(crate) fn exists_in(dir: &Path, base: &str, path: &str, cancel: &CancelToken) -> Result<bool> {
+    let commit = format!("{base}^{{commit}}");
+    git(dir, &["rev-parse", "--verify", "--quiet", &commit], cancel).map_err(|_| anyhow::anyhow!("the base `{base}` does not exist"))?;
+    let listed = git(dir, &["ls-tree", "-z", "--name-only", base, "--", path], cancel)?;
+    Ok(listed.split('\0').any(|name| name == path))
+}
+
 /// Files that differ from `base` in the worktree: committed on the branch, staged, unstaged or
-/// untracked; deleted ones left out.
+/// untracked; deleted ones left out. Read with `-z`, so names are never C-quoted.
 pub(crate) fn changed_paths(dir: &Path, base: &str, cancel: &CancelToken) -> Result<Vec<String>> {
-    let mut files: Vec<String> = git(dir, &["status", "--porcelain", "--untracked-files=all"], cancel)?
-        .lines()
-        .filter(|line| !line.starts_with(" D") && !line.starts_with("D "))
-        .filter_map(|line| line.get(3..).map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim().trim_matches('"').to_string()))
-        .collect();
+    let status = git(dir, &["status", "--porcelain", "-z", "--untracked-files=all"], cancel)?;
+    let mut files = parse_status_z(&status);
     if !base.is_empty()
-        && let Ok(out) = git(dir, &["diff", "--name-only", "--diff-filter=AMR", &format!("{base}...HEAD")], cancel)
+        && let Ok(out) = git(dir, &["diff", "-z", "--name-only", "--diff-filter=AMR", &format!("{base}...HEAD")], cancel)
     {
-        files.extend(out.lines().map(str::to_string));
+        files.extend(out.split('\0').filter(|p| !p.is_empty()).map(str::to_string));
     }
     files.sort();
     files.dedup();
     Ok(files)
+}
+
+/// The paths of `git status --porcelain -z`, deleted ones left out. A rename or copy is
+/// followed by its old path, which is skipped.
+fn parse_status_z(text: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut fields = text.split('\0').filter(|f| !f.is_empty());
+    while let Some(field) = fields.next() {
+        let (code, path) = (field.get(..2).unwrap_or_default(), field.get(3..).unwrap_or_default());
+        if code.starts_with('R') || code.starts_with('C') {
+            fields.next();
+        }
+        if !code.contains('D') && !path.is_empty() {
+            files.push(path.to_string());
+        }
+    }
+    files
 }

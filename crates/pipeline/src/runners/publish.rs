@@ -24,11 +24,11 @@ fn simulated(ctx: &Ctx, what: String) -> Result<JobResult> {
 
 pub(crate) fn merge(ctx: &Ctx, workdir: &str) -> Result<JobResult> {
     let wd = ctx.workdir(workdir)?;
-    if !wd.worktree {
+    if !wd.worktree && !ctx.job.test {
         return done(NodeOutput { summary: format!("{} is used in place; nothing to merge.", wd.name), ..Default::default() });
     }
     let place = ctx
-        .found_place(wd)
+        .found_place(wd)?
         .ok_or_else(|| anyhow!("Nothing to merge: no node of this run worked in a worktree of {}", wd.name))?;
     let branch = place.branch.clone().ok_or_else(|| anyhow!("{} has no branch to merge", place.path.display()))?;
     let mut output = NodeOutput { worktree: Some(place.path.clone()), branch: Some(branch.clone()), ..Default::default() };
@@ -41,17 +41,20 @@ pub(crate) fn merge(ctx: &Ctx, workdir: &str) -> Result<JobResult> {
         return Ok(result);
     }
     if dirty(&place.path, ctx.cancel)? {
-        vcs::commit_all(&place.path, &ctx.title(), ctx.cancel).context("committing before the merge")?;
+        vcs::commit_all(&place.path, &ctx.redact(&ctx.title()), ctx.cancel).context("committing before the merge")?;
         ctx.log(LogLevel::Info, format!("Committed the changes on {branch}."));
     }
     match vcs::merge_into_base(&wd.path, &branch, &place.base, ctx.cancel)? {
         MergeOutcome::Merged { head } => {
             ctx.log(LogLevel::Info, format!("Merged {branch} into {} ({}).", place.base, &head[..head.len().min(9)]));
             output.summary = format!("Merged {branch} into {}.", place.base);
+            output.merged = true;
             done(output)
         }
         MergeOutcome::UpToDate => {
+            // A merge replayed after a crash finds its work there already: still merged.
             output.summary = format!("{} already has {branch}.", place.base);
+            output.merged = true;
             done(output)
         }
         MergeOutcome::Conflict { files } => {
@@ -97,7 +100,7 @@ fn pr_body(ctx: &Ctx) -> String {
         item.title,
         run_lines(ctx)
     );
-    redact(&base::fmt::truncate_chars(&body, BODY_MAX))
+    ctx.redact(&base::fmt::truncate_chars(&body, BODY_MAX))
 }
 
 pub(crate) fn pull_request(ctx: &Ctx, workdir: &str, draft: bool, push: bool) -> Result<JobResult> {
@@ -106,10 +109,10 @@ pub(crate) fn pull_request(ctx: &Ctx, workdir: &str, draft: bool, push: bool) ->
         bail!("A pull request needs a worktree workdir; {} is used in place", wd.name);
     }
     let place = ctx
-        .found_place(wd)
+        .found_place(wd)?
         .ok_or_else(|| anyhow!("Nothing to open a pull request for: no node of this run worked in {}", wd.name))?;
     let branch = place.branch.clone().ok_or_else(|| anyhow!("{} has no branch", place.path.display()))?;
-    let title = ctx.title();
+    let title = ctx.redact(&ctx.title());
     let body = pr_body(ctx);
     let changed = dirty(&place.path, ctx.cancel)?;
     let ahead = git(&place.path, &["rev-list", "--count", &format!("{}..HEAD", place.base)], ctx.cancel)
@@ -136,7 +139,7 @@ pub(crate) fn pull_request(ctx: &Ctx, workdir: &str, draft: bool, push: bool) ->
     }
     if changed {
         let message = format!("{title}\n\n{}", run_lines(ctx));
-        vcs::commit_all(&place.path, &redact(&message), ctx.cancel).context("committing the changes")?;
+        vcs::commit_all(&place.path, &ctx.redact(&message), ctx.cancel).context("committing the changes")?;
         ctx.log(LogLevel::Info, format!("Committed the changes on {branch}."));
     }
     let services = ctx.services();
@@ -181,7 +184,7 @@ pub(crate) fn pull_request(ctx: &Ctx, workdir: &str, draft: bool, push: bool) ->
 }
 
 pub(crate) fn report(ctx: &Ctx) -> Result<JobResult> {
-    let title = ctx.title();
+    let title = ctx.redact(&ctx.title());
     if ctx.job.test {
         return simulated(ctx, format!("post “{title}” to the Inbox"));
     }
@@ -196,7 +199,7 @@ pub(crate) fn report(ctx: &Ctx) -> Result<JobResult> {
     ctx.services().records.post(&InboxPost {
         run: ctx.job.run.clone(),
         title,
-        summary: redact(if lines.is_empty() { "The run finished." } else { &lines }),
+        summary: ctx.redact(if lines.is_empty() { "The run finished." } else { &lines }),
         outcome: Outcome::Done,
         source: ctx.source(),
         issue: ctx.job.item.issue.as_ref().map(|i| i.key.clone()),
@@ -210,7 +213,7 @@ pub(crate) fn update_issue(ctx: &Ctx, status: Option<IssueStatus>, comment: &str
     let Some(issue) = &ctx.job.item.issue else {
         return done(NodeOutput { summary: "No issue to update.".into(), ..Default::default() });
     };
-    let comment = ctx.expand(comment.trim());
+    let comment = ctx.redact(&ctx.expand(comment.trim()));
     let what = match status {
         Some(status) => format!("move {} to {}", issue.key, status.label()),
         None => format!("comment on {}", issue.key),
@@ -226,8 +229,22 @@ pub(crate) fn update_issue(ctx: &Ctx, status: Option<IssueStatus>, comment: &str
     done(NodeOutput { summary, ..Default::default() })
 }
 
-/// Hides words that look like provider keys or tokens.
-pub(crate) fn redact(text: &str) -> String {
+/// Hides the given secret values wherever they appear, and words that look like provider keys
+/// or tokens.
+pub(crate) fn redact(text: &str, secrets: &[String]) -> String {
+    let mut text = text.to_string();
+    // Longest first, so a secret that contains another is hidden whole.
+    let mut secrets: Vec<&str> = secrets.iter().map(|s| s.trim()).filter(|s| s.len() >= 6).collect();
+    secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for secret in secrets {
+        if text.contains(secret) {
+            text = text.replace(secret, "[redacted]");
+        }
+    }
+    redact_words(&text)
+}
+
+fn redact_words(text: &str) -> String {
     const PREFIXES: &[&str] = &["sk-", "sk_", "ghp_", "gho_", "ghs_", "github_pat_", "xoxb-", "xoxp-", "AKIA", "AIza"];
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();

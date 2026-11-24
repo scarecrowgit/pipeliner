@@ -56,21 +56,39 @@ impl Inner {
 impl Engine {
     /// Starts the live version of `issue`'s pipeline with the issue as the item and `text` as
     /// what it is told. Returns the run; the issue records it.
-    pub(crate) fn start_issue_run(&self, issue: &Issue, pipeline: &PipelineId, text: &str) -> Result<Run> {
+    ///
+    /// Run starts are serialised: the check that no run is open on the issue (skipped with
+    /// `beside_open`), the run number and the start happen as one step.
+    pub(crate) fn start_issue_run(&self, issue: &Issue, pipeline: &PipelineId, text: &str, beside_open: bool) -> Result<Run> {
         let inner = &self.inner;
+        let _starting = crate::bus::lock(&inner.issue_starts);
+        let runs = inner.store.runs_for_issue(&issue.key)?;
+        if !beside_open && let Some(open) = runs.iter().find(|r| r.state.is_open()) {
+            bail!("run {} on {} is still open ({}); cancel it first", open.number, issue.key, format!("{:?}", open.state).to_lowercase());
+        }
         let (graph, version) = pipelines::live_graph(inner, pipeline)?;
         let mut run = shell(inner, pipeline, version, &issue.title, text, false);
-        let number = inner.store.runs_for_issue(&issue.key)?.len() as u32 + 1;
+        let number = runs.iter().map(|r| r.number).max().unwrap_or(0).max(runs.len() as u32) + 1;
         run.issue = Some(issue.key.clone());
         run.number = number;
         let item = Item { title: issue.title.clone(), text: text.to_string(), issue: Some(issue.clone()), source: SourceKind::Issue };
-        let run = pipelines::launch(inner, graph, run, item)?;
-        if let Some(mut stored) = inner.store.issue(&issue.key)? {
+        // The issue names its run before the run's driver starts writing to the issue.
+        let before = inner.store.issue(&issue.key)?;
+        if let Some(mut stored) = before.clone() {
             stored.run = Some(run.id.clone());
             stored.run_count = stored.run_count.max(number);
             stored.updated = inner.now();
             inner.save_issue(&stored)?;
         }
+        let run = match pipelines::launch(inner, graph, run, item) {
+            Ok(run) => run,
+            Err(error) => {
+                if let Some(before) = before {
+                    inner.save_issue(&before)?;
+                }
+                return Err(error);
+            }
+        };
         Ok(run)
     }
 
@@ -139,6 +157,12 @@ impl RunApi for Engine {
 
     fn test_run(&self, pipeline: &PipelineId, input: RunInput) -> Result<Run> {
         let graph = self.pipeline(pipeline).ok_or_else(|| anyhow!("There is no pipeline {pipeline}"))?;
+        // A new test run supersedes interrupted ones of the same pipeline: they are thrown away.
+        for old in self.inner.store.open_runs()? {
+            if old.test && &old.pipeline == pipeline && old.state == model::RunState::Interrupted {
+                let _ = pipelines::discard(&self.inner, &old.id);
+            }
+        }
         self.start_graph(graph, 0, input, true)
     }
 
@@ -147,13 +171,13 @@ impl RunApi for Engine {
         if !run.state.is_open() {
             bail!("The run is already {}", format!("{:?}", run.state).to_lowercase());
         }
-        pipelines::handle(&self.inner, id)?.cancel().map_err(|e| anyhow!("{e}"))
+        pipelines::command(&self.inner, id, |h| h.cancel())
     }
 
     fn resume_run(&self, id: &RunId) -> Result<()> {
         self.inner.run_or_fail(id)?;
         pipelines::check_limit(&self.inner)?;
-        pipelines::handle(&self.inner, id)?.resume().map_err(|e| anyhow!("{e}"))?;
+        pipelines::command(&self.inner, id, |h| h.resume())?;
         let failed = model::InboxId::new(format!("failed:{id}"));
         if self.inner.store.inbox_item(&failed)?.is_some() {
             pipelines::resolve(&self.inner, &failed)?;
@@ -178,14 +202,28 @@ impl RunApi for Engine {
             _ => bail!("Several agents of run {id} ask something; name the node to answer"),
         };
         let key = pipeline::InstanceKey { node: instance.node.clone(), variant: instance.variant, attempt: instance.attempt };
-        let handle = pipelines::handle(&self.inner, id)?;
-        handle.answer(key.clone(), text.trim().to_string()).map_err(|e| anyhow!("{e}"))?;
+        // The agent goes on working.
+        pipelines::check_limit(&self.inner)?;
+        pipelines::command(&self.inner, id, |h| h.answer(key.clone(), text.trim().to_string()))?;
         pipelines::resolve(&self.inner, &pipelines::question_inbox_id(id, &key))
     }
 
     /// Allows the run to spend `usd` more, and continues what stopped at its budget.
     fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()> {
         self.inner.run_or_fail(id)?;
-        pipelines::handle(&self.inner, id)?.raise_budget(usd).map_err(|e| anyhow!("{e}"))
+        pipelines::check_limit(&self.inner)?;
+        pipelines::command(&self.inner, id, |h| h.raise_budget(usd))
+    }
+}
+
+impl Engine {
+    /// Throws a test run away: cancels it when still open and removes its worktrees and
+    /// branches. Real runs cannot be discarded.
+    pub fn discard_run(&self, id: &RunId) -> Result<()> {
+        pipelines::discard(&self.inner, id)?;
+        if let Some(run) = self.inner.store.run(id)? {
+            self.inner.publish(Event::RunChanged { run });
+        }
+        Ok(())
     }
 }

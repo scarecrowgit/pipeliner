@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use model::{Event, GraphDef, InboxId, PipelineId, ReviewId, Run, RunId};
+use model::{Event, GraphDef, InboxId, PipelineId, ReviewId, Run, RunId, RunState};
 use pipeline::exec::{Driver, DriverHandle, Machine, Snapshot};
 use pipeline::runners::{Runner, RunnerConfig, Services, SessionQuestions};
 use pipeline::{InstanceKey, Item, NodeRunner};
@@ -65,6 +65,12 @@ pub(crate) struct Runs {
 impl Runs {
     fn handle(&self, id: &RunId) -> Option<DriverHandle> {
         lock(&self.open).get(id).map(|open| open.driver.handle())
+    }
+
+    /// Whether the run has a driver right now.
+    #[cfg(test)]
+    pub fn is_driven(&self, id: &RunId) -> bool {
+        lock(&self.open).contains_key(id)
     }
 
     /// Stops every driver: running jobs are cancelled and their runs become `Interrupted`.
@@ -112,6 +118,39 @@ pub(crate) fn check_limit(inner: &Inner) -> Result<()> {
     Ok(())
 }
 
+/// Where the runner keeps worktrees and its records, with the secrets it must hide.
+pub(crate) fn runner_config(inner: &Inner) -> RunnerConfig {
+    let mut config = RunnerConfig::new(inner.paths.worktrees_dir(), inner.paths.v2_dir().join("pipelines"));
+    config.secrets = inner.secrets.clone();
+    config
+}
+
+/// Set once a run's state could not be stored: from then on no job of the run does any work,
+/// so nothing runs twice when it is replayed from an older snapshot.
+pub(crate) type Broken = Arc<std::sync::OnceLock<String>>;
+
+/// The runner of one run, refusing work once its state could not be stored.
+struct Guarded {
+    runner: Arc<Runner>,
+    broken: Broken,
+}
+
+impl NodeRunner for Guarded {
+    fn run(&self, job: &pipeline::Job, sink: &dyn pipeline::JobSink, cancel: &base::cancel::CancelToken) -> pipeline::JobResult {
+        if let Some(error) = self.broken.get() {
+            return pipeline::JobResult::Failed {
+                error: format!("The run was stopped because its state could not be saved: {error}"),
+                output: Default::default(),
+            };
+        }
+        self.runner.run(job, sink, cancel)
+    }
+
+    fn discard(&self, run: &RunId, output: &pipeline::NodeOutput) {
+        self.runner.discard(run, output);
+    }
+}
+
 fn runner(inner: &Arc<Inner>, graph: &GraphDef) -> Arc<Runner> {
     let weak = Arc::downgrade(inner);
     let sessions: Arc<dyn pipeline::runners::AgentSessions> = Arc::new(services::Sessions(weak.clone()));
@@ -123,8 +162,7 @@ fn runner(inner: &Arc<Inner>, graph: &GraphDef) -> Arc<Runner> {
         tracker: Arc::new(services::Issues(weak)),
         gh: inner.gh.clone(),
     };
-    let config = RunnerConfig::new(inner.paths.worktrees_dir(), inner.paths.v2_dir().join("pipelines"));
-    Arc::new(Runner::new(graph, services, config))
+    Arc::new(Runner::new(graph, services, runner_config(inner)))
 }
 
 fn drive(inner: &Arc<Inner>, graph: GraphDef, machine: Machine) -> Result<DriverHandle> {
@@ -133,14 +171,16 @@ fn drive(inner: &Arc<Inner>, graph: GraphDef, machine: Machine) -> Result<Driver
     }
     let id = machine.run().id.clone();
     let runner = runner(inner, &graph);
+    let broken = Broken::default();
     let observer = observer::RunObserver {
         inner: Arc::downgrade(inner),
         followed: None,
         asked: BTreeMap::new(),
-        runner: runner.clone(),
+        merged: false,
+        broken: broken.clone(),
         graph,
     };
-    let node_runner: Arc<dyn NodeRunner> = runner;
+    let node_runner: Arc<dyn NodeRunner> = Arc::new(Guarded { runner, broken });
     let driver = Driver::spawn(machine, node_runner, Box::new(observer), inner.clock.clone())?;
     let handle = driver.handle();
     lock(&inner.runs.open).insert(id, Open { driver });
@@ -172,6 +212,76 @@ fn restore(inner: &Arc<Inner>, id: &RunId) -> Result<DriverHandle> {
     drive(inner, graph, machine)
 }
 
+/// Sends a command to the run's driver, restoring the driver when it has none or when the
+/// one found was just being dropped.
+pub(crate) fn command(
+    inner: &Arc<Inner>,
+    id: &RunId,
+    send: impl Fn(&DriverHandle) -> Result<(), pipeline::exec::ExecError>,
+) -> Result<()> {
+    match send(&handle(inner, id)?) {
+        Err(pipeline::exec::ExecError::DriverStopped) => {
+            let stale = {
+                let _restoring = lock(&inner.runs.restoring);
+                lock(&inner.runs.open).remove(id)
+            };
+            if let Some(open) = stale {
+                let _ = open.driver.stop();
+            }
+            send(&handle(inner, id)?).map_err(|e| anyhow!("{e}"))
+        }
+        other => other.map_err(|e| anyhow!("{e}")),
+    }
+}
+
+/// Whether the run takes no more work unless a person resumes it.
+fn closed(state: RunState) -> bool {
+    matches!(state, RunState::Done | RunState::Failed | RunState::Cancelled)
+}
+
+/// Drops the driver of a run that is closed; a later command restores it from the store.
+/// A test run that is done or cancelled also loses its throwaway worktrees.
+pub(crate) fn reap(inner: &Arc<Inner>, id: &RunId) {
+    let open = {
+        let _restoring = lock(&inner.runs.restoring);
+        let run = inner.store.run(id).ok().flatten();
+        if !run.as_ref().is_some_and(|r| closed(r.state)) {
+            return;
+        }
+        lock(&inner.runs.open).remove(id)
+    };
+    if let Some(open) = open {
+        let _ = open.driver.stop();
+    }
+    if let Ok(Some(run)) = inner.store.run(id)
+        && run.test
+        && matches!(run.state, RunState::Done | RunState::Cancelled)
+    {
+        pipeline::runners::cleanup(&runner_config(inner), id);
+    }
+}
+
+/// Throws a test run away: cancels it when it is still open, stops its driver and removes
+/// its worktrees and branches. Real runs keep their branches and cannot be discarded.
+pub(crate) fn discard(inner: &Arc<Inner>, id: &RunId) -> Result<()> {
+    let run = inner.store.run(id)?.ok_or_else(|| anyhow!("There is no run {id}"))?;
+    if !run.test {
+        bail!("Only test runs can be discarded; a real run keeps its branches");
+    }
+    if run.state.is_open() {
+        command(inner, id, |h| h.cancel())?;
+    }
+    let open = {
+        let _restoring = lock(&inner.runs.restoring);
+        lock(&inner.runs.open).remove(id)
+    };
+    if let Some(open) = open {
+        let _ = open.driver.stop();
+    }
+    pipeline::runners::cleanup(&runner_config(inner), id);
+    Ok(())
+}
+
 /// The driver of a run, restored when it has none.
 pub(crate) fn handle(inner: &Arc<Inner>, id: &RunId) -> Result<DriverHandle> {
     let _restoring = lock(&inner.runs.restoring);
@@ -186,6 +296,9 @@ pub(crate) fn handle(inner: &Arc<Inner>, id: &RunId) -> Result<DriverHandle> {
 
 /// Gives every open run with a snapshot its driver back.
 pub(crate) fn recover(inner: &Arc<Inner>) {
+    // Test runs that are gone, or closed for good, leave nothing behind.
+    let keep = |id: &RunId| inner.store.run(id).ok().flatten().is_some_and(|r| !matches!(r.state, RunState::Done | RunState::Cancelled));
+    pipeline::runners::sweep_test_runs(&runner_config(inner), &keep);
     let Ok(runs) = inner.store.open_runs() else { return };
     for run in runs {
         if inner.store.marker(&snapshot_marker(&run.id)).ok().flatten().is_none() {

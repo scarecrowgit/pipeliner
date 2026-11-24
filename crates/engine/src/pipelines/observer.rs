@@ -2,15 +2,14 @@
 //! questions to the Inbox, the issue follows the run.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use model::{
-    Actor, Event, GraphDef, InboxId, InboxItem, InboxKind, IssueEventKind, NodeKind, NodeStatus, Outcome, RequestId,
+    Actor, Event, GraphDef, InboxId, InboxItem, InboxKind, IssueEventKind, Outcome, RequestId,
     Review, ReviewState, Run, RunId, RunLogLine, RunState,
 };
 use pipeline::InstanceKey;
 use pipeline::exec::{Observer, Snapshot};
-use pipeline::runners::Runner;
 
 use super::{question_inbox_id, review_inbox_id, snapshot_marker};
 use crate::engine::Inner;
@@ -19,7 +18,10 @@ use crate::engine::Inner;
 pub(crate) struct RunObserver {
     pub inner: Weak<Inner>,
     pub graph: GraphDef,
-    pub runner: Arc<Runner>,
+    /// A merge action of the run left its branch in the base (the latest snapshot says so).
+    pub merged: bool,
+    /// Set when a snapshot could not be stored; the run's jobs then refuse to work.
+    pub broken: super::Broken,
     /// The state the issue last followed.
     pub followed: Option<RunState>,
     /// Questions posted to the Inbox and not answered yet.
@@ -40,12 +42,7 @@ impl RunObserver {
         if run.pr_url.is_some() {
             return issues::RunResult::PullRequestOpen;
         }
-        let merged = run.nodes.iter().any(|n| {
-            n.status == NodeStatus::Done
-                && n.summary.starts_with("Merged")
-                && self.graph.node(&n.node).is_some_and(|d| matches!(d.kind, NodeKind::Action(model::ActionNode::Merge { .. })))
-        });
-        if merged { issues::RunResult::Merged } else { issues::RunResult::NoResult }
+        if self.merged { issues::RunResult::Merged } else { issues::RunResult::NoResult }
     }
 
     fn follow_issue(&mut self, inner: &Inner, run: &Run) -> anyhow::Result<()> {
@@ -110,10 +107,21 @@ pub(crate) fn resolve(inner: &Inner, id: &InboxId) -> anyhow::Result<()> {
 
 impl Observer for RunObserver {
     fn snapshot(&mut self, snapshot: &Snapshot) {
-        self.with(|inner| {
-            let text = serde_json::to_string(snapshot)?;
+        self.merged = snapshot.meta.iter().any(|m| !m.superseded && m.output.as_ref().is_some_and(|o| o.merged));
+        let Some(inner) = self.inner.upgrade() else { return };
+        let stored = serde_json::to_string(snapshot).map_err(anyhow::Error::from).and_then(|text| {
+            #[cfg(test)]
+            if inner.fail_snapshots.load(std::sync::atomic::Ordering::SeqCst) {
+                anyhow::bail!("the store refused the write (test)");
+            }
             inner.store.set_marker(&snapshot_marker(&snapshot.run.id), &text)
         });
+        if let Err(error) = stored {
+            let text = format!("{error:#}");
+            if self.broken.set(text.clone()).is_ok() {
+                inner.notice_error(&format!("The run {} was stopped: its state could not be saved ({text})", snapshot.run.id));
+            }
+        }
     }
 
     fn run_changed(&mut self, run: &Run) {
@@ -205,7 +213,6 @@ impl Observer for RunObserver {
     }
 
     fn finished(&mut self, run: &Run) {
-        let runner = self.runner.clone();
         let asked: Vec<InboxId> = std::mem::take(&mut self.asked).into_values().collect();
         let name = self.graph.name.clone();
         self.with(|inner| {
@@ -233,10 +240,19 @@ impl Observer for RunObserver {
             }
             Ok(())
         });
-        if run.test && run.state == RunState::Done {
-            // Removing worktrees is slow; the run's loop must not wait for it.
-            let id = run.id.clone();
-            let _ = std::thread::Builder::new().name("test-cleanup".into()).spawn(move || runner.cleanup(&id));
-        }
+        // The driver is dropped off its own thread: dropping it joins that thread.
+        let (weak, id) = (self.inner.clone(), run.id.clone());
+        let _ = std::thread::Builder::new().name("run-reaper".into()).spawn(move || {
+            // The closing state may reach the store just after this call.
+            for _ in 0..100 {
+                let Some(inner) = weak.upgrade() else { return };
+                if inner.store.run(&id).ok().flatten().is_some_and(|r| !r.state.is_open()) {
+                    super::reap(&inner, &id);
+                    return;
+                }
+                drop(inner);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
     }
 }

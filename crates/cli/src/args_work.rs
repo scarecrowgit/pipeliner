@@ -21,6 +21,8 @@ pub enum RunCmd {
     Log { id: String, follow: bool },
     Cancel { id: String },
     Resume { id: String },
+    /// Throws a test run away with its worktrees and branches.
+    Discard { id: String },
     Answer { id: String, text: String, node: Option<String> },
 }
 
@@ -167,6 +169,7 @@ pub fn parse_run(options: &[&str]) -> Result<RunCmd> {
         }
         "cancel" => RunCmd::Cancel { id: split(&label, rest, &[], &[])?.one("a run id")? },
         "resume" => RunCmd::Resume { id: split(&label, rest, &[], &[])?.one("a run id")? },
+        "discard" => RunCmd::Discard { id: split(&label, rest, &[], &[])?.one("a run id")? },
         "answer" => {
             let w = split(&label, rest, &["--node"], &[])?;
             let (id, text) = w.head_and_text("a run id", "the answer")?;
@@ -287,6 +290,8 @@ mod tests {
             parse_run(&strs(&v(&["answer", "r1", "use", "v2", "--node", "coder"]))).unwrap(),
             RunCmd::Answer { id: "r1".into(), text: "use v2".into(), node: Some("coder".into()) }
         );
+        assert_eq!(parse_run(&strs(&v(&["discard", "r1"]))).unwrap(), RunCmd::Discard { id: "r1".into() });
+        assert!(parse_run(&strs(&v(&["discard"]))).is_err());
         assert!(parse_run(&strs(&v(&["start", "demo"]))).is_err());
         assert!(parse_run(&strs(&v(&["list", "x"]))).is_err());
         assert!(parse_run(&strs(&v(&["log", "r1", "--bogus"]))).is_err());

@@ -38,6 +38,8 @@ pub trait AgentSessions: Send + Sync {
     fn open(&self, open: &SessionOpen) -> Result<SessionId>;
     /// What the session and every session below it spent so far.
     fn spent(&self, session: &SessionId) -> f64;
+    /// Whether the session holds a conversation to continue.
+    fn has_conversation(&self, session: &SessionId) -> bool;
     /// Runs the agent loop until it stops, after taking an agent slot (the wait for one ends
     /// with a cancelled outcome when `cancel` fires). Every event is handed to `on_event`
     /// with the session it belongs to.

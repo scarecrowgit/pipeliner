@@ -148,6 +148,6 @@ fn reports_and_issue_updates_go_to_their_services_except_in_test_runs() {
 
 #[test]
 fn keys_are_redacted_from_bodies() {
-    let text = crate::runners::publish::redact("key sk-ant-REDACTME0123456789abcdef here");
+    let text = crate::runners::publish::redact("key sk-ant-REDACTME0123456789abcdef here", &[]);
     assert_eq!(text, "key [redacted] here");
 }

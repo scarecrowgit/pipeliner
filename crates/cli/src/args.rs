@@ -34,6 +34,8 @@ Commands:
         runs the live version (--test: the draft, in throwaway worktrees, nothing pushed)
   run list | run show <id> | run log <id> [-f]
   run cancel <id> | run resume <id> | run answer <id> <text> [--node <id>]
+  run discard <id>
+        throws a test run away with its throwaway worktrees and branches
   review list | review show <id>
   review ship <id> [variant] | review skip <id>
   review send-back <id> <note> [--from all|over|variant:N] [--variants N]

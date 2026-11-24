@@ -44,6 +44,8 @@ pub struct EngineOptions {
     pub gh: Option<Arc<dyn vcs::pr::Gh + Send + Sync>>,
     /// How render actions take screenshots; headless Firefox when `None`.
     pub renderer: Option<Arc<dyn pipeline::runners::Renderer>>,
+    /// Values pipelines must never let out of a job (the configured provider keys).
+    pub secrets: Vec<String>,
 }
 
 impl std::fmt::Debug for EngineOptions {
@@ -52,6 +54,7 @@ impl std::fmt::Debug for EngineOptions {
             .field("limits", &self.limits)
             .field("gh", &self.gh.as_ref().map(|_| "custom"))
             .field("renderer", &self.renderer.as_ref().map(|_| "custom"))
+            .field("secrets", &self.secrets.len())
             .finish()
     }
 }
@@ -83,6 +86,13 @@ pub(crate) struct Inner {
     pub gh: Arc<dyn vcs::pr::Gh + Send + Sync>,
     /// Screenshots for render actions.
     pub renderer: Arc<dyn pipeline::runners::Renderer>,
+    /// Values redacted from everything a pipeline job lets out.
+    pub secrets: Vec<String>,
+    /// Serialises "is a run open on this issue?" and starting one.
+    pub issue_starts: Mutex<()>,
+    /// Tests: snapshot writes fail.
+    #[cfg(test)]
+    pub fail_snapshots: AtomicBool,
     /// Serialises read-modify-write of session headers.
     headers: Mutex<()>,
     /// Turn threads, joined on shutdown.
@@ -108,6 +118,10 @@ impl Engine {
         let gh = options.gh.clone().unwrap_or_else(|| Arc::new(vcs::pr::Cli));
         let inner = Inner {
             runs: Default::default(),
+            secrets: options.secrets.clone(),
+            issue_starts: Mutex::new(()),
+            #[cfg(test)]
+            fail_snapshots: AtomicBool::new(false),
             gh,
             renderer,
             mcp: McpHub::new(paths.clone()),
@@ -135,7 +149,9 @@ impl Engine {
     /// environment, and the wall clock.
     pub fn open_configured(paths: Paths) -> Result<Engine> {
         let config = llm::Config::load(&paths)?;
-        Self::open(paths, Arc::new(llm::Providers::new(config)), Arc::new(SystemClock))
+        let secrets = config.providers.iter().filter_map(|p| p.api_key.clone()).filter(|k| !k.trim().is_empty()).collect();
+        let options = EngineOptions { secrets, ..Default::default() };
+        Self::open_with(paths, Arc::new(llm::Providers::new(config)), Arc::new(SystemClock), options)
     }
 
     /// Imports the old app's data into the store (see [`store::import_v1`]). A dry run reports

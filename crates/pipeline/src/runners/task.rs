@@ -1,7 +1,9 @@
 //! What an agent node is told: the item, what happened before it, the files attached to it,
 //! the files it must leave, and the review's notes.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use anyhow::{Result, bail};
 
 use globset::GlobBuilder;
 use model::{FileMode, NodeKind};
@@ -20,6 +22,42 @@ pub(crate) struct Required {
     /// As shown to the agent.
     pub shown: String,
     pub path: PathBuf,
+    /// The folder it must stay inside.
+    pub root: PathBuf,
+}
+
+impl Required {
+    /// `rel` under `root`; an absolute path or one that climbs out with `..` is refused.
+    fn new(root: &Path, rel: String) -> Result<Required> {
+        let path = Path::new(&rel);
+        if rel.trim().is_empty()
+            || path.is_absolute()
+            || path.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            bail!("The file `{rel}` must be a path inside the worktree, without `..`");
+        }
+        Ok(Required { path: root.join(path), shown: rel, root: root.to_path_buf() })
+    }
+
+    /// Whether the file is there, inside its folder once symlinks are followed. Leaving the
+    /// folder through a link is an error.
+    pub fn check(&self) -> Result<bool> {
+        let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+        // The deepest part of the path that exists tells where it really leads.
+        let mut probe = self.path.as_path();
+        while std::fs::symlink_metadata(probe).is_err() {
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => break,
+            }
+        }
+        if let Ok(real) = probe.canonicalize()
+            && !real.starts_with(&root)
+        {
+            bail!("`{}` leads outside the worktree (to {})", self.shown, real.display());
+        }
+        Ok(self.path.exists())
+    }
 }
 
 /// The task text and the files the agent must leave behind.
@@ -41,7 +79,7 @@ impl Ctx<'_> {
     }
 
     /// Builds the task of an agent working in `place` (in `workdir`), with `files_out` relative to it.
-    pub fn task(&self, place: Option<&Place>, workdir: &str, files_out: &[String]) -> Task {
+    pub fn task(&self, place: Option<&Place>, workdir: &str, files_out: &[String]) -> Result<Task> {
         let job = self.job;
         let mut text = format!("# {}\n\n", self.title());
         if !job.item.text.trim().is_empty() {
@@ -81,8 +119,7 @@ impl Ctx<'_> {
         let mut required: Vec<Required> = Vec::new();
         for path in files_out {
             if let Some(place) = place {
-                let shown = self.expand(path);
-                required.push(Required { path: place.path.join(&shown), shown });
+                required.push(Required::new(&place.path, self.expand(path))?);
             }
         }
         for node in &job.attached {
@@ -90,16 +127,13 @@ impl Ctx<'_> {
             let wd = if file.workdir.is_empty() { workdir } else { file.workdir.as_str() };
             let root = match (self.workdir(wd), place) {
                 (Ok(def), Some(place)) if def.id == workdir => place.path.clone(),
-                (Ok(def), _) => self.read_place(def),
+                (Ok(def), _) => self.read_place(def)?,
                 (Err(_), Some(place)) => place.path.clone(),
                 (Err(_), None) => continue,
             };
             match file.mode {
                 FileMode::Read => text.push_str(&context_section(&node.name, &root, &self.expand(&file.path))),
-                FileMode::Write => {
-                    let shown = self.expand(&file.path);
-                    required.push(Required { path: root.join(&shown), shown });
-                }
+                FileMode::Write => required.push(Required::new(&root, self.expand(&file.path))?),
             }
         }
         if !required.is_empty() {
@@ -115,7 +149,7 @@ impl Ctx<'_> {
             text.push_str(&feedback(&retry.notes));
         }
         text.push_str("When the work is complete, call `step_done` with a short summary: what you did and how you checked it.\n");
-        Task { text, required }
+        Ok(Task { text, required })
     }
 }
 
