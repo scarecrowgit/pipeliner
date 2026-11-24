@@ -166,7 +166,7 @@ pub fn all() -> Screens {
                     let (badges, actions) = for_header
                         .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
                     let header = Header::new()
-                        .crumb_to("Agents & pipelines", Route::Agents { runnable: None })
+                        .crumb_to("Pipelines", Route::Agents { runnable: None })
                         .crumb(title);
                     let header = badges.into_iter().fold(header, Header::after);
                     actions.into_iter().fold(header, Header::action)
