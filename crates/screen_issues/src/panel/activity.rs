@@ -16,7 +16,7 @@ use ui::motion;
 use ui::prelude::*;
 use ui_rich::markdown::Markdown;
 
-use super::props::thumbnail;
+use super::props::thumbnails;
 use super::run::pr_number;
 use super::{Named, IssuePanel, section, section_head};
 
@@ -238,7 +238,7 @@ fn render_entry(
                 text = text.child(div().flex_none().w(px(row_w)).mt(px(SPACE_0_5)).child(body.clone()));
             }
             if !images.is_empty() {
-                let thumbs = images.iter().enumerate().map(|(i, image)| thumbnail((SharedString::from(format!("{probe}-image")), i), image, cx));
+                let thumbs = thumbnails(&format!("{probe}-image"), images, cx);
                 text = text.child(row().flex_none().flex_wrap().gap(px(SPACE_2)).mt(px(SPACE_2)).children(thumbs));
             }
             // An agent's answer to a mention: its session is where the work happened.
@@ -355,7 +355,7 @@ fn comment_card(this: &mut IssuePanel, entry: &Entry<'_>, when: &str, window: &m
     if let IssueEventKind::Comment { images, .. } = &event.kind
         && !images.is_empty()
     {
-        let thumbs = images.iter().enumerate().map(|(i, image)| thumbnail((SharedString::from(format!("{key}-image")), i), image, cx));
+        let thumbs = thumbnails(&format!("{key}-image"), images, cx);
         card = card.child(row().flex_none().flex_wrap().gap(px(SPACE_2)).mt(px(SPACE_2)).ml(px(INDENT)).children(thumbs));
     }
     for (inner_ix, inner) in &entry.inner {

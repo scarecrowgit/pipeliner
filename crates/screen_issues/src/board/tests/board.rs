@@ -222,3 +222,33 @@ fn a_long_error_title_and_name_keep_the_card_small(cx: &mut TestAppContext) {
     assert!(f32::from(card.size.width) <= crate::board::card::CARD_WIDTH + 0.5, "{card:?}");
     assert!(f32::from(card.size.height) < 280., "title and run line are capped: {card:?}");
 }
+
+#[gpui::test]
+fn the_filter_bar_stays_inside_a_narrow_window(cx: &mut TestAppContext) {
+    let (_api, _view, cx) = open(cx, Some("PAY-1440"));
+    // A 1000px window less the sidebar, with the panel open.
+    cx.simulate_resize(gpui::size(gpui::px(768.), gpui::px(900.)));
+    cx.run_until_parked();
+    assert!(drawn(cx, "issues-chip-unattached"));
+    let Some(bar) = cx.debug_bounds("issues-bar-filters") else { panic!("the filters are not laid out") };
+    assert!(f32::from(bar.right()) <= 768. - ui::theme::SPACE_5 + 0.5, "the chips scroll inside the bar: {bar:?}");
+    assert!(f32::from(bar.size.width) > 0.);
+}
+
+#[gpui::test]
+fn the_list_keeps_the_columns_that_fit(cx: &mut TestAppContext) {
+    use crate::board::list::Fit;
+    assert_eq!(Fit::of(0., false), Fit::Full, "unmeasured, without the panel");
+    assert_eq!(Fit::of(0., true), Fit::Compact, "unmeasured, beside the panel");
+    assert_eq!(Fit::of(1168., true), Fit::Full);
+    assert_eq!(Fit::of(728., false), Fit::Compact, "1000px window, sidebar open, no panel");
+    assert_eq!(Fit::of(328., true), Fit::Title, "1000px window with the panel open");
+
+    let (_api, view, cx) = open(cx, Some("PAY-1440"));
+    view.update(cx, |view, cx| view.set_layout(Layout::List, cx));
+    cx.simulate_resize(gpui::size(gpui::px(768.), gpui::px(900.)));
+    cx.run_until_parked();
+    let width = view.read_with(cx, |view, _| view.list_width.get());
+    assert!((width - (768. - 400. - 2. * ui::theme::SPACE_5)).abs() < 2., "the list measured its room: {width}");
+    assert!(drawn(cx, "issues-row-PAY-1440"), "the rows are drawn");
+}

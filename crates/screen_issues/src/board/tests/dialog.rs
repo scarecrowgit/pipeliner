@@ -115,3 +115,46 @@ fn the_autopilots_popover_lists_and_switches_them(cx: &mut TestAppContext) {
     let enabled = api.with_world(|w| w.autopilots.iter().find(|a| a.name == "Nightly e2e triage").map(|a| a.enabled));
     assert_eq!(enabled, Some(false));
 }
+
+#[gpui::test]
+fn a_dialog_image_opens_the_viewer_and_its_remove_button_does_not(cx: &mut TestAppContext) {
+    let (_api, view, cx) = open(cx, None);
+    new_issue(&view, cx);
+    let form = form(&view, cx);
+    let image = |name: &str| hub::api::Attachment {
+        blob: hub::api::BlobId::new(format!("blob-{name}")),
+        name: name.to_string(),
+        media_type: "image/png".into(),
+        bytes: 1024,
+    };
+    form.update(cx, |form, cx| {
+        form.images = vec![image("one.png"), image("two.png")];
+        cx.notify();
+    });
+    let viewer_open = |cx: &mut VisualTestContext| cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx));
+    click(cx, "new-issue-image-remove-0");
+    assert!(!viewer_open(cx), "removing opens nothing");
+    form.read_with(cx, |form, _| assert_eq!(form.images.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["two.png"]));
+
+    click(cx, "new-issue-image-0");
+    assert!(viewer_open(cx), "a click on the thumbnail opens the viewer");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!viewer_open(cx));
+    let dialog = cx.update(|window, cx| ui::overlays(window, cx).is_open(crate::board::new_issue::DIALOG, cx));
+    assert!(dialog, "Esc closed the viewer, not the dialog");
+}
+
+#[gpui::test]
+fn a_dropped_file_that_is_no_image_is_refused_out_loud(cx: &mut TestAppContext) {
+    let (api, view, cx) = open(cx, None);
+    new_issue(&view, cx);
+    let form = form(&view, cx);
+    form.update(cx, |form, cx| form.drop_files(vec!["/tmp/report.pdf".into()], cx));
+    cx.run_until_parked();
+    form.read_with(cx, |form, _| {
+        assert_eq!(form.error.as_ref().map(|e| e.as_ref()), Some("Only images can be attached"));
+        assert!(form.images.is_empty());
+    });
+    assert!(!recorded(&api).iter().any(|c| c.starts_with("put_image")));
+}

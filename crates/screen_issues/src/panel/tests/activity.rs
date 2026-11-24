@@ -99,3 +99,47 @@ fn deleting_a_comment_drops_it_from_the_feed(cx: &mut TestAppContext) {
     assert_eq!(seqs.len(), before - 1);
     assert!(!seqs.contains(&seq), "the deleted comment left the feed");
 }
+
+#[gpui::test]
+fn a_comment_image_opens_the_viewer_and_esc_closes_only_the_viewer(cx: &mut TestAppContext) {
+    // PAY-1440's second event is your comment with the nightly report attached.
+    let (t, cx) = open(cx, "PAY-1440");
+    assert!(shown(cx, "issue-activity-1-image-0"), "the comment's image is drawn");
+    let panel = t.panel.clone();
+    cx.update(|window, cx| window.focus(&panel.read(cx).focus.clone()));
+    click(cx, "issue-activity-1-image-0");
+    assert!(cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx)), "the viewer opened");
+    assert_eq!(t.closes.get(), 0, "the click did not reach the panel");
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx)), "Esc closed the viewer");
+    assert_eq!(t.closes.get(), 0, "the panel stays open");
+    assert!(cx.update(|window, cx| panel.read(cx).focus.is_focused(window)), "focus came back to the panel");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(t.closes.get(), 1, "the next Esc closes the panel");
+}
+
+#[gpui::test]
+fn the_descriptions_images_open_in_the_viewer_too(cx: &mut TestAppContext) {
+    let image = |name: &str| hub::api::Attachment {
+        blob: hub::api::BlobId::new(format!("blob-{name}")),
+        name: name.to_string(),
+        media_type: "image/png".into(),
+        bytes: 1024,
+    };
+    let (_t, cx) = open_with(cx, "PAY-1427", |w| {
+        if let Some(issue) = w.issues.iter_mut().find(|i| i.key == IssueKey::new("PAY-1427")) {
+            issue.images = vec![image("before.png"), image("after.png")];
+        }
+    });
+    assert!(shown(cx, "issue-image-0"));
+    click(cx, "issue-image-1");
+    assert!(cx.update(|window, cx| ui_rich::viewer::is_image_viewer_open(window, cx)));
+    let names: Vec<String> = cx.update(|_, cx| {
+        let images = [image("before.png"), image("after.png")];
+        crate::panel::viewer_images(&images, cx).into_iter().map(|i| i.name.to_string()).collect()
+    });
+    assert_eq!(names, ["before.png", "after.png"], "each image is shown under its file name, not its blob id");
+}

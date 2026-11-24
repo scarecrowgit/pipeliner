@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, Context, IntoElement, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, IntoElement, SharedString, Window, canvas, div, prelude::*, px};
 use hub::api::Issue;
 use ui::dev::Probe;
 use ui::prelude::*;
@@ -60,6 +60,39 @@ impl SortBy {
     }
 }
 
+/// Which columns the list has room for, fewest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Fit {
+    /// Key and title.
+    Title,
+    /// Key, title and status.
+    Status,
+    /// Key, title, status, priority, owner and updated.
+    Compact,
+    /// Every column, type and "Runs with" too.
+    Full,
+}
+
+impl Fit {
+    /// The columns for a table `width` px wide; before it is measured (0), by whether the
+    /// panel takes room beside it.
+    pub(crate) fn of(width: f32, panel: bool) -> Fit {
+        match width {
+            w if w <= 0. => {
+                if panel {
+                    Fit::Compact
+                } else {
+                    Fit::Full
+                }
+            }
+            w if w >= 960. => Fit::Full,
+            w if w >= 640. => Fit::Compact,
+            w if w >= 400. => Fit::Status,
+            _ => Fit::Title,
+        }
+    }
+}
+
 /// `PAY-1423` sorts as ("PAY", 1423), so 99 comes before 100.
 fn key_number(key: &str) -> (String, u64) {
     match key.rsplit_once('-') {
@@ -82,22 +115,29 @@ impl IssuesView {
     pub(crate) fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let now = base::time::now_ms();
         let offset = base::time::utc_offset(now);
-        // Beside the open panel there is room for the essentials only.
-        let wide = !self.has_panel();
+        let fit = Fit::of(self.list_width.get(), self.has_panel());
         let mut columns: Vec<(Column, Option<SortBy>)> = vec![
             (Column::new("Key").fixed(104.), Some(SortBy::Key)),
             (Column::new("Title").flex(3.), Some(SortBy::Title)),
-            (Column::new("Status").fixed(128.), Some(SortBy::Status)),
-            (Column::new("Priority").fixed(88.), Some(SortBy::Priority)),
         ];
-        if wide {
+        if fit >= Fit::Status {
+            columns.push((Column::new("Status").fixed(128.), Some(SortBy::Status)));
+        }
+        if fit >= Fit::Compact {
+            columns.push((Column::new("Priority").fixed(88.), Some(SortBy::Priority)));
+        }
+        if fit == Fit::Full {
             columns.push((Column::new("Type").fixed(80.), None));
         }
-        columns.push((Column::new("Owner").fixed(if wide { 150. } else { 120. }), Some(SortBy::Owner)));
-        if wide {
+        if fit >= Fit::Compact {
+            columns.push((Column::new("Owner").fixed(if fit == Fit::Full { 150. } else { 120. }), Some(SortBy::Owner)));
+        }
+        if fit == Fit::Full {
             columns.push((Column::new("Runs with").flex(2.), None));
         }
-        columns.push((Column::new("Updated").fixed(84.).right(), Some(SortBy::Updated)));
+        if fit >= Fit::Compact {
+            columns.push((Column::new("Updated").fixed(84.).right(), Some(SortBy::Updated)));
+        }
         let (sort, direction) = self.sort(cx);
         let by_column: Vec<Option<SortBy>> = columns.iter().map(|(_, by)| *by).collect();
         let sorted = by_column.iter().position(|by| *by == Some(sort));
@@ -114,19 +154,38 @@ impl IssuesView {
             view.update(cx, |this, cx| this.set_sort(by, direction, cx)).ok();
         });
         for issue in self.rows(cx) {
-            table = table.row(self.list_row(&issue, wide, now, offset, cx));
+            table = table.row(self.list_row(&issue, fit, now, offset, cx));
         }
+        let (width, panel) = (self.list_width.clone(), self.has_panel());
+        // Measures the room the table has; another set of columns is drawn at once.
+        let measure = canvas(
+            move |bounds, window, cx| {
+                let w = f32::from(bounds.size.width);
+                if w > 0. && (w - width.get()).abs() > 0.5 {
+                    let before = Fit::of(width.get(), panel);
+                    width.set(w);
+                    if Fit::of(w, panel) != before {
+                        window.defer(cx, |window, _| window.refresh());
+                    }
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         div()
             .id("issues-list")
+            .relative()
             .size_full()
             .overflow_y_scroll()
             .px(px(SPACE_5))
             .py(px(SPACE_4))
-            .child(div().flex_none().w_full().child(table))
+            .child(div().relative().flex_none().w_full().child(measure).child(table))
             .into_any_element()
     }
 
-    fn list_row(&self, issue: &Arc<Issue>, wide: bool, now: i64, offset: i32, cx: &mut Context<Self>) -> TableRow {
+    fn list_row(&self, issue: &Arc<Issue>, fit: Fit, now: i64, offset: i32, cx: &mut Context<Self>) -> TableRow {
+        let wide = fit == Fit::Full;
         let key = issue.key.clone();
         let probe = format!("issues-row-{key}");
         let run = self.runs.read(cx).latest_for(&key).cloned();
@@ -150,14 +209,21 @@ impl IssuesView {
         let tr = TableRow::new(SharedString::from(probe.clone()))
             .selected(self.cursor.as_ref() == Some(&key))
             .cell(truncate_lh(key.to_string(), MONO.line).type_style(MONO).text_color(TEXT_MUTED).probe(probe))
-            .strong(issue.title.clone())
-            .cell(
+            .strong(issue.title.clone());
+        let tr = if fit >= Fit::Status {
+            tr.cell(
                 row()
                     .gap(px(SPACE_2))
                     .child(StatusDot::new(status_dot(issue.status)).small())
                     .child(div().flex_none().child(issue.status.label())),
             )
-            .cell(div().text_color(priority_color(issue.priority)).child(issue.priority.label()));
+        } else {
+            tr
+        };
+        if fit < Fit::Compact {
+            return tr.on_click(cx.listener(move |this, _, window, cx| this.open_issue(&key, window, cx)));
+        }
+        let tr = tr.cell(div().text_color(priority_color(issue.priority)).child(issue.priority.label()));
         let tr = if wide { tr.cell(Tag::new(issue.kind.label())) } else { tr };
         let tr = tr.cell(owner);
         let tr = if wide {

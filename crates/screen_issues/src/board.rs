@@ -78,6 +78,9 @@ pub struct IssuesView {
     pub(crate) autopilot_form: Option<Entity<autopilot_form::AutopilotForm>>,
     focus_pending: bool,
     shown: bool,
+    /// Width of the list's area as of the last paint, px (0 until measured): the list keeps
+    /// the columns that fit.
+    pub(crate) list_width: std::rc::Rc<std::cell::Cell<f32>>,
     _subs: Vec<Subscription>,
 }
 
@@ -134,6 +137,7 @@ impl IssuesView {
             // in the window.
             focus_pending: true,
             shown,
+            list_width: std::rc::Rc::default(),
             _subs: subs,
         };
         this.show(issue, window, cx);
@@ -449,12 +453,19 @@ impl IssuesView {
             .border_color(LINE)
             .child(self.tab(Layout::Board, layout, cx))
             .child(self.tab(Layout::List, layout, cx))
-            .child(grow())
             .child(
+                // The filters sit at the right while there is room; in a narrow window (the
+                // panel open at 1000px) they scroll sideways instead of leaving the window.
                 row()
-                    .flex_none()
+                    .id("issues-bar-filters")
+                    .debug_selector(|| "issues-bar-filters".into())
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_x_scroll()
                     .gap(px(SPACE_1_5))
-                    .child(
+                    .child(grow())
+                    .child(div().flex_none().child(
                         Button::new(filters::FILTER, filters::button_label(&self.filters))
                             .ghost()
                             .small()
@@ -463,9 +474,9 @@ impl IssuesView {
                             .on_click(cx.listener(|this, _, window, cx| this.open_filters(window, cx)))
                             .popover_anchor(filters::FILTER)
                             .probe(filters::FILTER),
-                    )
+                    ))
                     .child(div().flex_none().ml(px(SPACE_1)).mr(px(SPACE_0_5)).type_style(LABEL).text_color(TEXT_MUTED).child("Runs with"))
-                    .children(chips),
+                    .children(chips.into_iter().map(|chip| div().flex_none().child(chip))),
             )
     }
 

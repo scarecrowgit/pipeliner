@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, AppContext as _, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths, IntoElement,
-    Render, SharedString, Subscription, Window, div, img, prelude::*, px,
+    ObjectFit, Render, SharedString, Subscription, Window, div, img, prelude::*, px,
 };
 use hub::Route;
 use hub::api::{
@@ -14,6 +14,7 @@ use hub::api::{
 };
 use ui::dev::Probe;
 use ui::prelude::*;
+use ui_rich::viewer::ImageThumb;
 use ui_rich::{SubmitOn, TextArea, TextAreaEvent, TextInput, TextInputEvent};
 
 use super::card::runner_kind;
@@ -230,9 +231,13 @@ impl NewIssueForm {
     }
 
     /// Image files dropped on the description: read off the UI thread, then stored.
-    fn drop_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(crate) fn drop_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         for path in paths {
-            let Some(media_type) = media_type(&path) else { continue };
+            let Some(media_type) = media_type(&path) else {
+                // As the comment box says it: a dropped PDF is refused, not lost silently.
+                self.error = Some("Only images can be attached".into());
+                continue;
+            };
             let name = path.file_name().map_or_else(|| "image".to_string(), |n| n.to_string_lossy().into_owned());
             self.uploading += 1;
             let read = cx.background_spawn(async move { std::fs::read(&path) });
@@ -370,29 +375,39 @@ impl NewIssueForm {
     }
 
     fn thumbs(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let queries = hub::queries(cx);
+        let shown = crate::panel::viewer_images(&self.images, cx);
         let thumbs: Vec<AnyElement> = self
             .images
             .iter()
             .enumerate()
             .map(|(ix, image)| {
-                let path = queries.blob_path(&image.blob);
+                let path = shown.get(ix).and_then(|i| i.path().map(|p| p.to_path_buf())).unwrap_or_default();
                 col()
-                    .id(("new-issue-image", ix))
                     .flex_none()
-                    .w(px(112.))
-                    .h(px(72.))
-                    .p(px(SPACE_1_5))
-                    .gap(px(SPACE_1))
-                    .bg(SURFACE)
-                    .border_1()
-                    .border_color(LINE_STRONG)
-                    .rounded(px(RADIUS_MD))
                     .relative()
-                    .child(div().flex_1().min_h_0().rounded(px(RADIUS_SM)).overflow_hidden().child(img(path).size_full()))
-                    .child(truncate_lh(image.name.clone(), CAPTION.line).type_style(CAPTION).text_color(TEXT_SECONDARY))
                     .child(
-                        div().absolute().top(px(SPACE_1)).right(px(SPACE_1)).child(
+                        ImageThumb::new(SharedString::from(format!("new-issue-image-{ix}")), shown.clone(), ix)
+                                                .flex()
+                            .flex_col()
+                            .w(px(112.))
+                            .h(px(72.))
+                            .p(px(SPACE_1_5))
+                            .gap(px(SPACE_1))
+                            .bg(SURFACE)
+                            .rounded(px(RADIUS_MD))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .rounded(px(RADIUS_SM))
+                                    .overflow_hidden()
+                                    .child(img(path).size_full().object_fit(ObjectFit::Cover)),
+                            )
+                            .child(truncate_lh(image.name.clone(), CAPTION.line).type_style(CAPTION).text_color(TEXT_SECONDARY)),
+                    )
+                    // Over the thumbnail: a press here removes the image and opens nothing.
+                    .child(
+                        div().absolute().top(px(SPACE_1)).right(px(SPACE_1)).occlude().child(
                             IconButton::new(("new-issue-image-remove", ix), IconName::X)
                                 .small()
                                 .tooltip(format!("Remove {}", image.name))
@@ -401,7 +416,8 @@ impl NewIssueForm {
                                         this.images.remove(ix);
                                         cx.notify();
                                     }
-                                })),
+                                }))
+                                .probe(SharedString::from(format!("new-issue-image-remove-{ix}"))),
                         ),
                     )
                     .into_any_element()

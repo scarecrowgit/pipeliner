@@ -216,6 +216,7 @@ impl IssuePanel {
     pub(super) fn open_runner_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search.update(cx, |s, cx| s.set_text("", cx));
         self.picked = 0;
+        self.picker_scroll.set_offset(gpui::Point::default());
         let view = cx.entity();
         let at = Anchor::of(RUNNER, window, cx);
         ui::overlays(window, cx).open_popover(at, Placement::below(), move |window, cx| runner_popover(&view, window, cx), window, cx);
@@ -243,9 +244,18 @@ impl IssuePanel {
         let query = search.read(cx).text().to_string();
         let count = runner_choices(self.catalog.read(cx), &query).len();
         match event {
-            TextInputEvent::Changed => self.picked = 0,
-            TextInputEvent::Up if count > 0 => self.picked = (self.picked + count - 1) % count,
-            TextInputEvent::Down if count > 0 => self.picked = (self.picked + 1) % count,
+            TextInputEvent::Changed => {
+                self.picked = 0;
+                self.picker_scroll.scroll_to_item(0);
+            }
+            TextInputEvent::Up | TextInputEvent::Down if count > 0 => {
+                let step = if *event == TextInputEvent::Up { count - 1 } else { 1 };
+                self.picked = (self.picked + step) % count;
+                // Keep the highlighted row in view, with its group's label when it is the first.
+                let choices = runner_choices(self.catalog.read(cx), &query);
+                let (child, first) = list_child(&choices, self.picked);
+                self.picker_scroll.scroll_to_item(if first { child - 1 } else { child });
+            }
             TextInputEvent::Submit => {
                 let chosen = runner_choices(self.catalog.read(cx), &query).get(self.picked).map(|r| r.reference.clone());
                 if let Some(runner) = chosen {
@@ -257,6 +267,25 @@ impl IssuePanel {
         }
         cx.notify();
     }
+}
+
+/// Where row `picked` of `choices` is among the children of the picker's list (a label opens
+/// each group), and whether it is the first row of its group.
+pub(super) fn list_child(choices: &[&Runnable], picked: usize) -> (usize, bool) {
+    let mut child = 0;
+    let mut last_kind = None;
+    for (n, runnable) in choices.iter().enumerate() {
+        let first = last_kind != Some(runnable.kind);
+        if first {
+            last_kind = Some(runnable.kind);
+            child += 1;
+        }
+        if n == picked {
+            return (child, first);
+        }
+        child += 1;
+    }
+    (child, false)
 }
 
 /// The picker's content, rebuilt every frame while it is open.
@@ -272,7 +301,8 @@ fn runner_popover(view: &Entity<IssuePanel>, window: &mut Window, cx: &mut App) 
     let choices = runner_choices(catalog, &query);
     let field = InputFrame::new("issue-runner-search").small().sunken().icon(IconName::Search).focused(focused).child(search);
     let mut pop = Popover::new().width(width).search(field);
-    let mut list = col().id("issue-runner-list").flex_none().max_h(px(420.)).overflow_y_scroll();
+    let mut list =
+        col().id("issue-runner-list").debug_selector(|| "issue-runner-list".into()).flex_none().max_h(px(420.)).overflow_y_scroll().track_scroll(&this.picker_scroll);
     let mut last_kind = None;
     for (n, runnable) in choices.iter().enumerate() {
         if last_kind != Some(runnable.kind) {

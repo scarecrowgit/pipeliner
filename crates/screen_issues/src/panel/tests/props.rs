@@ -98,3 +98,26 @@ fn delete_from_the_more_menu_asks_then_closes(cx: &mut TestAppContext) {
     assert_eq!(calls(&t.api, "delete_issue"), ["PAY-1440"]);
     assert_eq!(t.closes.get(), 1);
 }
+
+#[gpui::test]
+fn the_picker_list_follows_the_highlighted_row(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, "PAY-1440");
+    click(cx, "issue-prop-pipeline");
+    let count = t.panel.read_with(cx, |p, cx| super::super::pickers::runner_choices(p.catalog.read(cx), "").len());
+    assert!(count > 8, "enough rows to scroll: {count}");
+    for _ in 1..count {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(t.panel.read_with(cx, |p, _| p.picked), count - 1);
+    let bounds = |cx: &mut gpui::VisualTestContext, name: &str| {
+        cx.debug_bounds(super::leak(name)).unwrap_or_else(|| panic!("`{name}` was not laid out"))
+    };
+    let list = bounds(cx, "issue-runner-list");
+    let last = bounds(cx, &format!("issue-runner-{}", count - 1));
+    assert!(last.bottom() <= list.bottom() + gpui::px(0.5), "the last row is scrolled into view: {last:?} in {list:?}");
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    let first = bounds(cx, "issue-runner-0");
+    assert!(first.top() >= list.top() - gpui::px(0.5), "wrapping to the first row scrolls back up: {first:?} in {list:?}");
+}

@@ -23,6 +23,8 @@ mod texts;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use props::viewer_images;
+
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -101,6 +103,8 @@ pub struct IssuePanel {
     /// The runner picker's search field and its highlighted row.
     search: Entity<TextInput>,
     picked: usize,
+    /// The picker's list, scrolled to follow the highlighted row.
+    picker_scroll: ScrollHandle,
     /// The answer to the question the latest run waits on.
     answer: Entity<TextInput>,
     /// How many dollars more a run stopped at its budget may spend.
@@ -187,6 +191,7 @@ impl IssuePanel {
             editing_title: false,
             search,
             picked: 0,
+            picker_scroll: ScrollHandle::new(),
             answer,
             budget,
             description,
@@ -455,6 +460,7 @@ impl IssuePanel {
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .child(sections)
+            .probe("issue-panel-scroll")
             .into_any_element()
     }
 }

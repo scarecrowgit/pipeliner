@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, Hsla, IntoElement, ObjectFit, SharedString, Window, div, img,
+    AnyElement, App, Context, Entity, Hsla, IntoElement, ObjectFit, SharedString, Window, div, img,
     prelude::*, px,
 };
 use hub::api::{Attachment, Issue, IssuePatch, Priority, PipelineId, Run, RunnableKind, RunnableRef, StartTriggers};
@@ -13,6 +13,7 @@ use hub::Route;
 use ui::dev::Probe;
 use ui::motion::{self, Look};
 use ui::prelude::*;
+use ui_rich::viewer::{ImageThumb, ViewerImage};
 use ui_rich::{TextInput, TextInputEvent, text_field};
 
 use super::pickers::{self, OWNER, PRIORITY, RUNNER, STATUS};
@@ -61,30 +62,43 @@ pub(super) fn title_section(
         );
     }
     if !issue.images.is_empty() {
-        let thumbs = issue.images.iter().enumerate().map(|(ix, image)| thumbnail(("issue-image", ix), image, cx));
+        let thumbs = thumbnails("issue-image", &issue.images, cx);
         sec = sec.child(row().flex_none().flex_wrap().gap(px(SPACE_2)).mt(px(SPACE_2)).children(thumbs));
     }
     sec.into_any_element()
 }
 
+/// The images of a comment, the description or the new-issue dialog as the viewer shows them,
+/// each under its own file name (the blob's path is only an id).
+pub(crate) fn viewer_images(images: &[Attachment], cx: &App) -> Vec<ViewerImage> {
+    let queries = hub::queries(cx);
+    images.iter().map(|image| ViewerImage::file(queries.blob_path(&image.blob)).name(image.name.clone())).collect()
+}
+
+/// The thumbnails of a group of images (`{name}-{ix}`): a click opens the viewer on all of
+/// them, at the one clicked.
+pub(super) fn thumbnails(name: &str, images: &[Attachment], cx: &App) -> Vec<AnyElement> {
+    let shown = viewer_images(images, cx);
+    images
+        .iter()
+        .enumerate()
+        .map(|(ix, image)| thumbnail(SharedString::from(format!("{name}-{ix}")), image, shown.clone(), ix))
+        .collect()
+}
+
 /// An attached image: the picture over a caption with its name and size.
-pub(super) fn thumbnail(id: impl Into<ElementId>, image: &Attachment, cx: &App) -> AnyElement {
-    let path = hub::queries(cx).blob_path(&image.blob);
+fn thumbnail(id: SharedString, image: &Attachment, images: Vec<ViewerImage>, ix: usize) -> AnyElement {
+    let path = images.get(ix).and_then(|i| i.path().map(|p| p.to_path_buf())).unwrap_or_default();
     let (w, h) = THUMB;
-    let url = path.clone();
-    div()
-        .id(id)
+    let probe = id.clone();
+    ImageThumb::new(id, images, ix)
         .relative()
         .flex_none()
         .w(px(w))
         .h(px(h))
         .rounded(px(RADIUS_LG))
-        .border_1()
-        .border_color(LINE_STRONG)
         .bg(BG_SIDEBAR)
         .overflow_hidden()
-        .cursor_pointer()
-        .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", url.display())))
         .child(
             div()
                 .absolute()
@@ -113,6 +127,7 @@ pub(super) fn thumbnail(id: impl Into<ElementId>, image: &Attachment, cx: &App) 
                 .child(truncate_lh(image.name.clone(), CAPTION.line))
                 .child(div().flex_none().text_color(TEXT_MUTED).child(base::fmt::bytes(image.bytes))),
         )
+        .probe(probe)
         .into_any_element()
 }
 
