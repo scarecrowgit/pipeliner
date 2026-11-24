@@ -154,6 +154,9 @@ pub struct NodeInstance {
     /// The instance that created it, for spawned sub-agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_by: Option<NodeId>,
+    /// What the agent asked a person, while the instance waits for the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
 }
 
 fn first_attempt() -> u32 {

@@ -153,7 +153,7 @@ fn capitalise(word: &str) -> String {
 
 #[expect(clippy::too_many_arguments, reason = "one row of the mockup's node table")]
 fn instance(node: &str, name: &str, variant: u32, status: NodeStatus, kind: SpanKind, started: i64, cost: f64, summary: &str) -> NodeInstance {
-    NodeInstance {
+    NodeInstance { question: None,
         node: NodeId::new(node),
         name: name.to_string(),
         variant,

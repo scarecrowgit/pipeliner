@@ -266,7 +266,7 @@ impl Machine {
                 let found = (0..self.s.meta.len())
                     .find(|&at| self.s.meta[at].spawn.as_ref().is_some_and(|link| link.id == id && link.parent == parent));
                 let at = found.unwrap_or_else(|| {
-                    self.s.run.nodes.push(NodeInstance {
+                    self.s.run.nodes.push(NodeInstance { question: None,
                         node: id.as_str().into(),
                         name: name.clone(),
                         variant: parent.variant,

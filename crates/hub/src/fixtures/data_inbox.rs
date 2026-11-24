@@ -13,7 +13,7 @@ pub const REVIEW_1423: &str = "review-1423";
 fn variant(index: u32, name: &str, approach: &str, files: &[(&str, u32, u32)], tests: (u32, u32), secs: u64, cost: f64) -> Variant {
     let files: Vec<FileChange> =
         files.iter().map(|(path, added, removed)| FileChange { path: path.to_string(), added: *added, removed: *removed }).collect();
-    Variant {
+    Variant { renders: Vec::new(),
         index,
         name: name.to_string(),
         approach: approach.to_string(),

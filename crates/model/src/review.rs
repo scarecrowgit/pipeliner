@@ -93,6 +93,9 @@ pub struct Variant {
     pub secs: u64,
     #[serde(default)]
     pub cost_usd: f64,
+    /// Rendered mockups of this variant, when a render action ran inside its scope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renders: Vec<Render>,
 }
 
 /// Where a sent-back round starts from.

@@ -75,7 +75,7 @@ pub(crate) fn agent(name: &str) -> Runnable {
 }
 
 pub(crate) fn node(name: &str, status: model::NodeStatus) -> model::NodeInstance {
-    model::NodeInstance {
+    model::NodeInstance { question: None,
         node: model::NodeId::new(name.to_lowercase()),
         name: name.to_string(),
         variant: 0,

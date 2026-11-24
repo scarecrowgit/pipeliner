@@ -497,7 +497,7 @@ impl Machine {
             NodeKind::Agent(agent) | NodeKind::Orchestrator(agent) => agent.budget_usd,
             _ => None,
         };
-        self.s.run.nodes.push(NodeInstance {
+        self.s.run.nodes.push(NodeInstance { question: None,
             node: def.id.clone(),
             name: def.name.clone(),
             variant,

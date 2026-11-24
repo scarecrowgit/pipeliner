@@ -133,7 +133,7 @@ impl Machine {
             .filter_map(|view| Some((view.finished? - view.started?).max(0) as u64))
             .sum::<u64>()
             / 1000;
-        Variant {
+        Variant { renders: Vec::new(),
             index,
             name,
             approach,

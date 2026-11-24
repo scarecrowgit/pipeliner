@@ -30,7 +30,7 @@ fn run(id: &str, issue: Option<&str>, number: u32, started: i64, state: RunState
 }
 
 fn node(id: &str, variant: u32) -> NodeInstance {
-    NodeInstance {
+    NodeInstance { question: None,
         node: NodeId::new(id),
         name: id.to_uppercase(),
         variant,
@@ -154,7 +154,7 @@ fn review(id: &str, run: &str, state: ReviewState, created: i64) -> Review {
         created,
         provenance: vec!["Issues".into(), "Fixer ×3".into()],
         agent: "Fixer".into(),
-        variants: vec![Variant {
+        variants: vec![Variant { renders: Vec::new(),
             index: 1,
             name: "A".into(),
             approach: "reuse key".into(),

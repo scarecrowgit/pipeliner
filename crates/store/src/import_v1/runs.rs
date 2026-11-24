@@ -297,7 +297,7 @@ fn convert(old: &OldRun, info: Option<&IssueInfo>) -> Converted {
             .filter(|u| u.who.eq_ignore_ascii_case(&name))
             .map(|u| u.cost_usd)
             .sum();
-        nodes.push(NodeInstance {
+        nodes.push(NodeInstance { question: None,
             node: NodeId(id),
             name,
             variant: 0,
