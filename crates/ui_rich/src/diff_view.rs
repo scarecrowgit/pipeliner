@@ -4,13 +4,15 @@
 //!   `model::FileDiff` has (this crate does not depend on `model`; callers convert).
 //! - [`diff_rows`]: the GPUI-free row model (gutter numbers, hunk separators, the
 //!   no-newline note, intra-line [`emphasis`]).
-//! - [`DiffView`]: the rows, through `uniform_list`, on the sidebar ground.
+//! - [`DiffView`]: the rows, through `uniform_list`, on the sidebar ground; the code can be
+//!   selected with the mouse and copied (the code only: no numbers, no `+`/`−`).
 //! - [`DiffCard`]: the card around a [`DiffView`] with its header, footer, collapse and
 //!   "Show all N lines".
 
 mod card;
 mod highlight;
 mod model;
+mod select;
 mod view;
 
 #[cfg(test)]

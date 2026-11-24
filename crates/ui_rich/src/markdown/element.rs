@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, AvailableSpace, Bounds, CursorStyle, DispatchPhase, Element, ElementId, FocusHandle,
-    GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Position, Style,
     WeakEntity, Window, fill, px, relative, size,
 };
@@ -98,6 +98,12 @@ fn h_dist(f: &FrameUnit, pos: Point<Pixels>) -> f32 {
 }
 
 type LayoutCache = Rc<RefCell<Option<(Option<f32>, Rc<InlineLayout>)>>>;
+
+/// The colour painted behind selected text: stronger while its view has focus. Every
+/// selectable text in the crate (Markdown, diffs) uses it.
+pub(crate) fn selection_tint(focused: bool) -> Hsla {
+    with_alpha(ACCENT, if focused { 0.32 } else { 0.18 })
+}
 
 /// One selectable text unit.
 pub(crate) struct UnitElement {
@@ -257,7 +263,7 @@ impl Element for UnitElement {
             (range, s.hover_link.is_some_and(|(u, _)| u == self.unit))
         };
         if let Some(r) = range {
-            let tint = with_alpha(ACCENT, if self.focused { 0.32 } else { 0.18 });
+            let tint = selection_tint(self.focused);
             for rect in layout.selection_rects(r) {
                 window.paint_quad(fill(
                     Bounds::new(bounds.origin + rect.origin, rect.size),

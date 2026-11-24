@@ -11,12 +11,12 @@
 //! - [`plain_text`] and [`first_paragraph`] strip the Markdown for previews and list rows.
 
 mod cache;
-mod element;
+pub(crate) mod element;
 mod layout;
 mod parse;
 mod render;
 mod rich;
-mod selection;
+pub(crate) mod selection;
 mod view;
 mod wrap;
 

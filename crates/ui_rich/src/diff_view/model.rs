@@ -133,21 +133,42 @@ impl DiffFile {
 
 /// The rows of `file`, in drawing order.
 pub fn diff_rows(file: &DiffFile) -> Vec<DiffRow> {
+    diff_rows_with_sources(file).0
+}
+
+/// Where a line row's text comes from: `file.hunks[hunk].lines[line]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LineRef {
+    pub hunk: usize,
+    pub line: usize,
+}
+
+/// The rows of `file` and, row for row, the source line behind each line row (what a copy
+/// of the row gives back: tabs and the full text rather than the shown one).
+pub(crate) fn diff_rows_with_sources(file: &DiffFile) -> (Vec<DiffRow>, Vec<Option<LineRef>>) {
     if file.empty_state().is_some() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
-    let mut rows = Vec::with_capacity(file.line_count() + file.hunks.len());
+    let cap = file.line_count() + file.hunks.len();
+    let mut rows = Vec::with_capacity(cap);
+    let mut sources = Vec::with_capacity(cap);
     let mut prev: Option<&DiffHunk> = None;
-    for hunk in file.hunks.iter().filter(|h| !h.lines.is_empty()) {
+    for (h, hunk) in file
+        .hunks
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| !h.lines.is_empty())
+    {
         if let Some(p) = prev {
             rows.push(DiffRow::Separator {
                 skipped: skipped_between(p, hunk),
             });
+            sources.push(None);
         }
         prev = Some(hunk);
         let texts: Vec<String> = hunk.lines.iter().map(|l| display_text(&l.text)).collect();
         let marks = pair_emphasis(&hunk.lines, &texts);
-        for ((line, text), emphasis) in hunk.lines.iter().zip(texts).zip(marks) {
+        for (l, ((line, text), emphasis)) in hunk.lines.iter().zip(texts).zip(marks).enumerate() {
             let number = match line.kind {
                 DiffLineKind::Del => line.old_no,
                 _ => line.new_no.or(line.old_no),
@@ -158,12 +179,14 @@ pub fn diff_rows(file: &DiffFile) -> Vec<DiffRow> {
                 text,
                 emphasis,
             });
+            sources.push(Some(LineRef { hunk: h, line: l }));
             if line.no_newline {
                 rows.push(DiffRow::NoNewline);
+                sources.push(None);
             }
         }
     }
-    rows
+    (rows, sources)
 }
 
 /// The rows shown with a limit of `limit` rows when not `expanded`, and how many line rows
@@ -194,10 +217,13 @@ fn skipped_between(a: &DiffHunk, b: &DiffHunk) -> Option<u32> {
     })
 }
 
-/// Tabs expanded to four spaces, a trailing `\r` dropped, cut at [`MAX_LINE`] bytes.
+/// How many spaces a tab is shown as (GPUI has no tab stops).
+pub(crate) const TAB_WIDTH: usize = 4;
+
+/// Tabs expanded to [`TAB_WIDTH`] spaces, a trailing `\r` dropped, cut at [`MAX_LINE`] bytes.
 pub(crate) fn display_text(text: &str) -> String {
     let text = text.strip_suffix('\r').unwrap_or(text);
-    let mut out = text.replace('\t', "    ");
+    let mut out = text.replace('\t', &" ".repeat(TAB_WIDTH));
     if out.len() > MAX_LINE {
         let mut cut = MAX_LINE;
         while !out.is_char_boundary(cut) {
