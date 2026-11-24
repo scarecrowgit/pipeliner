@@ -180,7 +180,8 @@ impl InboxView {
                 let approach = self.texts.get(
                     format!("approach-{}", variant.index),
                     variant.approach.clone(),
-                    Look::plain(BODY, TEXT_SECONDARY),
+                    // Written by the variant's agent, as Markdown.
+                    Look::markdown(BODY, TEXT_SECONDARY),
                     cx,
                 );
                 cell("review-approach", approach).into_any_element()

@@ -269,7 +269,8 @@ impl InboxView {
             })
             .child(truncate_block(item.title.clone(), BODY.line));
         let meta_text = match pipeline {
-            Some(name) if !item.source.is_empty() => format!("{} · {name}", item.source),
+            // A run's failure is filed by the pipeline itself: say the name once.
+            Some(name) if !item.source.is_empty() && item.source.as_str() != name.as_ref() => format!("{} · {name}", item.source),
             Some(name) => name.to_string(),
             None => item.source.clone(),
         };

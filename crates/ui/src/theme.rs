@@ -154,8 +154,8 @@ pub const DIFF_DEL_TEXT: Hsla = hex(0xf3a6a6);
 pub const SCRIM: Hsla = with_alpha(BG, 0.72);
 
 /// Behind a full-window layer such as the image viewer: dark enough that a picture reads on
-/// it without the page showing through (`rgba(8, 9, 10, 0.96)`).
-pub const SCRIM_STRONG: Hsla = with_alpha(BG, 0.96);
+/// it without the page showing through (`rgba(8, 9, 10, 0.99)`).
+pub const SCRIM_STRONG: Hsla = with_alpha(BG, 0.99);
 
 // Spacing.
 /// Half of `SPACE_1`: tight stacks (nav list gap is 1, stat label gap 2).

@@ -89,7 +89,8 @@ impl InboxView {
             .as_ref()
             .and_then(|run| self.run_pipeline_name(run, cx));
         let mut from = vec![item.source.clone()];
-        if let Some(name) = pipeline {
+        // A run's failure is filed by the pipeline itself: say the name once.
+        if let Some(name) = pipeline.filter(|name| name.as_ref() != item.source.as_str()) {
             from.push(name.to_string());
         }
         from.push(base::time::ago(
