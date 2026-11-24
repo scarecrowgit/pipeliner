@@ -6,6 +6,10 @@ use hub::api::{ReviewId, ReviewNote, ReviewState};
 
 use super::{REVIEW, calls, click, keys, open, open_with, shown};
 
+fn item(id: &str) -> Option<InboxFocus> {
+    Some(InboxFocus::Item(hub::api::InboxId::new(id)))
+}
+
 fn review(id: &str) -> Option<InboxFocus> {
     Some(InboxFocus::Review(ReviewId::new(id)))
 }
@@ -54,32 +58,34 @@ async fn ship_records_the_chosen_variant_and_closes_the_review(cx: &mut TestAppC
         calls(&t.api, "decide_review"),
         ["review-1423 Ship { variant: 3 }"]
     );
-    assert!(shown(cx, "review-closed"));
+    // The decided item leaves the queue: the next row opens.
+    assert_eq!(super::focus(&t, cx), item("inbox-1435"));
+    // The decided review is read-only in the archive.
+    click(cx, "inbox-tabs-2");
+    assert_eq!(super::focus(&t, cx), item("inbox-1423"));
     let state = t
         .view
         .read_with(cx, |v, cx| v.open_review(cx).map(|r| r.state));
     assert_eq!(state, Some(ReviewState::Shipped));
+    assert!(shown(cx, "review-closed"));
 }
 
 #[gpui::test]
-async fn a_review_opened_from_its_row_stays_open_once_decided(cx: &mut TestAppContext) {
+async fn deciding_opens_the_next_row(cx: &mut TestAppContext) {
     let (t, cx) = open(cx, None);
-    click(cx, "review-ship");
-    assert_eq!(
-        calls(&t.api, "decide_review"),
-        ["review-1423 Ship { variant: 1 }"]
-    );
-    // The item is archived and leaves the queue; the review stays, read-only.
+    click(cx, "inbox-row-2");
+    click(cx, "review-skip");
+    assert_eq!(calls(&t.api, "decide_review"), ["review-1427 Skip"]);
     assert_eq!(
         super::rows(&t, cx),
-        ["inbox-1435", "inbox-1427", "inbox-1431"]
+        ["inbox-1423", "inbox-1435", "inbox-1431"]
     );
-    assert!(shown(cx, "review-closed"));
-    keys(cx, "j");
     assert_eq!(
         super::focus(&t, cx),
-        Some(InboxFocus::Item(hub::api::InboxId::new("inbox-1435")))
+        item("inbox-1431"),
+        "the row now at its place"
     );
+    assert_eq!(super::open_review(&t, cx).as_deref(), Some("review-1431"));
 }
 
 #[gpui::test]
@@ -120,15 +126,9 @@ async fn a_closed_review_is_read_only(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn a_missing_review_says_so(cx: &mut TestAppContext) {
+async fn a_review_without_an_item_opens_the_first_row(cx: &mut TestAppContext) {
     let (t, cx) = open(cx, review("review-gone"));
-    let failed = t.view.read_with(cx, |v, cx| {
-        matches!(
-            v.review.as_ref().map(|r| r.model.read(cx).state().clone()),
-            Some(hub::LoadState::Failed(_))
-        )
-    });
-    assert!(failed);
+    assert_eq!(super::focus(&t, cx), item("inbox-1423"));
 }
 
 #[test]

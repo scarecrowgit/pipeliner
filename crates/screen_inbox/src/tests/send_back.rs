@@ -74,7 +74,6 @@ async fn sending_from_the_picked_variant_with_more_variants(cx: &mut TestAppCont
         [sent("Keep A", StartFrom::Variant { index: 1 }, 3)]
     );
     assert!(!dialog_open(cx));
-    assert!(shown(cx, "review-closed"));
 }
 
 #[gpui::test]

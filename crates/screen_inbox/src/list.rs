@@ -51,12 +51,15 @@ pub(crate) fn ordered(
     tab: Tab,
     moved_on: impl Fn(&InboxItem) -> bool,
 ) -> Vec<Arc<InboxItem>> {
-    let waits = |item: &InboxItem| item.needs_person() && !moved_on(item);
-    let first: Vec<Arc<InboxItem>> = waiting.into_iter().filter(|item| waits(item)).collect();
+    let first: Vec<Arc<InboxItem>> = waiting.into_iter().filter(|item| !moved_on(item)).collect();
     match tab {
         Tab::Waiting => first,
         Tab::All => {
-            let rest = items.iter().filter(|item| !waits(item)).cloned();
+            let rest: Vec<Arc<InboxItem>> = items
+                .iter()
+                .filter(|item| !first.iter().any(|known| known.id == item.id))
+                .cloned()
+                .collect();
             first.into_iter().chain(rest).collect()
         }
         Tab::Archived => Vec::new(),
@@ -333,7 +336,10 @@ fn key_hints(picks: usize) -> AnyElement {
         .type_style(LABEL)
         .text_color(TEXT_MUTED)
         .child(hint(
-            vec![Kbd::new("J").into_any_element(), Kbd::new("K").into_any_element()],
+            vec![
+                Kbd::new("J").into_any_element(),
+                Kbd::new("K").into_any_element(),
+            ],
             "move",
         ))
         .child(hint(picks_keys, "pick"))

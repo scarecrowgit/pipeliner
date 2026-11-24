@@ -76,6 +76,12 @@ pub struct InboxView {
     pub(crate) item_run: Option<ItemRun>,
     /// The item last marked read on opening, so "Mark unread" sticks while it stays open.
     marked: Option<InboxId>,
+    /// What the next reconciliation of list and detail does (see `select.rs`).
+    pub(crate) pending: crate::select::Pending,
+    /// The person picked the tab; an empty Waiting tab then stays shown.
+    pub(crate) user_tab: bool,
+    /// Index of the open row in the list the last time it was found there.
+    pub(crate) row: usize,
     /// Width of the detail column in the last frame.
     pub(crate) detail_width: f32,
     /// A pinned clock for tests; the wall clock otherwise.
@@ -95,7 +101,10 @@ impl InboxView {
             cx.observe(&issues, |_, _, cx| cx.notify()),
             cx.observe(&inbox, |this, _, cx| this.inbox_changed(cx)),
             cx.observe(&catalog, |_, _, cx| cx.notify()),
-            cx.observe(&runs, |_, _, cx| cx.notify()),
+            cx.observe(&runs, |this, _, cx| {
+                this.reconcile(cx);
+                cx.notify();
+            }),
         ];
         let ticker = cx.spawn(async move |this, cx| {
             loop {
@@ -120,6 +129,9 @@ impl InboxView {
             send_back: None,
             item_run: None,
             marked: None,
+            pending: crate::select::Pending::Follow,
+            user_tab: false,
+            row: 0,
             detail_width: width.clamp(320., DETAIL_MAX),
             now: None,
             _ticker: ticker,
@@ -132,10 +144,11 @@ impl InboxView {
 
     /// Follows the route: opens `focus`.
     pub fn show(&mut self, focus: Option<InboxFocus>, window: &mut Window, cx: &mut Context<Self>) {
+        self.user_tab = false;
         if focus.is_some() && focus != self.focus {
             self.open(focus, false, window, cx);
         } else if focus.is_none() && self.focus.is_none() {
-            self.ensure_selection(cx);
+            self.reconcile(cx);
         }
         window.focus(&self.focus_handle);
         cx.notify();
@@ -362,11 +375,15 @@ impl InboxView {
             };
             hub::router(cx).update(cx, |router, cx| router.replace(route, cx));
         }
-        if self.focus.is_none() {
-            self.ensure_selection(cx);
-        }
+        // A click opens a row of the list; a route may name an item of another tab.
+        self.pending = if route {
+            crate::select::Pending::Keep
+        } else {
+            crate::select::Pending::Follow
+        };
         self.sync_review(cx);
         self.sync_item(cx);
+        self.reconcile(cx);
         let _ = window;
         cx.notify();
     }
@@ -379,28 +396,9 @@ impl InboxView {
         }
     }
 
-    /// With nothing open, opens the first item of the list.
-    fn ensure_selection(&mut self, cx: &mut Context<Self>) {
-        if self.focus.is_some() {
-            return;
-        }
-        if let Some(first) = self.visible_items(cx).first() {
-            self.focus = Some(InboxFocus::Item(first.id.clone()));
-            self.sync_review(cx);
-            self.sync_item(cx);
-        }
-    }
-
     /// Opens the review model the focus leads to, or closes the one open.
-    fn sync_review(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_review(&mut self, cx: &mut Context<Self>) {
         let wanted = self.review_for_focus(cx);
-        // A decided review's item is archived and leaves the list: the review stays open
-        // (read-only) until something else is opened.
-        let vanished =
-            matches!(&self.focus, Some(InboxFocus::Item(id)) if self.find_item(id, cx).is_none());
-        if wanted.is_none() && vanished && self.review.is_some() {
-            return;
-        }
         if self.review.as_ref().map(|r| &r.id) == wanted.as_ref() {
             return;
         }
@@ -470,7 +468,7 @@ impl InboxView {
     }
 
     /// Marks the open item read, renders its summary and asks for its pull request.
-    fn sync_item(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_item(&mut self, cx: &mut Context<Self>) {
         let Some(item) = self.current_item(cx) else {
             return;
         };
@@ -518,11 +516,9 @@ impl InboxView {
 
     /// The inbox model changed: keep the selection, the review and the archive current.
     fn inbox_changed(&mut self, cx: &mut Context<Self>) {
-        if self.focus.is_none() {
-            self.ensure_selection(cx);
-        }
         self.sync_review(cx);
         self.sync_item(cx);
+        self.reconcile(cx);
         if self.archived.started {
             self.load_archived(cx);
         }
@@ -563,9 +559,12 @@ impl InboxView {
             return;
         }
         self.tab = tab;
+        self.user_tab = true;
+        self.pending = crate::select::Pending::First;
         if tab == Tab::Archived {
             self.load_archived(cx);
         }
+        self.reconcile(cx);
         cx.notify();
     }
 
@@ -585,6 +584,7 @@ impl InboxView {
                     Ok(items) => {
                         this.archived.items = items.into_iter().map(Arc::new).collect();
                         this.archived.state = LoadState::Ready;
+                        this.reconcile(cx);
                     }
                     Err(error) => {
                         this.archived.state = LoadState::Failed(format!("{error:#}").into())

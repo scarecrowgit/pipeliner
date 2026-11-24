@@ -2,7 +2,9 @@
 //! header and inside an overlay host, driven by simulated clicks and keys.
 
 mod list;
+mod markdown;
 mod review;
+mod select;
 mod send_back;
 mod waits;
 

@@ -11,6 +11,7 @@ mod keys;
 mod list;
 mod other;
 mod review;
+mod select;
 mod send_back;
 mod table;
 mod view;

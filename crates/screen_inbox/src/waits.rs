@@ -35,13 +35,14 @@ pub(crate) fn waiting_on(run: &Run, wait: Option<RunWait>) -> Option<Waiting> {
     match wait? {
         RunWait::Review => None,
         RunWait::Budget => Some(Waiting::Budget),
-        RunWait::Question => run
-            .nodes
-            .iter()
-            .find(|n| n.question.is_some())
-            .map(|node| Waiting::Question {
-                node: node.node.clone(),
-            }),
+        RunWait::Question => {
+            run.nodes
+                .iter()
+                .find(|n| n.question.is_some())
+                .map(|node| Waiting::Question {
+                    node: node.node.clone(),
+                })
+        }
     }
 }
 

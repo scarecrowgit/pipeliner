@@ -16,18 +16,35 @@ use ui::prelude::*;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut fixture = "inbox-review".to_string();
+    let mut long_report = false;
     while let Some(arg) = args.next() {
-        if arg == "--fixture"
-            && let Some(name) = args.next()
-        {
-            fixture = name;
+        match arg.as_str() {
+            "--fixture" => {
+                if let Some(name) = args.next() {
+                    fixture = name;
+                }
+            }
+            "--long-report" => long_report = true,
+            _ => {}
         }
     }
     ui::run_app("Inbox", 1440., 900., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
+        if long_report {
+            api.with_world(|world| {
+                if let Some(item) = world
+                    .inbox
+                    .iter_mut()
+                    .find(|i| i.id.as_str() == "inbox-1419")
+                {
+                    item.summary = LONG_REPORT.to_string();
+                }
+            });
+        }
         Hub::new_fixture(api, cx);
         let focus = match fixtures::start_route(&fixture) {
+            _ if long_report => Some(hub::InboxFocus::Item(hub::api::InboxId::new("inbox-1419"))),
             Some((Route::Inbox { item }, _)) => item,
             _ => None,
         };
@@ -40,6 +57,15 @@ fn main() {
         cx.new(|cx| Stage::new(focus, window, cx))
     });
 }
+
+/// A report body like real agents write: lists whose items start with a bold label.
+const LONG_REPORT: &str = "Checked the webhook signature path end to end.\n\n\
+- **Triage (Decision):** yes · the bad signature reached the handler before the check, so the fix belongs in the middleware\n\
+- **Scope:** webhooks only · API calls were already signed\n\
+- **Tests:** 6 new · all 218 pass\n\
+- **Risk (Low):** a merchant sending an old signature format now gets a 401 instead of a silent accept, which the changelog mentions\n\n\
+1. **Next step:** watch the 401 rate for a day\n\
+2. **Owner:** payments team\n";
 
 /// The shell's part around the view: a header bar over the content, in an inset frame.
 struct Stage {

@@ -49,6 +49,15 @@ fn over_budget(world: &mut World) {
     world.inbox.push(item);
 }
 
+fn waiting(t: &Open, cx: &mut VisualTestContext) -> Vec<String> {
+    t.view.read_with(cx, |v, cx| {
+        v.live_items(crate::list::Tab::Waiting, cx)
+            .iter()
+            .map(|i| i.id.to_string())
+            .collect()
+    })
+}
+
 fn item(id: &str) -> Option<InboxFocus> {
     Some(InboxFocus::Item(InboxId::new(id)))
 }
@@ -86,12 +95,11 @@ async fn a_typed_answer_goes_to_the_asking_agent(cx: &mut TestAppContext) {
         ["run-1427 repro just stdout and Datadog"]
     );
 
-    // The run moved on: the item no longer waits, and the detail says so.
-    assert!(
-        !rows(&t, cx).contains(&"inbox-1435".to_string()),
-        "{:?}",
-        rows(&t, cx)
-    );
+    // The run moved on: the item no longer waits; it stays open, selected under All.
+    assert!(!waiting(&t, cx).contains(&"inbox-1435".to_string()));
+    assert_eq!(t.view.read_with(cx, |v, _| v.tab), crate::list::Tab::All);
+    assert!(rows(&t, cx).contains(&"inbox-1435".to_string()));
+    assert_eq!(super::focus(&t, cx), item("inbox-1435"));
     assert!(shown(cx, "item-answered"));
 }
 
@@ -134,9 +142,10 @@ async fn a_run_at_its_budget_can_be_raised(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(calls(&t.api, "raise_run_budget"), ["run-1431 2.5"]);
     assert!(
-        !rows(&t, cx).contains(&"inbox-budget".to_string()),
+        !waiting(&t, cx).contains(&"inbox-budget".to_string()),
         "the run went on"
     );
+    assert_eq!(super::focus(&t, cx), item("inbox-budget"));
 }
 
 #[gpui::test]
