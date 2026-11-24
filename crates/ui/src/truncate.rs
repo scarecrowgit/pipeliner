@@ -301,6 +301,8 @@ fn runs(text: &str, style: &TextStyle, highlights: &[(Range<usize>, HighlightSty
     if at < text.len() || out.is_empty() {
         out.push(style.to_run(text.len() - at));
     }
+    // `shape_line` would fold a weight change of the same colour into the run before it.
+    crate::text_runs::separate_font_runs(&mut out);
     out
 }
 

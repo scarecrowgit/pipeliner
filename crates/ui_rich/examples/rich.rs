@@ -15,6 +15,20 @@ const MESSAGE: &str = r#"# Fix double charge on retry
 
 I checked how retries reach the gateway. **Every retry** sends a *new* request, so the gateway sees ~~one~~ two charges. The fix reuses one idempotency key: see `retryCharge` in `src/charges/retry.ts` and [the gateway docs](https://docs.example.com/idempotency). @Fixer wrote the failing test; @Codex reviewed it.
 
+## Review
+
+- **Triage (Decision):** yes · HAR-4 adds user-visible controls → the reviewer must sign off before the rollout reaches the payments team, and the change log says so in plain words.
+- **Риск (оценка):** средний · ключ идемпотентности хранится в `charges.idempotency_key` → повторы не создают второй платёж, но [старые записи](https://docs.example.com/backfill) нужно заполнить заново.
+- **Links:** see [the gateway docs on retries and idempotency keys](https://docs.example.com/idempotency) and `src/charges/retry.ts`, then compare with the webhook handler, which dedupes late.
+
+A paragraph after the list stays regular: nothing here is bold, and the line is long enough to wrap twice in a narrow column.
+
+> **Note (решение):** a quote with a bold label wraps onto a second line → the rest stays regular weight all the way through.
+
+| Check | Result |
+|:--|:--|
+| **Triage:** yes · HAR-4 adds controls → sign-off needed before the rollout | **Ок:** проверено · two lines of plain text after the bold label |
+
 ## What changed
 
 1. Derive the key once per charge

@@ -28,6 +28,7 @@ pub mod menu;
 pub mod motion;
 pub mod overlay;
 pub mod popover;
+pub mod text_runs;
 pub mod theme;
 pub mod toast;
 pub mod tooltip;

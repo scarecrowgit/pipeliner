@@ -136,6 +136,9 @@ You own the crates or modules named in your brief, nothing else.
   drawn or shown, not only in `new`.
 - `text_ellipsis` drops every styled run after the first once the text is cut; use the kit's
   `truncate_styled` / `truncate_middle`.
+- `shape_line` merges neighbouring runs of the same colour without comparing their fonts, so
+  a bold label makes its whole line bold. Pass runs through `ui::text_runs::separate_font_runs`
+  before shaping styled text.
 - In `#[gpui::test]`, `debug_bounds` is never cleared between frames: an element that is gone
   still has bounds. Assert on state, or on what the last frame laid out, not on absence.
 - A `ListState::splice` over a range that contains the scroll anchor resets the scroll

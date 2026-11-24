@@ -2,6 +2,7 @@
 //! the view in a test window.
 
 mod parse;
+mod runs;
 mod text;
 mod window;
 

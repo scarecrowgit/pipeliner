@@ -388,7 +388,7 @@ fn size_for(style: SpanStyle, look: &Look) -> f32 {
 }
 
 /// Text runs for `range` of `rich`, underlining the part inside `hover`.
-fn runs(
+pub(super) fn runs(
     rich: &RichText,
     range: Range<usize>,
     look: &Look,
@@ -429,6 +429,9 @@ fn runs(
             });
         }
     }
+    // `shape_line` folds a run into the one before it when only the font differs: a bold
+    // label would make the rest of its line bold.
+    ui::text_runs::separate_font_runs(&mut out);
     out
 }
 
