@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::assets::{IconName, icon};
-use crate::layout::row;
+use crate::layout::{row, truncate_lh};
 use crate::theme::*;
 
 /// The state a [`StatusDot`] (or a badge dot) stands for. Always pair a dot with a word.
@@ -454,12 +454,20 @@ impl RenderOnce for Progress {
 pub struct SpawnChip {
     text: SharedString,
     icon: bool,
+    shrinks: bool,
 }
 
 impl SpawnChip {
     /// A chip reading `text`, with the spawn icon.
     pub fn new(text: impl Into<SharedString>) -> Self {
-        Self { text: text.into(), icon: true }
+        Self { text: text.into(), icon: true, shrinks: false }
+    }
+
+    /// For text that can be long (an agent's name): in a row too narrow for it the chip
+    /// shrinks and its text ends in `…` instead of leaving the row.
+    pub fn shrinks(mut self) -> Self {
+        self.shrinks = true;
+        self
     }
 
     /// Leave the icon out.
@@ -471,8 +479,9 @@ impl SpawnChip {
 
 impl RenderOnce for SpawnChip {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let text = self.text;
         row()
-            .flex_none()
+            .map(|d| if self.shrinks { d.flex_shrink().min_w_0() } else { d.flex_none() })
             .gap(px(SPACE_1_5))
             .px(px(SPACE_2))
             .py(px(SPACE_1))
@@ -481,8 +490,8 @@ impl RenderOnce for SpawnChip {
             .text_color(SPAWN_TEXT)
             .type_style(LABEL_TIGHT)
             .whitespace_nowrap()
-            .when(self.icon, |d| d.child(icon(IconName::Spawn, 12., SPAWN_TEXT)))
-            .child(self.text)
+            .when(self.icon, |d| d.child(div().flex_none().child(icon(IconName::Spawn, 12., SPAWN_TEXT))))
+            .map(|d| if self.shrinks { d.child(truncate_lh(text, LABEL_TIGHT.line)) } else { d.child(text) })
     }
 }
 

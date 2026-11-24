@@ -245,6 +245,50 @@ fn a_select_box_and_link_fire_on_click(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_long_link_and_spawn_chip_can_shrink_inside_their_row(cx: &mut TestAppContext) {
+    let url = "https://example.test/owner/repository/pull/12345/with/a/very/long/path/that/never/fits";
+    let name = "by An agent with an unreasonably long name that never fits";
+    let fired = Rc::new(Cell::new(0));
+    let f = fired.clone();
+    let cx = window(cx, move || {
+        let f = f.clone();
+        let fixed = || div().flex_none().w(px(60.)).h(px(18.));
+        col()
+            .w(px(240.))
+            .child(
+                row()
+                    .debug_selector(|| "link-row".into())
+                    .w_full()
+                    .type_style(LABEL)
+                    .child(fixed())
+                    .child(Link::new("pr", url).truncate(LABEL.line).on_click(move |_, _, _| f.set(f.get() + 1))),
+            )
+            .child(
+                row()
+                    .debug_selector(|| "chip-row".into())
+                    .w_full()
+                    .child(fixed())
+                    .child(div().debug_selector(|| "chip".into()).flex().flex_shrink().min_w_0().child(SpawnChip::new(name).shrinks())),
+            )
+            .child(row().child(div().debug_selector(|| "plain-chip".into()).flex().flex_none().child(SpawnChip::new(name))))
+            .into_any_element()
+    });
+    cx.run_until_parked();
+    let bounds = |cx: &mut VisualTestContext, selector: &'static str| {
+        cx.debug_bounds(selector).unwrap_or_else(|| panic!("`{selector}` was not laid out"))
+    };
+    let (link_row, link) = (bounds(cx, "link-row"), bounds(cx, "pr"));
+    assert!(link.right() <= link_row.right() + px(0.5), "the link ends inside its row: {link:?} in {link_row:?}");
+    assert!(link.size.width > px(100.), "and takes the room the row has: {link:?}");
+    let (chip_row, chip) = (bounds(cx, "chip-row"), bounds(cx, "chip"));
+    assert!(chip.right() <= chip_row.right() + px(0.5), "the chip ends inside its row: {chip:?} in {chip_row:?}");
+    assert!(chip.size.width > px(100.), "{chip:?}");
+    assert!(bounds(cx, "plain-chip").size.width > px(240.), "without `shrinks` a chip keeps its text's width");
+    click(cx, "pr");
+    assert_eq!(fired.get(), 1, "a shortened link still opens");
+}
+
+#[gpui::test]
 fn static_components_render_in_a_window(cx: &mut TestAppContext) {
     let cx = window(cx, || {
         col()

@@ -58,11 +58,9 @@ impl TranscriptView {
                     .gap(px(SPACE_1_5))
                     .child(div().flex_none().child("Pull request opened"))
                     .child(
-                        // A link does not shrink: a URL longer than the row is clipped.
-                        div().flex_1().min_w_0().overflow_hidden().flex().child(
-                            Link::new(ElementId::NamedInteger("pr-link".into(), block.id), url.clone())
-                                .on_click(move |_, _, cx| cx.open_url(&url)),
-                        ),
+                        Link::new(ElementId::NamedInteger("pr-link".into(), block.id), url.clone())
+                            .truncate(LABEL.line)
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
                     )
                     .into_any_element()
             }

@@ -18,8 +18,6 @@ use super::IssuesView;
 pub(crate) const CARD_WIDTH: f32 = 256.;
 /// Most lines the run line of a card takes: a long error is cut, the panel has all of it.
 const STRIP_LINES: usize = 3;
-/// Most characters of the name in "by Agent" before it is cut.
-const FILED_BY_CHARS: usize = 28;
 
 /// How the run line of a card is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,15 +250,12 @@ impl IssuesView {
         let filed_by = issue
             .filed_by
             .as_ref()
-            .map(|by| format!("by {}", base::fmt::truncate_chars(&self.runner_name(by, cx), FILED_BY_CHARS)));
+            .map(|by| format!("by {}", self.runner_name(by, cx)));
         let tags = row()
             .mt(px(SPACE_2))
             .gap(px(SPACE_1_5))
             .child(Tag::new(issue.kind.label()))
-            // The kit's chip does not shrink: a long name is cut here, the rest clipped.
-            .when_some(filed_by, |d, by| {
-                d.child(div().flex_initial().min_w_0().overflow_hidden().rounded(px(RADIUS_MD)).child(SpawnChip::new(by)))
-            })
+            .when_some(filed_by, |d, by| d.child(SpawnChip::new(by).shrinks()))
             .when(!issue.images.is_empty(), |d| {
                 d.child(
                     row()

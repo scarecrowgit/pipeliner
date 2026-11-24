@@ -9,6 +9,7 @@ use gpui::{
 
 use super::{ClickHandler, Kbd, child_id};
 use crate::focus;
+use crate::layout::truncate_lh;
 use crate::tooltip::Tooltip;
 use crate::assets::{IconName, icon};
 use crate::motion::{self, Look};
@@ -409,12 +410,21 @@ pub struct Link {
     id: ElementId,
     text: SharedString,
     on_click: Option<ClickHandler>,
+    truncate: Option<f32>,
 }
 
 impl Link {
     /// A link reading `text`.
     pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), text: text.into(), on_click: None }
+        Self { id: id.into(), text: text.into(), on_click: None, truncate: None }
+    }
+
+    /// For text that can be long (a URL): in a row too narrow for it the link shrinks and
+    /// ends in `…` instead of leaving the row. `line_height` is the line height of the text
+    /// style around the link, whose size it inherits (`LABEL.line`, `BODY.line`).
+    pub fn truncate(mut self, line_height: f32) -> Self {
+        self.truncate = Some(line_height);
+        self
     }
 
     /// Called when the link is clicked.
@@ -432,13 +442,17 @@ impl RenderOnce for Link {
         let underline = motion::hovered(child_id(&self.id, "hover"), window, cx);
         let el = div().id(self.id).debug_selector(move || selector);
         let el = focus::tab_stop(el, false, cx)
-            .flex_none()
+            .map(|d| if self.truncate.is_some() { d.flex_shrink().min_w_0() } else { d.flex_none() })
             .rounded(px(RADIUS_SM))
             .cursor_pointer()
             .when(underline, |d| d.underline());
+        let text = self.text;
         faded
             .apply(el)
-            .child(self.text)
+            .map(|d| match self.truncate {
+                Some(line_height) => d.child(truncate_lh(text, line_height)),
+                None => d.child(text),
+            })
             .when_some(self.on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)))
     }
 }
