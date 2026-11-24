@@ -43,6 +43,8 @@ pub struct Draft {
     selection: Selection,
     undo: Vec<(GraphDef, &'static str)>,
     redo: Vec<(GraphDef, &'static str)>,
+    /// The last undo step is closed: a folded edit of the same name starts a new step.
+    sealed: bool,
     /// Bumped on every change to the graph; lets a view tell "which graph did I check".
     revision: u64,
     problems: Vec<Problem>,
@@ -62,6 +64,7 @@ impl Draft {
             selection: Selection::None,
             undo: Vec::new(),
             redo: Vec::new(),
+            sealed: false,
             revision: 0,
             problems: Vec::new(),
             checked_revision: None,
@@ -91,6 +94,7 @@ impl Draft {
         self.graph = Some(graph);
         self.undo.clear();
         self.redo.clear();
+        self.sealed = false;
         self.revision += 1;
         self.fix_selection();
         cx.emit(DraftEvent::Changed);
@@ -117,7 +121,8 @@ impl Draft {
         if *graph == before {
             return;
         }
-        let folded = fold && self.undo.last().is_some_and(|(_, last)| *last == what);
+        let folded = fold && !self.sealed && self.undo.last().is_some_and(|(_, last)| *last == what);
+        self.sealed = false;
         if !folded {
             self.undo.push((before, what));
             if self.undo.len() > HISTORY {
@@ -133,9 +138,7 @@ impl Draft {
 
     /// Ends a run of folded edits: the next [`Draft::edit_folded`] starts a new undo step.
     pub fn seal(&mut self) {
-        if let Some((_, what)) = self.undo.last_mut() {
-            *what = "";
-        }
+        self.sealed = true;
     }
 
     /// The name of the edit `undo` would take back.
@@ -161,6 +164,7 @@ impl Draft {
     }
 
     fn after_history(&mut self, cx: &mut Context<Self>) {
+        self.sealed = true;
         self.revision += 1;
         self.fix_selection();
         cx.emit(DraftEvent::Changed);
@@ -301,6 +305,7 @@ mod tests {
                 draft.edit_folded("Move node", |g| g.nodes[0].pos.x = x, cx);
             }
             draft.seal();
+            assert_eq!(draft.can_undo(), Some("Move node"), "a sealed step keeps its name");
             draft.edit_folded("Move node", |g| g.nodes[0].pos.x = 9.0, cx);
 
             draft.undo(cx);

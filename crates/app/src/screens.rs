@@ -4,6 +4,8 @@
 use gpui::AppContext as _;
 use hub::Route;
 use screen_chat::{ChatsView, NewChatView, SessionView};
+use screen_editor::EditorView;
+use screen_home::HomeView;
 use screen_agents::AgentsView;
 use screen_inbox::InboxView;
 use screen_issues::IssuesView;
@@ -130,6 +132,43 @@ pub fn all() -> Screens {
                     let (badges, actions) = for_header
                         .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
                     let header = badges.into_iter().fold(Header::title(title), Header::after);
+                    actions.into_iter().fold(header, Header::action)
+                })
+        })
+        .add(ScreenKind::Home, Keep::One, |_, window, cx| {
+            let view = cx.new(|cx| HomeView::new(window, cx));
+            let for_header = view.clone();
+            Mounted::new(view).header(move |window, cx| {
+                let title = for_header.read(cx).title(cx);
+                let (badges, actions) = for_header
+                    .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                let header = badges.into_iter().fold(Header::title(title), Header::after);
+                actions.into_iter().fold(header, Header::action)
+            })
+        })
+        .add(ScreenKind::Editor, Keep::One, |route, window, cx| {
+            let (pipeline, node) = match route {
+                Route::Editor { pipeline, node } => (pipeline.clone(), node.clone()),
+                // The shell only calls a factory for its own kind.
+                _ => (hub::model::PipelineId::new(""), None),
+            };
+            let view = cx.new(|cx| EditorView::new(pipeline, node, window, cx));
+            let shown = view.clone();
+            let for_header = view.clone();
+            Mounted::new(view)
+                .on_show(move |route, window, cx| {
+                    if let Route::Editor { pipeline, node } = route {
+                        shown.update(cx, |view, cx| view.show(pipeline.clone(), node.clone(), window, cx));
+                    }
+                })
+                .header(move |window, cx| {
+                    let title = for_header.read(cx).title(cx);
+                    let (badges, actions) = for_header
+                        .update(cx, |view, cx| (view.header_badges(window, cx), view.header_actions(window, cx)));
+                    let header = Header::new()
+                        .crumb_to("Agents & pipelines", Route::Agents { runnable: None })
+                        .crumb(title);
+                    let header = badges.into_iter().fold(header, Header::after);
                     actions.into_iter().fold(header, Header::action)
                 })
         })
