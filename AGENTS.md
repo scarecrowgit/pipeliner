@@ -48,7 +48,7 @@ really is before running it; an example binary from an earlier build can be stal
 ```bash
 nix-shell shell.nix --run 'cargo run -p app' </dev/null                       # the real engine, your data
 nix-shell shell.nix --run 'cargo run -p app -- --fixture chat-session' </dev/null   # the in-memory fixture world
-scripts/build-desktop.sh            # release build into dist/harness-next + menu entry
+scripts/build-desktop.sh            # release build into dist/harness + menu entry
 ```
 
 Fixture names are `hub::fixtures::SCENARIOS`. Every screen crate also has

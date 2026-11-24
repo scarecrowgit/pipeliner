@@ -36,13 +36,14 @@ The shell provides the libraries GPUI loads at run time (Wayland, xkbcommon, Vul
 Outside the shell the binary will not start. To get a binary you can start from anywhere:
 
 ```bash
-scripts/build-desktop.sh              # build, write dist/, install the menu entry "Harness Next"
+scripts/build-desktop.sh              # build, write dist/, install the menu entry "Harness"
 scripts/build-desktop.sh --no-menu    # build only
 scripts/build-desktop.sh --no-build   # install what target/release already holds
 ```
 
-This writes `dist/harness-next` (a launcher that sets `LD_LIBRARY_PATH`), `dist/harness-next-bin`
-and `dist/harness-cli`. The new app sits next to the old one and does not replace it.
+This writes `dist/harness` (a launcher that sets `LD_LIBRARY_PATH`), `dist/harness-bin` and
+`dist/harness-cli`. The app from before the rewrite is kept as `dist/harness-v1`; its source is
+the tag `v1-legacy`.
 
 To look at the UI without a model or any data, start it on the fixture backend:
 
