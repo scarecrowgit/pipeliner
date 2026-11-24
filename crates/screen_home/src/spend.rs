@@ -66,9 +66,14 @@ pub(crate) fn bars(period: Period, buckets: &[SpendBucket], offset: i32) -> Vec<
 pub(crate) fn chart_text(period: Period, buckets: &[SpendBucket], daily: Option<f64>, offset: i32) -> ChartText {
     let weekly = period::weekly(period);
     let limit = bar_limit(period, daily);
-    let n = buckets.len();
     let unit = if weekly { "week" } else { "day" };
-    let mut sub = format!("last {n} {unit}s");
+    // The mockup's words per period, whatever number of bars hub sent.
+    let n: u64 = match period {
+        Period::Today | Period::Days7 => 7,
+        Period::Days30 => 30,
+        Period::Days90 => 13,
+    };
+    let mut sub = format!("last {}", base::fmt::plural(n, unit, &format!("{unit}s")));
     if let Some(limit) = limit {
         sub.push_str(&format!(" · limit {} a {unit}", base::fmt::cost(limit)));
     }
@@ -110,6 +115,17 @@ impl HomeView {
         let daily = self.ops.read(cx).settings().value().and_then(|settings| settings.daily_limit_usd);
         let offset = base::time::utc_offset(self.now());
         let (title, sub, body, note) = match state {
+            Block::Ready(buckets) if buckets.iter().all(|bucket| bucket.cost_usd <= 0.) => {
+                let text = chart_text(period, &buckets, daily, offset);
+                let empty = probed(div(), "home-spend-empty")
+                    .w_full()
+                    .py(px(SPACE_6))
+                    .type_style(LABEL)
+                    .text_color(TEXT_MUTED)
+                    .child("Nothing has been spent yet.")
+                    .into_any_element();
+                (text.title, text.sub, empty, None)
+            }
             Block::Ready(buckets) => {
                 let text = chart_text(period, &buckets, daily, offset);
                 let bars = bars(period, &buckets, offset);
@@ -120,7 +136,8 @@ impl HomeView {
                     .axis_labels(top, middle, bottom)
                     .when_some(limit, |chart, limit| chart.limit(limit))
                     .when(period == Period::Days30, |chart| chart.max_labels(DAY_LABELS));
-                (text.title, text.sub, chart.into_any_element(), Some(text.note))
+                // Axis labels never wrap: "$0.50" is wider than the kit's 28 px axis column.
+                (text.title, text.sub, probed(div().w_full().whitespace_nowrap().child(chart), "home-spend-bars").into_any_element(), Some(text.note))
             }
             Block::Loading => {
                 let unit = if period::weekly(period) { "week" } else { "day" };

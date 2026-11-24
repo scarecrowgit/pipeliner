@@ -97,7 +97,12 @@ pub(crate) fn stat_texts(stats: &HomeStats, now: i64, offset: i32) -> Vec<StatTe
     vec![
         cell("working", "Working now", count(stats.working_now), Some(format!("of {} slots", count(stats.slots)))),
         waiting,
-        cell("runs", "Runs", count(stats.runs), Some(format!("{}% finished", stats.finished_percent))),
+        cell(
+            "runs",
+            "Runs",
+            count(stats.runs),
+            Some(if stats.runs == 0 { "no runs yet".to_string() } else { format!("{}% finished", stats.finished_percent) }),
+        ),
         spend,
         cell("shipped", "Shipped", count(stats.shipped), Some("PRs and specs".to_string())),
     ]

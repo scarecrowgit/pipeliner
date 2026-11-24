@@ -1,6 +1,6 @@
 //! Home over the fixture world, in a window, under a stand-in for the shell's header.
 //!
-//! `cargo run -p screen_home --example preview [-- --fixture home]`
+//! `cargo run -p screen_home --example preview [-- --fixture home] [--small]`
 //!
 //! Any scenario of `hub::fixtures::SCENARIOS` works; `empty` shows the empty states.
 
@@ -15,7 +15,11 @@ use ui::prelude::*;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut fixture = "home".to_string();
+    let mut small = false;
     while let Some(arg) = args.next() {
+        if arg == "--small" {
+            small = true;
+        }
         if arg == "--fixture"
             && let Some(name) = args.next()
         {
@@ -25,6 +29,17 @@ fn main() {
     ui::run_app("Home", 1440., 960., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
+        if small {
+            // Almost nothing spent and no limit: the axis labels are "$0.50" and "$0.25".
+            api.with_world(|world| {
+                world.settings.daily_limit_usd = None;
+                for buckets in world.ops.buckets.values_mut() {
+                    for bucket in buckets {
+                        bucket.cost_usd /= 20.;
+                    }
+                }
+            });
+        }
         Hub::new_fixture(api, cx);
         let route = fixtures::start_route(&fixture).map_or(Route::Home, |(route, _)| route);
         hub::navigate(route, cx);

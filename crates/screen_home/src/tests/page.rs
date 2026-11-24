@@ -3,7 +3,7 @@
 use gpui::{AppContext as _, TestAppContext};
 use hub::api::Period;
 
-use super::{NOW, click, open, shown};
+use super::{NOW, click, open, open_with, shown};
 use crate::spend::{bars, chart_text};
 use crate::stats::stat_texts;
 
@@ -101,4 +101,51 @@ async fn the_chosen_period_is_remembered_while_the_app_runs(cx: &mut TestAppCont
     assert_eq!(t.view.read_with(cx, |v, _| v.period()), Period::Days30);
     let second = cx.update(|window, cx| cx.new(|cx| crate::HomeView::new(window, cx)));
     assert_eq!(second.read_with(cx, |v, _| v.period()), Period::Days30);
+}
+
+#[gpui::test]
+async fn the_sub_line_follows_the_period_not_the_bar_count(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx);
+    let one = t
+        .view
+        .read_with(cx, |v, cx| v.ops.read(cx).spend_buckets(Period::Today).and_then(|b| b.value().cloned()))
+        .expect("loaded");
+    let one = &one[one.len() - 1..];
+    for period in [Period::Today, Period::Days7] {
+        let text = chart_text(period, one, Some(10.), 0);
+        assert_eq!(text.sub, "last 7 days · limit $10.00 a day");
+    }
+    assert_eq!(chart_text(Period::Days30, one, None, 0).sub, "last 30 days");
+    assert_eq!(chart_text(Period::Days90, one, None, 0).sub, "last 13 weeks");
+}
+
+#[gpui::test]
+async fn with_nothing_spent_the_chart_gives_way_to_the_empty_state(cx: &mut TestAppContext) {
+    let (_t, cx) = open_with(cx, |world| {
+        for buckets in world.ops.buckets.values_mut() {
+            for bucket in buckets {
+                bucket.cost_usd = 0.;
+            }
+        }
+    });
+    assert!(shown(cx, "home-spend-empty"));
+    assert!(!shown(cx, "home-spend-bars"));
+}
+
+#[gpui::test]
+async fn the_chart_is_drawn_when_something_was_spent(cx: &mut TestAppContext) {
+    let (_t, cx) = open(cx);
+    assert!(shown(cx, "home-spend-bars"));
+    assert!(!shown(cx, "home-spend-empty"));
+}
+
+#[gpui::test]
+async fn the_runs_tile_without_runs_has_no_percentage(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx);
+    let mut today = stats(&t, cx, Period::Today);
+    today.runs = 0;
+    today.finished_percent = 0;
+    let runs = stat_texts(&today, NOW, 0).remove(2);
+    assert_eq!(runs.value, "0");
+    assert_eq!(runs.sub.as_deref(), Some("no runs yet"));
 }
