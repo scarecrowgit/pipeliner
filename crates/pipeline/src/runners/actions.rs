@@ -123,7 +123,7 @@ fn render_one(ctx: &Ctx, place: &Place, path: &str) -> Result<Render> {
     let after = services.renderer.render(&place.path.join(path), ctx.cancel)?;
     let after_blob = services.records.put_blob(&after.png)?;
     let before = if super::git::exists_in(&place.path, &place.base, path, ctx.cancel)? {
-        let text = super::git::git(&place.path, &["show", &format!("{}:{path}", place.base)], ctx.cancel)
+        let text = super::git::file_at(&place.path, &place.base, path, ctx.cancel)
             .with_context(|| format!("reading {path} as it is on {}", place.base))?;
         let file = place.path.join(path);
         let stem = Path::new(path).file_stem().map_or_else(|| "file".into(), |s| s.to_string_lossy().into_owned());

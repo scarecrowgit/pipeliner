@@ -129,6 +129,24 @@ fn render_makes_before_and_after_pictures_of_changed_files() {
 }
 
 #[test]
+fn the_before_picture_of_a_large_file_is_made_from_the_whole_file() {
+    // Mockups weigh over 100 KB; a command's captured output keeps only its head and tail.
+    let old = format!("<style>{}</style><p>old</p>", "a{color:red}".repeat(12_000));
+    let fx = Fx::new();
+    let repo = fx.repo("mockups", &[("screens/home.html", &old)]);
+    let runner = fx.runner(vec![workdir("code", &repo, "design/")]);
+    let coded = code(&fx, &runner, "screens/home.html", "<p>new</p>", false);
+    let render = action(ActionNode::Render { workdir: "code".into(), files: "screens/*.html".into() });
+    let (result, _) = run(&runner, &after("render", render, &coded));
+    let JobResult::Done { output, .. } = &result else { panic!("rendered: {result:?}") };
+    let blobs = fx.records.blobs.lock().unwrap();
+    let before = output.renders[0].before.as_ref().expect("a before picture");
+    let blob = &blobs[before.as_str().trim_start_matches("blob").parse::<usize>().unwrap() - 1];
+    assert_eq!(blob.len(), old.len(), "the base file arrived whole");
+    assert!(blob == old.as_bytes());
+}
+
+#[test]
 fn reports_and_issue_updates_go_to_their_services_except_in_test_runs() {
     let fx = Fx::new();
     let runner = fx.runner(Vec::new());

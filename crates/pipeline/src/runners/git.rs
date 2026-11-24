@@ -9,21 +9,40 @@ use base::process::Cmd;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// `git -C dir args…`: stdout, or an error with git's message.
+/// The most a file read whole out of git may weigh.
+const WHOLE_FILE_LIMIT: usize = 64 * 1024 * 1024;
+
+/// `git -C dir args…`: stdout, or an error with git's message. Long output keeps its head
+/// and tail only; use [`file_at`] for content that must arrive whole.
 pub(crate) fn git(dir: &Path, args: &[&str], cancel: &CancelToken) -> Result<String> {
-    let out = Cmd::new("git")
+    run(dir, args, None, cancel)
+}
+
+/// `path` as it is on `rev`, whole. A file over the limit is an error, never a cut text.
+pub(crate) fn file_at(dir: &Path, rev: &str, path: &str, cancel: &CancelToken) -> Result<String> {
+    run(dir, &["show", &format!("{rev}:{path}")], Some(WHOLE_FILE_LIMIT), cancel)
+}
+
+fn run(dir: &Path, args: &[&str], whole: Option<usize>, cancel: &CancelToken) -> Result<String> {
+    let mut cmd = Cmd::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .timeout(GIT_TIMEOUT)
-        .run(cancel)?;
+        .timeout(GIT_TIMEOUT);
+    if let Some(limit) = whole {
+        cmd = cmd.capture_limit(limit, 0);
+    }
+    let out = cmd.run(cancel)?;
     if out.cancelled {
         bail!("cancelled");
     }
     if !out.success() {
         bail!("git {} failed: {}", args.join(" "), super::services::tail(&out.combined(), 400));
+    }
+    if whole.is_some() && out.truncated {
+        bail!("git {} gave more than {} MB", args.join(" "), WHOLE_FILE_LIMIT / (1024 * 1024));
     }
     Ok(out.stdout)
 }
