@@ -175,7 +175,7 @@ impl HomeView {
                 4,
                 div().type_style(MONO).text_color(TEXT).tabular().child(base::fmt::cost(working.cost_usd)),
             ))
-            .child(cell(5, state(&working.state)))
+            .child(cell(5, state(ix, &working.state)))
             .on_click(move |_, _, cx| hub::open(target.clone(), cx));
         probed(el, format!("home-working-{ix}")).into_any_element()
     }
@@ -194,8 +194,8 @@ fn head_row() -> gpui::Div {
         .children(COLUMNS.iter().enumerate().map(|(ix, (header, _, _))| cell(ix, div().child(*header))))
 }
 
-/// The state cell: a dot, then progress or the question.
-fn state(state: &WorkingState) -> AnyElement {
+/// The state cell of row `ix`: a dot, then progress or the question.
+fn state(ix: usize, state: &WorkingState) -> AnyElement {
     match state {
         WorkingState::Running { percent: Some(percent) } => row()
             .gap(px(SPACE_2))
@@ -208,10 +208,15 @@ fn state(state: &WorkingState) -> AnyElement {
             .child(StatusDot::new(Status::Running))
             .child(div().type_style(BODY).text_color(TEXT_MUTED).child("running"))
             .into_any_element(),
+        // The question is cut to the cell: it never runs into the cell's padding or past the card.
         WorkingState::Waiting { text } => row()
+            .flex_1()
             .gap(px(SPACE_2))
             .child(StatusDot::new(Status::Waiting))
-            .child(div().flex().type_style(BODY).text_color(WARNING).child(truncate(text.clone())))
+            .child(probed(
+                div().flex().flex_1().min_w_0().type_style(BODY).text_color(WARNING).child(truncate(text.clone())),
+                format!("home-working-question-{ix}"),
+            ))
             .into_any_element(),
     }
 }

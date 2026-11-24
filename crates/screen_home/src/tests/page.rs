@@ -149,3 +149,73 @@ async fn the_runs_tile_without_runs_has_no_percentage(cx: &mut TestAppContext) {
     assert_eq!(runs.value, "0");
     assert_eq!(runs.sub.as_deref(), Some("no runs yet"));
 }
+
+#[gpui::test]
+async fn a_narrow_page_puts_the_right_column_under_the_left(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx);
+    assert!(!t.view.read_with(cx, |v, _| v.stacked()), "1440 px: side by side");
+
+    // The app's narrowest window with the sidebar open leaves the page about 660 px.
+    cx.simulate_resize(gpui::size(gpui::px(660.), gpui::px(1600.)));
+    cx.run_until_parked();
+    assert!(t.view.read_with(cx, |v, _| v.stacked()));
+    assert!(shown(cx, "home-spend-chart"));
+    let working = cx.debug_bounds("home-working-5").expect("the last working row");
+    let chart = cx.debug_bounds("home-spend-chart").expect("the chart");
+    assert!(chart.top() > working.bottom(), "the chart comes after the table");
+    assert!(chart.right() <= gpui::px(660.), "the chart stays in the window: {:?}", chart.right());
+    assert!(working.right() <= gpui::px(660.), "so does the table: {:?}", working.right());
+    let need = cx.debug_bounds("home-need-0").expect("a need");
+    // A need row is inside its card's 1 px border; the chart is a card.
+    assert_eq!(need.size.width + gpui::px(2.), chart.size.width, "both columns take the page's width");
+}
+
+#[gpui::test]
+async fn scrolling_to_the_end_stops_at_the_last_card(cx: &mut TestAppContext) {
+    let (_t, cx) = open(cx);
+    // A window shorter than the page: the page scrolls.
+    cx.simulate_resize(gpui::size(gpui::px(1440.), gpui::px(700.)));
+    cx.run_until_parked();
+    let at = cx.debug_bounds("home-need-0").expect("a need").center();
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-5000.))),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    let last = cx.debug_bounds("home-runtime-2").expect("the last runtime");
+    let working = cx.debug_bounds("home-open-agents").expect("the agents link");
+    let bottom = last.bottom().max(working.bottom());
+    // The stage's header is 56 px; the page ends with its 24 px padding at the window's foot.
+    assert!(bottom >= gpui::px(700. - 24. - 40.), "the page scrolled past its end: the last card ends at {bottom:?}");
+    assert!(bottom <= gpui::px(700.), "and the last card is in view: {bottom:?}");
+}
+
+#[gpui::test]
+async fn a_stacked_page_also_stops_at_its_last_card(cx: &mut TestAppContext) {
+    let (_t, cx) = open(cx);
+    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(700.)));
+    cx.run_until_parked();
+    let at = cx.debug_bounds("home-need-0").expect("a need").center();
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-8000.))),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    let last = cx.debug_bounds("home-runtime-2").expect("the last runtime");
+    assert!(last.bottom() >= gpui::px(700. - 24. - 40.), "the page scrolled past its end: {:?}", last.bottom());
+    assert!(last.bottom() <= gpui::px(700.), "the last card is in view: {:?}", last.bottom());
+}
+
+#[gpui::test]
+async fn the_chart_card_keeps_its_height_when_the_window_widens(cx: &mut TestAppContext) {
+    let (_t, cx) = open(cx);
+    let height = cx.debug_bounds("home-spend-chart").expect("the chart").size.height;
+    for width in [900., 1920., 1000., 1440.] {
+        cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(1080.)));
+        cx.run_until_parked();
+        let now = cx.debug_bounds("home-spend-chart").expect("the chart").size.height;
+        assert!((now - height).abs() < gpui::px(40.), "at {width} px the chart card is {now:?} tall, not {height:?}");
+    }
+}

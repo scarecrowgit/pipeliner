@@ -74,14 +74,23 @@ fn runtime_row(ix: usize, runtime: &Runtime, last: bool) -> AnyElement {
     let head = row()
         .gap(px(SPACE_1_5))
         .child(icon(mark(runtime.kind), 14., TEXT_SECONDARY))
-        .child(div().type_style(BODY_STRONG).child(runtime.name.clone()))
-        .child(StatusDot::new(status).small())
+        // A long name ends in an ellipsis; the dot and the slots stay in the card.
+        .child(
+            probed(
+                div().flex().min_w_0().type_style(BODY_STRONG).child(truncate(runtime.name.clone()).flex_initial()),
+                format!("home-runtime-name-{ix}"),
+            ),
+        )
+        .child(div().flex_none().child(StatusDot::new(status).small()))
         .child(grow())
-        .child(if runtime.online {
-            div().type_style(MONO).tabular().child(slots(runtime))
-        } else {
-            div().type_style(LABEL).text_color(TEXT_MUTED).child("offline")
-        });
+        .child(probed(
+            if runtime.online {
+                div().flex_none().type_style(MONO).tabular().child(slots(runtime))
+            } else {
+                div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child("offline")
+            },
+            format!("home-runtime-slots-{ix}"),
+        ));
     let share = base::fmt::percent(f64::from(runtime.slots_busy), f64::from(runtime.slots_total)) as f32 / 100.;
     let note_color = if runtime.online { TEXT_MUTED } else { WARNING };
     let el = col()

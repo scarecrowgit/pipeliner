@@ -123,3 +123,38 @@ async fn a_failed_block_shows_its_error_and_retry_asks_again(cx: &mut TestAppCon
     assert!(shown(cx, "home-stat-runs"), "the stats strip");
     assert!(shown(cx, "home-spend-chart"), "the spend chart");
 }
+
+#[gpui::test]
+async fn a_long_question_is_cut_inside_its_state_cell(cx: &mut TestAppContext) {
+    let (_t, cx) = open_with(cx, |world| {
+        for working in &mut world.ops.working {
+            if let hub::api::WorkingState::Waiting { text } = &mut working.state {
+                *text = "asks whether it may run the whole integration suite against staging tonight".into();
+            }
+        }
+    });
+    assert!(shown(cx, "home-working-question-4"));
+    for ix in 0..6 {
+        let Some(question) = cx.debug_bounds(super::leak(&format!("home-working-question-{ix}"))) else { continue };
+        let row = cx.debug_bounds(super::leak(&format!("home-working-{ix}"))).expect("the row");
+        assert!(
+            question.right() <= row.right() - gpui::px(ui::theme::SPACE_4) + gpui::px(0.5),
+            "row {ix}: the question ends at {:?}, the row at {:?}",
+            question.right(),
+            row.right()
+        );
+    }
+}
+
+#[gpui::test]
+async fn a_long_runtime_name_leaves_its_slots_in_the_card(cx: &mut TestAppContext) {
+    let (_t, cx) = open_with(cx, |world| {
+        world.runtimes[0].name = "build-box-in-the-basement-under-the-stairs-next-to-the-boiler".into();
+    });
+    assert!(shown(cx, "home-runtime-0"));
+    let row = cx.debug_bounds(super::leak("home-runtime-0")).expect("the row");
+    let name = cx.debug_bounds(super::leak("home-runtime-name-0")).expect("the name");
+    let slots = cx.debug_bounds(super::leak("home-runtime-slots-0")).expect("the slots");
+    assert!(slots.right() <= row.right() - gpui::px(ui::theme::SPACE_4), "the slots stay in the card: {:?}", slots.right());
+    assert!(name.right() < slots.left(), "the name gives way to the dot and the slots");
+}

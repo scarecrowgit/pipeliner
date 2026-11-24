@@ -140,6 +140,6 @@ pub(crate) fn route(cx: &mut VisualTestContext) -> Route {
 }
 
 /// `debug_bounds` wants a `'static` selector; tests leak their few.
-fn leak(selector: &str) -> &'static str {
+pub(crate) fn leak(selector: &str) -> &'static str {
     Box::leak(selector.to_string().into_boxed_str())
 }

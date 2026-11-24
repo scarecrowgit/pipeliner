@@ -7,10 +7,13 @@ use ui_rich::charts::{Bar, BarChart, ValueBars, ValueRow, axis_ticks, layout_bar
 
 use crate::blocks::{Block, error_view, probed, skeleton};
 use crate::period;
-use crate::view::{HomeView, SIDE_WIDTH};
+use crate::view::HomeView;
 
-/// Width the note under the chart wraps at: the column, its border and its padding off.
-const NOTE_WIDTH: f32 = SIDE_WIDTH - 2. - 2. * SPACE_4;
+/// Width the note under the chart wraps at in a card `card` px wide: its border and its
+/// padding off.
+fn note_width(card: f32) -> f32 {
+    (card - 2. - 2. * SPACE_4).max(0.)
+}
 /// Height of a row of `ValueBars`, for the probes laid over its rows.
 const AGENT_ROW: f32 = 28.;
 /// How many labels the x axis of a long day chart keeps.
@@ -111,6 +114,7 @@ impl HomeView {
     /// "Spend per day" or "Spend per week".
     pub(crate) fn render_spend(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let period = self.period;
+        let note_width = note_width(self.side_width);
         let state = self.state(self.ops.read(cx).spend_buckets(period));
         let daily = self.ops.read(cx).settings().value().and_then(|settings| settings.daily_limit_usd);
         let offset = base::time::utc_offset(self.now());
@@ -144,7 +148,7 @@ impl HomeView {
                 (
                     format!("Spend per {unit}"),
                     period::span(period).to_string(),
-                    skeleton(NOTE_WIDTH, 120.).into_any_element(),
+                    skeleton(note_width, 120.).into_any_element(),
                     None,
                 )
             }
@@ -164,15 +168,17 @@ impl HomeView {
             .border_color(LINE)
             .rounded(px(RADIUS_XL))
             .p(px(SPACE_4))
+            // One line each: a wrapping line without a definite width is measured at a sliver
+            // in the first frame, and the card kept that height (a tall empty band).
             .child(
                 col()
                     .mb(px(SPACE_4))
-                    .child(div().type_style(HEADING).child(title))
-                    .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(sub)),
+                    .child(div().type_style(HEADING).child(truncate_block(title, HEADING.line)))
+                    .child(div().type_style(LABEL).text_color(TEXT_MUTED).child(truncate_block(sub, LABEL.line))),
             )
             .child(body)
             .when_some(note, |d, note| {
-                d.child(div().mt(px(SPACE_3)).w(px(NOTE_WIDTH)).type_style(LABEL).text_color(TEXT_MUTED).child(note))
+                d.child(div().mt(px(SPACE_3)).w(px(note_width)).type_style(LABEL).text_color(TEXT_MUTED).child(note))
             });
         probed(card, "home-spend-chart").into_any_element()
     }

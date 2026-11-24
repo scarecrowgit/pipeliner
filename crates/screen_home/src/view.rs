@@ -1,8 +1,11 @@
 //! The Home view: its state, the header parts, the keyboard and the page that holds the blocks.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent, MouseButton,
-    Render, SharedString, Subscription, Window, div, prelude::*, px,
+    Render, SharedString, Subscription, Window, canvas, div, prelude::*, px,
 };
 use hub::api::Period;
 use hub::{CatalogModel, OpsModel, Route};
@@ -13,6 +16,11 @@ use crate::period::{self, PERIODS};
 
 /// Width of the right column (`grid-template-columns: minmax(0,1fr) 340px`).
 pub(crate) const SIDE_WIDTH: f32 = 340.;
+/// Narrowest the left column may get beside the right one: the "Working now" table's fixed
+/// columns and room for a name and a task. Below it the right column goes under the left.
+pub(crate) const MIN_LEFT_WIDTH: f32 = 620.;
+/// The page's width until its first frame is measured: a wide window.
+const FIRST_WIDTH: f32 = 1200.;
 
 /// The whole content of `Route::Home`.
 pub struct HomeView {
@@ -25,6 +33,11 @@ pub struct HomeView {
     pub(crate) selected: Option<usize>,
     /// A pinned clock for tests; the wall clock otherwise.
     pub(crate) now: Option<i64>,
+    /// The page's width in the last frame, px.
+    page_width: Rc<Cell<f32>>,
+    /// Width of the right column's cards this frame: [`SIDE_WIDTH`] beside the left column,
+    /// the page's width when it is under it.
+    pub(crate) side_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -43,6 +56,8 @@ impl HomeView {
             catalog,
             selected: None,
             now: None,
+            page_width: Rc::new(Cell::new(FIRST_WIDTH)),
+            side_width: SIDE_WIDTH,
             _subscriptions: subscriptions,
         };
         window.focus(&view.focus_handle);
@@ -91,6 +106,16 @@ impl HomeView {
     /// The period the page shows.
     pub fn period(&self) -> Period {
         self.period
+    }
+
+    /// The right column goes under the left one: the page is too narrow for both side by side.
+    pub fn stacked(&self) -> bool {
+        self.inner_width() < MIN_LEFT_WIDTH + SPACE_4 + SIDE_WIDTH
+    }
+
+    /// The page's width inside its padding, as measured in the last frame.
+    fn inner_width(&self) -> f32 {
+        self.page_width.get() - 2. * SPACE_6
     }
 
     /// The clock the ages are read against.
@@ -179,6 +204,8 @@ impl Focusable for HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stacked = self.stacked();
+        self.side_width = if stacked { self.inner_width().max(0.) } else { SIDE_WIDTH };
         let strip = self.render_stats(cx);
         let needs = self.render_needs(window, cx);
         let working = self.render_working(window, cx);
@@ -187,10 +214,22 @@ impl Render for HomeView {
         let runtimes = self.render_runtimes(cx);
         let focus = self.focus_handle.clone();
         let left = col().flex_1().min_w_0().gap(px(SPACE_4)).child(needs).child(working);
-        let right =
-            col().flex_none().w(px(SIDE_WIDTH)).gap(px(SPACE_4)).child(spend).child(agents).child(runtimes);
+        let right = col()
+            .flex_none()
+            .w(px(self.side_width))
+            .gap(px(SPACE_4))
+            .child(spend)
+            .child(agents)
+            .child(runtimes);
+        let columns = if stacked {
+            col().flex_none().w_full().gap(px(SPACE_4)).child(left.flex_none().w_full()).child(right)
+        } else {
+            row().flex_none().w_full().items_start().gap(px(SPACE_4)).child(left).child(right)
+        };
+        let width = self.page_width.clone();
         div()
             .id("home")
+            .debug_selector(|| "home".into())
             .key_context("Home")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
@@ -202,12 +241,34 @@ impl Render for HomeView {
             .overflow_y_scroll()
             .child(
                 col()
+                    .id("home-page")
+                    .debug_selector(|| "home-page".into())
+                    .relative()
                     .flex_none()
                     .w_full()
                     .p(px(SPACE_6))
                     .gap(px(SPACE_4))
+                    .child(measure_width(move |w| width.replace(w) != w))
                     .child(strip)
-                    .child(row().flex_none().w_full().items_start().gap(px(SPACE_4)).child(left).child(right)),
+                    .child(columns),
             )
     }
+}
+
+/// An invisible layer over its (relative) parent that hands the parent's width to `store`;
+/// when `store` says it changed, the window is drawn again with it.
+fn measure_width(store: impl Fn(f32) -> bool + 'static) -> impl IntoElement {
+    canvas(
+        move |bounds, window, cx| {
+            if store(f32::from(bounds.size.width)) {
+                // A refresh asked for while drawing is dropped: ask once this frame is done.
+                window.defer(cx, |window, _| window.refresh());
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }

@@ -125,9 +125,11 @@ fn strip_frame(cells: impl IntoIterator<Item = impl IntoElement>) -> AnyElement 
 /// One cell of the strip.
 fn cell_frame(ix: usize, name: &str, content: impl IntoElement) -> AnyElement {
     probed(
+        // In a narrow page a long value is clipped at its hairline, never drawn over the next cell.
         div()
             .flex_1()
             .min_w_0()
+            .overflow_hidden()
             .px(px(SPACE_4))
             .py(px(SPACE_3_5))
             .when(ix > 0, |d| d.border_l_1().border_color(LINE))
