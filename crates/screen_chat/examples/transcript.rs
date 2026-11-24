@@ -28,7 +28,7 @@ fn main() {
     ui::run_app("Transcript", 960., 900., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
-        let _hub: Entity<Hub> = Hub::new(api.clone(), cx);
+        let _hub: Entity<Hub> = Hub::new_fixture(api.clone(), cx);
         let id = match (session, fixtures::start_route(&fixture)) {
             (Some(id), _) => SessionId::new(&id),
             (None, Some((Route::Chat { session }, _))) => session,

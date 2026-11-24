@@ -39,7 +39,7 @@ fn main() {
         if long_path {
             api.with_world(|world| world.workdirs.insert(0, long_entry()));
         }
-        Hub::new(api, cx);
+        Hub::new_fixture(api, cx);
         hub::navigate(if chats { Route::Chats } else { Route::NewChat }, cx);
         cx.new(|cx| Stage::new(window, cx))
     });

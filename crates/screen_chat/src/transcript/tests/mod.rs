@@ -4,6 +4,7 @@
 mod blocks;
 mod heights;
 mod permissions;
+mod polish;
 mod scrolling;
 
 use std::sync::Arc;
@@ -63,7 +64,7 @@ pub(crate) fn open_with<'a>(
     let mut world = World::acme(NOW);
     edit(&mut world);
     let api = Arc::new(FixtureApi::new(world));
-    let _hub = cx.update(|cx| Hub::new(api.clone(), cx));
+    let _hub = cx.update(|cx| Hub::new_fixture(api.clone(), cx));
     let id = SessionId::new(session);
     let (stage, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| TranscriptView::new(id, window, cx));

@@ -30,7 +30,7 @@ pub(super) fn panel(this: &SessionView, cx: &mut Context<SessionView>) -> impl I
         .map(|a| a.spawn.max_depth);
 
     let mut sections: Vec<AnyElement> = Vec::new();
-    if let Some(section) = session.as_ref().and_then(|s| workdir(s, detail.as_deref())) {
+    if let Some(section) = session.as_ref().and_then(|s| workdir(&view, s, detail.as_deref(), cx)) {
         sections.push(section);
     }
     sections.push(context(&view, usage, compact_at).into_any_element());
@@ -75,7 +75,18 @@ fn meta(text: impl Into<SharedString>) -> impl IntoElement {
     div().flex_none().child(text.into())
 }
 
-fn workdir(session: &Session, detail: Option<&SessionDetail>) -> Option<AnyElement> {
+/// Characters of mono 11px text the panel's width holds (280px of content).
+const PATH_CHARS: usize = 42;
+
+/// "mac-mini · ~/.harness/…/fix-PAY-1423": the runtime and the home-relative path, shortened
+/// in the middle so both ends stay readable.
+pub(crate) fn workdir_place(runtime: &str, path: &str) -> String {
+    let runtime = if runtime.is_empty() { "local" } else { runtime };
+    let room = PATH_CHARS.saturating_sub(runtime.chars().count() + 3).max(12);
+    format!("{runtime} · {}", crate::workdir::common::short_path(path, room))
+}
+
+fn workdir(view: &Entity<SessionView>, session: &Session, detail: Option<&SessionDetail>, cx: &App) -> Option<AnyElement> {
     let workdir = session.workdir.as_ref()?;
     let name = match &workdir.branch {
         Some(branch) => format!("{} · {branch}", workdir.repo),
@@ -86,11 +97,11 @@ fn workdir(session: &Session, detail: Option<&SessionDetail>) -> Option<AnyEleme
         RepoHost::GitLab => "GitLab",
         RepoHost::Local => "Local",
     };
-    let place = if workdir.runtime.is_empty() {
-        super::share::display_path(&workdir.path)
-    } else {
-        format!("{} · {}", workdir.runtime, super::share::display_path(&workdir.path))
-    };
+    let place = workdir_place(&workdir.runtime, &hub::display_path(&workdir.path, cx));
+    let v = view.clone();
+    let change = Link::new("chat-panel-workdir-change", "Change")
+        .on_click(move |_, window, cx| v.update(cx, |this, cx| this.workdir.update(cx, |chip, cx| chip.open(window, cx))))
+        .probe("chat-panel-workdir-change");
     let git = detail.and_then(|d| d.repo.as_ref()).map(|repo| {
         let mut words = vec![base::fmt::plural(u64::from(repo.dirty), "uncommitted", "uncommitted")];
         if let Some(against) = &repo.compared_to {
@@ -100,6 +111,7 @@ fn workdir(session: &Session, detail: Option<&SessionDetail>) -> Option<AnyEleme
     });
     Some(
         Section::new("Workdir")
+            .meta(change)
             .child(
                 col()
                     .gap(px(SPACE_1))
@@ -109,19 +121,37 @@ fn workdir(session: &Session, detail: Option<&SessionDetail>) -> Option<AnyEleme
                             .child(truncate(name).type_style(MONO).font_weight(gpui::FontWeight::MEDIUM))
                             .child(Badge::new(host).square()),
                     )
-                    .child(truncate_lh(place, MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED))
+                    .child(truncate_lh(place.clone(), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED).probe_value("chat-panel-workdir-path", place))
                     .when_some(git, |d, git| d.child(div().mt(px(SPACE_2)).child(KeyValue::new().row("git", div().child(git))))),
             )
             .into_any_element(),
     )
 }
 
-fn context(view: &Entity<SessionView>, usage: ContextUsage, compact_at: Option<f32>) -> impl IntoElement {
+/// The amount at the right of "Context": "48.2k of 200k", or just "131.3k" when the model's
+/// window is not known.
+pub(crate) fn context_amount(usage: ContextUsage) -> (String, Option<String>) {
+    let used = base::fmt::tokens(usage.tokens);
+    (used, (usage.window > 0).then(|| format!("of {}", base::fmt::tokens(usage.window))))
+}
+
+/// The line under the bar: "24% used · compacts at 90%"; without a known window there is no
+/// share to claim.
+pub(crate) fn context_line(usage: ContextUsage, compact_at: Option<f32>) -> String {
+    if usage.window == 0 {
+        return "Context window not reported for this model".to_string();
+    }
     let pct = base::fmt::percent(usage.tokens as f64, usage.window as f64);
     let mut line = format!("{pct}% used");
     if let Some(at) = compact_at {
         line.push_str(&format!(" · compacts at {}%", (at * 100.).round() as u32));
     }
+    line
+}
+
+fn context(view: &Entity<SessionView>, usage: ContextUsage, compact_at: Option<f32>) -> impl IntoElement {
+    let (used, of) = context_amount(usage);
+    let known = usage.window > 0;
     let v = view.clone();
     Section::new("Context")
         .meta(
@@ -129,17 +159,17 @@ fn context(view: &Entity<SessionView>, usage: ContextUsage, compact_at: Option<f
                 .gap(px(SPACE_1))
                 .type_style(MONO)
                 .tabular()
-                .child(div().text_color(TEXT).child(base::fmt::tokens(usage.tokens)))
-                .child(div().text_color(TEXT_MUTED).child(format!("of {}", base::fmt::tokens(usage.window))))
-                .probe_value("chat-panel-context", format!("{pct}")),
+                .child(div().text_color(TEXT).child(used.clone()))
+                .children(of.map(|of| div().text_color(TEXT_MUTED).child(of)))
+                .probe_value("chat-panel-context", used),
         )
-        .child(Progress::new(usage.fraction()))
+        .when(known, |d| d.child(Progress::new(usage.fraction())))
         .child(
             row()
-                .mt(px(SPACE_2))
+                .when(known, |d| d.mt(px(SPACE_2)))
                 .type_style(LABEL)
                 .text_color(TEXT_MUTED)
-                .child(truncate_lh(line, LABEL.line))
+                .child(truncate_lh(context_line(usage, compact_at), LABEL.line))
                 .child(
                     Button::new("chat-panel-compact", "Compact now")
                         .ghost()
@@ -310,12 +340,18 @@ fn mcp(view: &Entity<SessionView>, detail: &SessionDetail) -> impl IntoElement {
     section.child(list)
 }
 
+/// What `McpState::Starting` reads as. The engine reports it for a server no turn has used yet
+/// (it starts them on first use), so it says "not started" until the engine tells the two apart.
+pub(crate) fn mcp_starting_word() -> &'static str {
+    "not started"
+}
+
 fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> AnyElement {
     let name = format!("chat-panel-mcp-{ix}");
     let cell = named(name.clone()).type_style(LABEL).min_h(px(20.));
     let el = match server.state {
         McpState::Ready => cell.text_color(TEXT_MUTED).child(base::fmt::plural(u64::from(server.tools), "tool", "tools")),
-        McpState::Starting => cell.text_color(TEXT_MUTED).child("starting"),
+        McpState::Starting => cell.text_color(TEXT_MUTED).child(mcp_starting_word()),
         McpState::Disabled => cell.text_color(TEXT_MUTED).child("off"),
         McpState::Failed => {
             let (v, server_name) = (view.clone(), server.name.clone());
@@ -347,7 +383,6 @@ impl SessionView {
 
     fn reconnect(&mut self, server: &str, cx: &mut Context<Self>) {
         hub::commands(cx).reconnect_mcp(&self.session, server, cx);
-        self.model.update(cx, |model, cx| model.refresh_detail(cx));
     }
 
     /// "Manage skills": every installed skill, checked when forced into the session.
@@ -367,7 +402,6 @@ impl SessionView {
             None => forced.push(name.to_string()),
         }
         hub::commands(cx).set_forced_skills(&self.session, forced, cx);
-        self.model.update(cx, |model, cx| model.refresh_detail(cx));
     }
 }
 

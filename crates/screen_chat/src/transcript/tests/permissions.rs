@@ -44,13 +44,39 @@ fn always_allow_sends_the_rule_of_the_request(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn reject_answers_with_an_empty_note_and_resolves(cx: &mut TestAppContext) {
+fn reject_opens_a_note_field_and_sends_the_note(cx: &mut TestAppContext) {
     let (open, cx) = open(cx, FIX, 4000.);
     click(cx, "perm-deny");
+    assert!(open.view.read_with(cx, |view, _| view.is_rejecting()), "Reject asks for a note first");
+    assert!(answers(&open).is_empty());
+    assert!(drawn(cx, "perm-reject-send".into()) && drawn(cx, "perm-reject-cancel".into()));
+
+    click(cx, "perm-reject-cancel");
+    assert!(!open.view.read_with(cx, |view, _| view.is_rejecting()));
+    assert!(waiting(&open, cx), "Cancel keeps the question");
+
+    click(cx, "perm-deny");
+    let input = open.view.read_with(cx, |view, _| view.rejecting.as_ref().map(|r| r.input.clone()));
+    let Some(input) = input else { panic!("the note field is open") };
+    input.update(cx, |input, cx| input.set_text("run it in CI instead", cx));
+    click(cx, "perm-reject-send");
     let sent = answers(&open);
     assert_eq!(sent.len(), 1);
-    assert!(sent[0].contains("Reject") && sent[0].contains("note: \"\""), "{sent:?}");
+    assert!(sent[0].contains("Reject") && sent[0].contains("run it in CI instead"), "{sent:?}");
     assert!(!waiting(&open, cx));
+}
+
+#[gpui::test]
+fn enter_in_the_note_field_rejects(cx: &mut TestAppContext) {
+    let (open, cx) = open(cx, FIX, 4000.);
+    let started = open.view.update_in(cx, |view, window, cx| view.start_reject(window, cx));
+    assert!(started);
+    settle(cx);
+    cx.simulate_input("not on my laptop");
+    cx.simulate_keystrokes("enter");
+    settle(cx);
+    let sent = answers(&open);
+    assert!(sent.len() == 1 && sent[0].contains("not on my laptop"), "{sent:?}");
 }
 
 #[gpui::test]

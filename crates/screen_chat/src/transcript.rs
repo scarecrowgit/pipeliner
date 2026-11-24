@@ -67,6 +67,13 @@ pub(crate) struct RowUi {
     pub expanded: bool,
 }
 
+/// A Reject being written: the request, its one-line note field.
+pub(crate) struct Rejecting {
+    pub request: RequestId,
+    pub input: Entity<ui_rich::TextInput>,
+    _sub: Subscription,
+}
+
 /// When the view saw a tool call start and finish, for its duration.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Timing {
@@ -94,6 +101,10 @@ pub struct TranscriptView {
     markdown: HashMap<BlockId, Entity<Markdown>>,
     diffs: HashMap<BlockId, (Arc<Block>, Arc<DiffFile>)>,
     timings: HashMap<String, Timing>,
+    /// Each call's display from before its result, by call id: an interrupted call's result
+    /// replaces it with a generic error, and the row keeps the look of its kind.
+    call_displays: HashMap<String, hub::model::ToolDisplay>,
+    rejecting: Option<Rejecting>,
     now: Option<i64>,
     ticker: Option<Task<()>>,
     older_check: bool,
@@ -123,6 +134,13 @@ impl TranscriptView {
         let subscriptions = vec![
             cx.subscribe(&model, |this: &mut Self, _, event: &SessionEvent, cx| this.on_event(event, cx)),
             cx.observe(&model, |this: &mut Self, _, cx| {
+                // A question answered elsewhere takes its note field with it.
+                let gone = this.rejecting.as_ref().is_some_and(|r| {
+                    !this.model.read(cx).pending().iter().any(|request| request.id == r.request)
+                });
+                if gone {
+                    this.cancel_reject(cx);
+                }
                 this.remeasure_footer();
                 this.ensure_ticker(cx);
                 cx.notify();
@@ -139,6 +157,8 @@ impl TranscriptView {
             markdown: HashMap::new(),
             diffs: HashMap::new(),
             timings: HashMap::new(),
+            call_displays: HashMap::new(),
+            rejecting: None,
             now: None,
             ticker: None,
             older_check: false,
@@ -146,6 +166,10 @@ impl TranscriptView {
             _subscriptions: subscriptions,
         };
         view.links = Links::compute(view.model.read(cx).blocks());
+        let blocks: Vec<Arc<Block>> = view.model.read(cx).blocks().to_vec();
+        for block in &blocks {
+            view.remember_display(block);
+        }
         view
     }
 
@@ -196,6 +220,58 @@ impl TranscriptView {
             }
             None => false,
         }
+    }
+
+    /// Opens the note field of Reject on the newest pending question (the `Esc` hint), with
+    /// focus in it: Enter rejects with the note, Escape puts the answers back.
+    pub fn start_reject(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match self.pending_request(cx) {
+            Some(id) => {
+                self.start_reject_for(&id, window, cx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A Reject note is being written.
+    pub fn is_rejecting(&self) -> bool {
+        self.rejecting.is_some()
+    }
+
+    pub(crate) fn start_reject_for(&mut self, id: &RequestId, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| ui_rich::TextInput::new(cx).placeholder("Tell the agent why, or what to do instead"));
+        let sub = cx.subscribe_in(&input, window, |this, _, event: &ui_rich::TextInputEvent, _, cx| match event {
+            ui_rich::TextInputEvent::Submit => this.send_reject(cx),
+            ui_rich::TextInputEvent::Cancel => this.cancel_reject(cx),
+            _ => {}
+        });
+        input.read(cx).focus(window);
+        self.rejecting = Some(Rejecting { request: id.clone(), input, _sub: sub });
+        self.remeasure_all();
+        cx.notify();
+    }
+
+    /// Rejects the question being answered with what the note field holds.
+    pub(crate) fn send_reject(&mut self, cx: &mut Context<Self>) {
+        let Some(rejecting) = self.rejecting.take() else { return };
+        let note = rejecting.input.read(cx).text().trim().to_string();
+        self.answer(&rejecting.request, PermissionDecision::Reject { note }, cx);
+        self.remeasure_all();
+        cx.notify();
+    }
+
+    /// Closes the note field; the question keeps its answers.
+    pub(crate) fn cancel_reject(&mut self, cx: &mut Context<Self>) {
+        if self.rejecting.take().is_some() {
+            self.remeasure_all();
+            cx.notify();
+        }
+    }
+
+    /// The note field of a Reject on `id`, if one is open.
+    pub(crate) fn reject_note(&self, id: &RequestId) -> Option<&Entity<ui_rich::TextInput>> {
+        self.rejecting.as_ref().filter(|r| &r.request == id).map(|r| &r.input)
     }
 
     /// Fixes the clock used for "2h" times, for previews and tests.
@@ -274,8 +350,19 @@ impl TranscriptView {
         cx.notify();
     }
 
+    /// Keeps the display of a call that has no result yet.
+    fn remember_display(&mut self, block: &Block) {
+        if let BlockKind::Tool(tool) = &block.kind
+            && !matches!(tool.state, ToolState::Finished { .. })
+            && let Some(display) = &tool.display
+        {
+            self.call_displays.insert(tool.id.clone(), display.clone());
+        }
+    }
+
     /// Keeps a row's cached markdown and timing in step with its block.
     fn sync_block(&mut self, block: &Arc<Block>, busy: bool, cx: &mut Context<Self>) {
+        self.remember_display(block);
         if let Some(text) = message::markdown_text(&block.kind)
             && let Some(md) = self.markdown.get(&block.id)
         {
@@ -313,6 +400,12 @@ impl TranscriptView {
         if !range.is_empty() {
             self.splice_list(range.clone(), range.len());
         }
+    }
+
+    /// Every row measured again (a banner changed its height in place).
+    fn remeasure_all(&self) {
+        let count = self.list.item_count();
+        self.remeasure(0..count);
     }
 
     fn remeasure_footer(&self) {

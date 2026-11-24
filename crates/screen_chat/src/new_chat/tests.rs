@@ -44,7 +44,7 @@ pub(crate) fn open_with<V: Render + 'static>(
     change(&mut world);
     let api = Arc::new(FixtureApi::new(world));
     cx.update(|cx| {
-        Hub::new(api.clone(), cx);
+        Hub::new_fixture(api.clone(), cx);
         hub::navigate(route, cx);
     });
     let slot: Rc<RefCell<Option<Entity<V>>>> = Rc::default();

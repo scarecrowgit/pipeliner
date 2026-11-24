@@ -28,7 +28,7 @@ fn main() {
     ui::run_app("Chat session", 1440., 960., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
-        Hub::new(api.clone(), cx);
+        Hub::new_fixture(api.clone(), cx);
         let session = match fixtures::start_route(&fixture) {
             Some((Route::Chat { session }, _)) => session,
             _ => SessionId::new("chat-1423"),

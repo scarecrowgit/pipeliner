@@ -259,7 +259,7 @@ impl WorkdirChip {
         };
         let Some(path) = path else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(path.display().to_string()));
-        overlays(window, cx).toast(Toast::new("Path copied").detail(display_path(&path)), cx);
+        overlays(window, cx).toast(Toast::new("Path copied").detail(display_path(&path, cx)), cx);
     }
 
     fn open_switch(&mut self, id: SessionId, target: Option<WorkdirEntry>, window: &mut Window, cx: &mut Context<Self>) {

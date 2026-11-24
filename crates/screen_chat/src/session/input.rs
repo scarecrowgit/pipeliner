@@ -119,32 +119,44 @@ impl SessionView {
         }
     }
 
-    /// Enter while a turn runs: the composer itself refuses to send, but the API queues a
-    /// message for the next turn, so it goes out from here.
+    /// Keys of the text area the composer leaves alone. With the composer empty, Enter allows
+    /// the pending permission question and Escape starts rejecting it (the banner's `↵` and
+    /// `Esc` hints). Enter while a turn runs sends anyway: the composer refuses, but the API
+    /// queues a message for the next turn.
     pub(super) fn on_area_event(
         &mut self,
         _: &Entity<ui_rich::TextArea>,
         event: &TextAreaEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(event, TextAreaEvent::Submit) {
-            return;
-        }
         let c = self.composer.read(cx);
-        if !c.is_busy() || c.disabled_reason().is_some() || c.menu_open() {
+        if c.disabled_reason().is_some() || c.menu_open() {
             return;
         }
-        if c.attachments().iter().any(|a| a.progress.is_some()) {
-            return;
+        let empty = c.text().trim().is_empty() && c.attachments().is_empty();
+        // The composer handles Enter before this runs and may have just sent and cleared what
+        // was typed; the draft as of the last keystroke says whether it was empty.
+        let was_empty = memory::draft(&self.session, cx).is_none();
+        let waiting = self.model.read(cx).is_waiting();
+        match event {
+            TextAreaEvent::Submit if empty && was_empty && waiting => {
+                self.transcript.update(cx, |t, cx| t.allow_pending(cx));
+            }
+            TextAreaEvent::Cancel if empty && was_empty && waiting && !c.is_busy() => {
+                self.transcript.update(cx, |t, cx| t.start_reject(window, cx));
+            }
+            TextAreaEvent::Submit if c.is_busy() && !empty => {
+                if c.attachments().iter().any(|a| a.progress.is_some()) {
+                    return;
+                }
+                let draft = c.draft();
+                let text = draft.text.trim_end().to_string();
+                self.composer.update(cx, |c, cx| c.clear(cx));
+                self.send(text, &draft.attachments, cx);
+            }
+            _ => {}
         }
-        let draft = c.draft();
-        let text = draft.text.trim_end().to_string();
-        if text.trim().is_empty() && draft.attachments.is_empty() {
-            return;
-        }
-        self.composer.update(cx, |c, cx| c.clear(cx));
-        self.send(text, &draft.attachments, cx);
     }
 
     /// Sends a message with the uploaded images of `attachments`; a busy session queues it.

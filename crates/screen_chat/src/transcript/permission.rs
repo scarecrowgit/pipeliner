@@ -8,6 +8,7 @@ use hub::model::{PermissionDecision, PermissionRequest, ToolClass, ToolDisplay};
 use hub::transcript::{PermissionBlock, PermissionState};
 use ui::dev::Probe;
 use ui::prelude::*;
+use ui_rich::text_field;
 
 use super::TranscriptView;
 
@@ -86,19 +87,38 @@ impl TranscriptView {
             Button::new("perm-deny", "Reject")
                 .danger()
                 .small()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.answer(&id, PermissionDecision::Reject { note: String::new() }, cx)
-                }))
+                .on_click(cx.listener(move |this, _, window, cx| this.start_reject_for(&id, window, cx)))
                 .probe("perm-deny")
         };
-        let answers = row()
-            .gap(px(SPACE_2))
-            .pl(px(MARK + SPACE_3))
-            .child(allow)
-            .children(always)
-            .child(deny)
-            .child(grow())
-            .child(KeyHints::new().hint(["↵"], "allow").hint(["Esc"], "reject"));
+        let answers = match self.reject_note(&request.id).cloned() {
+            Some(input) => row()
+                .gap(px(SPACE_2))
+                .pl(px(MARK + SPACE_3))
+                .child(div().flex_1().min_w_0().child(text_field("perm-reject-note", &input).small()).probe("perm-reject-note"))
+                .child(
+                    Button::new("perm-reject-send", "Reject")
+                        .danger()
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.send_reject(cx)))
+                        .probe("perm-reject-send"),
+                )
+                .child(
+                    Button::new("perm-reject-cancel", "Cancel")
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_reject(cx)))
+                        .probe("perm-reject-cancel"),
+                )
+                .child(KeyHints::new().hint(["↵"], "reject").hint(["Esc"], "cancel")),
+            None => row()
+                .gap(px(SPACE_2))
+                .pl(px(MARK + SPACE_3))
+                .child(allow)
+                .children(always)
+                .child(deny)
+                .child(grow())
+                .child(KeyHints::new().hint(["↵"], "allow").hint(["Esc"], "reject")),
+        };
         Banner::new()
             .tone(BannerTone::Warning)
             .child(col().w_full().gap(px(SPACE_3)).child(top).child(answers))

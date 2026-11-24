@@ -31,6 +31,15 @@ pub(crate) fn subagent_meta(model: Option<&str>, state: &SubagentState) -> Strin
     parts.join(" · ")
 }
 
+/// "depth 1 of 2", or "depth 1" when the spawning policy's limit is not known.
+pub(crate) fn depth_words(sub: &SubagentBlock) -> String {
+    let depth = sub.depth.max(1);
+    match sub.max_depth {
+        Some(max) if max > 0 => format!("depth {depth} of {max}"),
+        _ => format!("depth {depth}"),
+    }
+}
+
 /// "3 of 4 done".
 pub(crate) fn todo_progress(items: &[TodoItem]) -> String {
     let done = items.iter().filter(|item| item.status == TodoStatus::Done).count();
@@ -111,10 +120,10 @@ impl TranscriptView {
             .text_color(SPAWN_TEXT)
             .child(icon(IconName::Spawn, 12., SPAWN_TEXT))
             .child(format!(
-                "{} started {} · depth {}",
+                "{} started {} · {}",
                 self.agent_name(cx),
                 base::fmt::plural(group.size as u64, "sub-agent", "sub-agents"),
-                sub.depth.max(1)
+                depth_words(sub)
             ))
             .into_any_element();
         group_card(group, SPAWN_LINE, Some(header), line.into_any_element())

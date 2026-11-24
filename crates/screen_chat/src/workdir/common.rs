@@ -77,13 +77,9 @@ pub(crate) fn folder_name(path: &Path) -> String {
     path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
 }
 
-thread_local! {
-    static PATHS: base::paths::Paths = base::paths::Paths::from_env();
-}
-
 /// A path as the user reads it: `~/code/acme` under the home directory.
-pub(crate) fn display_path(path: &Path) -> String {
-    PATHS.with(|paths| paths.display(path))
+pub(crate) fn display_path(path: &Path, cx: &App) -> String {
+    hub::display_path(path, cx)
 }
 
 /// A path shortened in the middle to about `max` characters, keeping its first part and as
@@ -110,8 +106,8 @@ pub(crate) fn short_path(text: &str, max: usize) -> String {
 }
 
 /// A path as the user typed it: `~` resolves to the home directory.
-pub(crate) fn expand_path(text: &str) -> PathBuf {
-    PATHS.with(|paths| paths.expand(text.trim()))
+pub(crate) fn expand_path(text: &str, cx: &App) -> PathBuf {
+    hub::hub(cx).read(cx).paths().expand(text.trim())
 }
 
 /// What was typed reads as a path rather than a search: it starts with `/` or `~`.
@@ -291,7 +287,7 @@ pub(crate) fn merge_places(lists: impl IntoIterator<Item = Vec<WorkdirEntry>>) -
 }
 
 /// The entry matches what was typed in a folder search.
-pub(crate) fn entry_matches(entry: &WorkdirEntry, query: &str) -> bool {
+pub(crate) fn entry_matches(entry: &WorkdirEntry, query: &str, cx: &App) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return true;
@@ -300,7 +296,7 @@ pub(crate) fn entry_matches(entry: &WorkdirEntry, query: &str) -> bool {
         "{} {} {}",
         entry.repo,
         entry.branch.as_deref().unwrap_or_default(),
-        display_path(&entry.path)
+        display_path(&entry.path, cx)
     )
     .to_lowercase();
     query.split_whitespace().all(|word| hay.contains(word))
@@ -465,7 +461,7 @@ impl FolderRow {
                             .child(Badge::new(host_label(entry.host)).square())
                             .when_some(tag, |d, branch| d.child(Tag::new(branch).mono())),
                     )
-                    .child(truncate_lh(display_path(&entry.path), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
+                    .child(truncate_lh(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
             )
             .child(
                 row()

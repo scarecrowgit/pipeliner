@@ -131,7 +131,8 @@ impl SwitchWorkdir {
 
     /// A folder from the list: its path goes in the field and its facts are read.
     pub(crate) fn pick(&mut self, entry: &WorkdirEntry, cx: &mut Context<Self>) {
-        self.path.update(cx, |input, cx| input.set_text(&display_path(&entry.path), cx));
+        let shown = display_path(&entry.path, cx);
+        self.path.update(cx, |input, cx| input.set_text(&shown, cx));
         self.mode = mode_for_entry(entry, self.mode);
         self.select(entry.path.clone(), cx);
     }
@@ -165,7 +166,7 @@ impl SwitchWorkdir {
         if !looks_like_path(&text) {
             return;
         }
-        let path = expand_path(&text);
+        let path = expand_path(&text, cx);
         if self.facts.path() != Some(path.as_path()) {
             self.select(path, cx);
         }
@@ -264,7 +265,7 @@ impl SwitchWorkdir {
             .places
             .iter()
             .filter(|entry| Some(&entry.path) != current.as_ref())
-            .filter(|entry| common::entry_matches(entry, &query))
+            .filter(|entry| common::entry_matches(entry, &query, cx))
             .take(LISTED)
             .cloned()
             .collect();
@@ -286,7 +287,7 @@ impl Render for SwitchWorkdir {
             || "No folder".to_string(),
             |workdir| workdir_label(&workdir.repo, workdir.branch.as_deref()),
         );
-        let now_path = self.current.as_ref().map(|workdir| display_path(&workdir.path));
+        let now_path = self.current.as_ref().map(|workdir| display_path(&workdir.path, cx));
         let this = cx.weak_entity();
         let on_mode: common::ModeHandler = Rc::new(move |mode, _, cx| {
             this.update(cx, |this, cx| this.set_mode(mode, cx)).ok();

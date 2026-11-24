@@ -70,6 +70,42 @@ impl ToolStatus {
     }
 }
 
+/// How the engine words the result of a call cut off by a stop, a crash or a restart.
+const INTERRUPTED_PREFIX: &str = "Interrupted before the tool finished";
+
+/// The error text a finished call carries in its display.
+fn error_text(display: &ToolDisplay) -> &str {
+    match display {
+        ToolDisplay::Text { body, .. } => body,
+        ToolDisplay::Command { output, .. } => output,
+        ToolDisplay::Line { result, .. } => result,
+        ToolDisplay::Diff(_) => "",
+    }
+}
+
+/// The call never finished: it was answered as interrupted (by a stop, or after a restart).
+pub(crate) fn is_interrupted(tool: &ToolBlock) -> bool {
+    matches!(tool.state, ToolState::Finished { is_error: true })
+        && tool.display.as_ref().is_some_and(|d| error_text(d).trim_start().starts_with(INTERRUPTED_PREFIX))
+}
+
+/// The display an interrupted call keeps: the look of its kind (from before the result, when
+/// the result replaced it with a generic error card), without the error as its output.
+pub(crate) fn interrupted_display(tool: &ToolBlock, before: Option<&ToolDisplay>) -> Option<ToolDisplay> {
+    let display = match &tool.display {
+        Some(ToolDisplay::Text { title, .. }) if *title == tool.name => before.cloned().or_else(|| tool.display.clone()),
+        other => other.clone(),
+    }?;
+    Some(match display {
+        ToolDisplay::Command { command, .. } => ToolDisplay::Command { command, output: String::new(), exit_code: None },
+        ToolDisplay::Line { verb, target, .. } => ToolDisplay::Line { verb, target, result: String::new() },
+        ToolDisplay::Text { title, body } if body.trim_start().starts_with(INTERRUPTED_PREFIX) => {
+            ToolDisplay::Text { title, body: String::new() }
+        }
+        other => other,
+    })
+}
+
 /// `edit_file` reads `edit`; a new file reads `write`.
 fn diff_verb(name: &str, file: &FileDiff) -> &'static str {
     if file.created || name.contains("write") { "write" } else { "edit" }
@@ -122,6 +158,7 @@ impl TranscriptView {
     /// Where `tool` is, from its state, the session and what the view timed.
     pub(crate) fn tool_status(&self, tool: &ToolBlock, busy: bool) -> ToolStatus {
         let phase = match tool.state {
+            _ if is_interrupted(tool) => Phase::Interrupted,
             ToolState::Started if busy => Phase::Preparing,
             ToolState::Ready if busy => Phase::Running,
             ToolState::Started | ToolState::Ready => Phase::Interrupted,
@@ -131,7 +168,17 @@ impl TranscriptView {
             },
             ToolState::Finished { is_error: true } => Phase::Failed,
         };
-        let secs = self.timings.get(&tool.id).map(|timing| timing.secs());
+        // The block's own times when it has both ends (history included); while it runs, what
+        // the view timed.
+        let secs = match tool.duration_ms() {
+            // Under a second says nothing: history stores a call and its result in one go.
+            Some(ms) if ms >= 1000 => Some(ms as u64 / 1000),
+            Some(_) => None,
+            None if matches!(phase, Phase::Preparing | Phase::Running) => {
+                self.timings.get(&tool.id).map(|timing| timing.secs())
+            }
+            None => None,
+        };
         ToolStatus { phase, secs }
     }
 
@@ -154,7 +201,12 @@ impl TranscriptView {
                 .into_any_element();
         }
         let status = self.tool_status(tool, self.model.read(cx).is_busy());
-        let body = match &tool.display {
+        let display = if status.phase == Phase::Interrupted && is_interrupted(tool) {
+            interrupted_display(tool, self.call_displays.get(&tool.id))
+        } else {
+            tool.display.clone()
+        };
+        let body = match &display {
             None => line_row(place, &tool.name, "", "", status),
             Some(ToolDisplay::Line { verb, target, result }) => line_row(place, verb, target, result, status),
             Some(ToolDisplay::Command { command, output, .. }) => self.command_card(index, block, command, output, status, cx),

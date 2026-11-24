@@ -102,7 +102,7 @@ impl NewChatView {
                                         .text_color(TEXT_MUTED)
                                         .debug_selector(|| "new-chat-panel-path".into())
                                         .child(truncate_lh(
-                                            format!("{runtime} · {}", display_path(&path)),
+                                            format!("{runtime} · {}", display_path(&path, cx)),
                                             MONO_SM.line,
                                         ))
                                         .probe("new-chat-panel-path"),

@@ -50,7 +50,7 @@ fn read(chip: &Entity<WorkdirChip>, cx: &App) -> Shown {
         .places()
         .iter()
         .filter(|entry| Some(&entry.path) != current_path.as_ref())
-        .filter(|entry| entry_matches(entry, &query))
+        .filter(|entry| entry_matches(entry, &query, cx))
         .cloned()
         .collect();
     Shown { session, current, state, places, loading }
@@ -63,7 +63,7 @@ pub(super) fn build(chip: &Entity<WorkdirChip>, window: &mut Window, cx: &mut Ap
     let mut pop = Popover::new().width(WIDTH);
 
     if shown.session {
-        pop = pop.child(head(&shown));
+        pop = pop.child(head(&shown, cx));
         pop = pop.child(PopSeparator);
     }
     pop = pop.child(
@@ -129,7 +129,7 @@ pub(super) fn build(chip: &Entity<WorkdirChip>, window: &mut Window, cx: &mut Ap
 }
 
 /// "Working in": the session's folder, branch, runtime, path and git state.
-fn head(shown: &Shown) -> AnyElement {
+fn head(shown: &Shown, cx: &App) -> AnyElement {
     let mut head = col().flex_none().px(px(SPACE_2_5)).pt(px(SPACE_2_5)).pb(px(SPACE_2));
     head = head.child(div().type_style(LABEL).text_color(TEXT_MUTED).child("Working in"));
     match &shown.current {
@@ -155,7 +155,7 @@ fn head(shown: &Shown) -> AnyElement {
                         .mt(px(SPACE_0_5))
                         .type_style(MONO_SM)
                         .text_color(TEXT_MUTED)
-                        .child(truncate_lh(format!("{runtime} · {}", display_path(&workdir.path)), MONO_SM.line)),
+                        .child(truncate_lh(format!("{runtime} · {}", display_path(&workdir.path, cx)), MONO_SM.line)),
                 )
                 .when_some(shown.state.clone(), |d, state| {
                     d.child(div().mt(px(SPACE_1)).type_style(LABEL).text_color(TEXT_SECONDARY).child(state))
@@ -228,7 +228,7 @@ fn item(
                         )
                         .child(Badge::new(host_label(entry.host)).square()),
                 )
-                .child(truncate_block(display_path(&entry.path), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
+                .child(truncate_block(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
         )
         .child(div().flex_none().type_style(LABEL).text_color(tone).whitespace_nowrap().child(hint))
         .probe(name)

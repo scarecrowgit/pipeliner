@@ -181,7 +181,7 @@ impl NewChatView {
                 .recent
                 .first()
                 .and_then(|entry| entry.path.parent())
-                .map(display_path)
+                .map(|p| display_path(p, cx))
                 .unwrap_or_default();
             list = list.child(group_head("Recent", parent));
             if listing.recent.is_empty() {
@@ -246,7 +246,7 @@ impl NewChatView {
                             .on_click(cx.listener(|this, _, _, cx| this.clone_repo(cx))),
                     ),
             )
-            .child(Note::new(format!("Clones into {}", display_path(&self.clone_parent()))))
+            .child(Note::new(format!("Clones into {}", display_path(&self.clone_parent(cx), cx))))
     }
 
     fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -394,7 +394,7 @@ fn typed_row(
                     row()
                         .gap(px(SPACE_1_5))
                         .child(div().flex_none().type_style(BODY_STRONG).child("Open"))
-                        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(display_path(path)))),
+                        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(display_path(path, cx)))),
                 )
                 .child(div().type_style(LABEL).text_color(tone).child(sub)),
         )

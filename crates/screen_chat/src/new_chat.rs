@@ -353,7 +353,7 @@ impl NewChatView {
     pub(crate) fn listing(&self, cx: &App) -> Listing {
         let text = self.search.read(cx).text().to_string();
         if looks_like_path(&text) {
-            let typed = expand_path(&text);
+            let typed = expand_path(&text, cx);
             let prefix = typed.to_string_lossy().to_lowercase();
             let completions = merge_places([self.recent.clone(), self.worktrees.clone()])
                 .into_iter()
@@ -361,12 +361,12 @@ impl NewChatView {
                 .collect();
             return Listing { typed: Some(typed), completions, ..Listing::default() };
         }
-        let recent: Vec<WorkdirEntry> = self.recent.iter().filter(|e| entry_matches(e, &text)).cloned().collect();
+        let recent: Vec<WorkdirEntry> = self.recent.iter().filter(|e| entry_matches(e, &text, cx)).cloned().collect();
         let worktrees: Vec<WorkdirEntry> = self
             .worktrees
             .iter()
             .filter(|entry| !recent.iter().any(|seen| seen.path == entry.path))
-            .filter(|entry| entry_matches(entry, &text))
+            .filter(|entry| entry_matches(entry, &text, cx))
             .cloned()
             .collect();
         let worktrees_total = worktrees.len();
@@ -386,7 +386,7 @@ impl NewChatView {
             TextInputEvent::Tab => {
                 let listing = self.listing(cx);
                 if let Some(first) = listing.completions.first() {
-                    let text = format!("{}/", display_path(&first.path));
+                    let text = format!("{}/", display_path(&first.path, cx));
                     self.search.update(cx, |input, cx| input.set_text(&text, cx));
                     cx.notify();
                 }
@@ -463,13 +463,13 @@ impl NewChatView {
     }
 
     /// Where a clone lands: beside the chosen repo, else beside the recent folders.
-    pub(crate) fn clone_parent(&self) -> PathBuf {
+    pub(crate) fn clone_parent(&self, cx: &App) -> PathBuf {
         let near = self
             .facts
             .repo()
             .map(|facts| facts.main_checkout.clone())
             .or_else(|| self.recent.iter().find(|entry| !entry.is_worktree).map(|entry| entry.path.clone()));
-        near.and_then(|path| path.parent().map(Path::to_path_buf)).unwrap_or_else(|| expand_path("~"))
+        near.and_then(|path| path.parent().map(Path::to_path_buf)).unwrap_or_else(|| expand_path("~", cx))
     }
 
     /// Clones what was typed beside the other repos; the search then offers the new folder.
@@ -484,11 +484,12 @@ impl NewChatView {
             format!("https://github.com/{}", typed.trim_matches('/'))
         };
         let name = folder_name(Path::new(url.trim_end_matches('/').trim_end_matches(".git")));
-        let dest = self.clone_parent().join(name);
+        let dest = self.clone_parent(cx).join(name);
         hub::commands(cx).clone_repo(&url, &dest, cx);
         self.cloning = false;
         self.clone_url.update(cx, |input, cx| input.set_text("", cx));
-        self.search.update(cx, |input, cx| input.set_text(&display_path(&dest), cx));
+        let shown = display_path(&dest, cx);
+        self.search.update(cx, |input, cx| input.set_text(&shown, cx));
         cx.notify();
     }
 

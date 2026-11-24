@@ -84,6 +84,10 @@ pub struct NodeOutput {
     pub renders: Vec<Render>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
+    /// A merge action left the base branch containing the instance's branch, whether it merged
+    /// now or found it merged already.
+    #[serde(default)]
+    pub merged: bool,
     #[serde(default)]
     pub cost_usd: f64,
     #[serde(default)]

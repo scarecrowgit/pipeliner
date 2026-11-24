@@ -2,8 +2,6 @@
 //! export includes, and the two local exports (`.md`, `.jsonl`) written through the API to a
 //! path picked in the platform's save dialog.
 
-use std::path::{Path, PathBuf};
-
 use gpui::{AnyElement, App, Context, Entity, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::api::{ExportFormat, ExportOptions};
 use ui::components::PopSeparator;
@@ -34,16 +32,6 @@ impl From<ShareOptions> for ExportOptions {
     }
 }
 
-/// The user's home, for showing paths as `~/…` and as the export folder of a chat with none.
-fn home() -> PathBuf {
-    base::paths::Paths::from_env().home
-}
-
-/// `path` with the home folder written as `~`.
-pub(super) fn display_path(path: &Path) -> String {
-    base::paths::Paths::from_env().display(path)
-}
-
 impl SessionView {
     /// Opens the share popover under the header's Share button.
     pub(super) fn open_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -60,7 +48,7 @@ impl SessionView {
     /// Asks where to write the transcript, then has the engine write it there.
     fn export(&mut self, format: ExportFormat, window: &mut Window, cx: &mut Context<Self>) {
         ui::overlays(window, cx).close(SHARE, window, cx);
-        let dir = self.header_session(cx).and_then(|s| s.workdir.as_ref()).map_or_else(home, |w| w.path.clone());
+        let dir = self.header_session(cx).and_then(|s| s.workdir.as_ref()).map_or_else(|| hub::home(cx), |w| w.path.clone());
         let ext = match format {
             ExportFormat::Markdown => "md",
             ExportFormat::Jsonl => "jsonl",
@@ -75,7 +63,7 @@ impl SessionView {
             };
             if let Some(written) = written.await {
                 this.update_in(cx, |_, window, cx| {
-                    let toast = Toast::new("Chat exported").detail(display_path(&written));
+                    let toast = Toast::new("Chat exported").detail(hub::display_path(&written, cx));
                     ui::overlays(window, cx).toast(toast, cx);
                 })
                 .ok();
