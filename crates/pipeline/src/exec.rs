@@ -17,7 +17,13 @@
 //! - A key never has two jobs at once. A job that was told to stop still reports its end; an
 //!   instance that is to run again (after a resume or a budget raise) waits for that report.
 //! - A node with `variants = 1` opens no scope: its instance has variant 0 and a review after it
-//!   shows a single variant with index 1. Variants asked for inside an open scope are ignored.
+//!   shows a single variant with index 1. A scope has at most 8 variants and scopes do not
+//!   nest: a graph that breaks either rule fails at start, a send-back that would is refused.
+//! - A scope exists only where the item goes: an opener on a branch not taken is skipped once
+//!   and brings no scope to the nodes after it. Inside a scope a variant reaches a node through
+//!   its own work, never through a branch all variants share.
+//! - Renders made inside a scope are on their variant; `Review.renders` has those made outside
+//!   one, which includes everything a single variant without a scope rendered.
 //! - "Skip" finishes the review through the port [`PORT_SKIPPED`]: every node after the review is
 //!   skipped, work on branches that do not pass through the review finishes, then the run is done.
 //!   Nothing is discarded.
@@ -25,6 +31,9 @@
 //!   stays open, so the run keeps waiting for a person. A `variants` count of 0 keeps the count.
 //! - A node's `budget_usd` is a cap per instance (per variant and attempt). `raise_budget(usd)`
 //!   allows `usd` more from what was spent, for the run and for instances stopped at their cap.
+//!   A stopped run takes it too: a person raises, then resumes.
+//! - The snapshot must be stored whenever a step changed it. A step that only logs changes it
+//!   once per block of lines ([`Snapshot::log_seq`]), so storing is not needed per line.
 //! - While a person is needed the run says so even if other jobs are still working:
 //!   `WaitingAnswer` wins over `WaitingReview`, which wins over `Running`.
 //! - A job that continues earlier work of its instance (an answer, a raise, a resume) gets the
@@ -107,6 +116,11 @@ pub enum ExecError {
     LoopLimit(u32),
     /// The review names no node to send work back to, or one that is not upstream of it.
     NoSendBackTarget,
+    /// A send-back asked for more variants than a scope may have (the number given).
+    TooManyVariants(u32),
+    /// A send-back asked for variants of a node that has a variant scope after it; scopes
+    /// do not nest.
+    NestedVariants,
     /// A budget raise that is not a positive amount.
     BadAmount,
     /// The driver's thread is gone.
@@ -126,6 +140,8 @@ impl fmt::Display for ExecError {
             ExecError::UnknownVariant(index) => write!(f, "the review has no variant {index}"),
             ExecError::LoopLimit(max) => write!(f, "the review was already sent back {max} times; ship or skip it"),
             ExecError::NoSendBackTarget => write!(f, "the review has no upstream node to send work back to"),
+            ExecError::TooManyVariants(max) => write!(f, "a round can have at most {max} variants"),
+            ExecError::NestedVariants => write!(f, "variants cannot be asked for in front of another variant scope"),
             ExecError::BadAmount => write!(f, "a budget raise must be a positive amount"),
             ExecError::DriverStopped => write!(f, "the run's driver has stopped"),
         }

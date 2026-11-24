@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use model::graph::PORT_OUT;
 use model::{LogLevel, Millis, NodeId, NodeKind, NodeStatus, ReviewNote, ReviewState, StartFrom};
 
-use super::plan::variant_set;
+use super::plan::{MAX_VARIANTS, variant_set};
 use super::review::Place;
 use super::state::PlannedRetry;
 use super::{Effect, ExecError, Machine};
@@ -50,6 +50,9 @@ impl Machine {
         if loops >= max as usize {
             return Err(ExecError::LoopLimit(max));
         }
+        if count > MAX_VARIANTS {
+            return Err(ExecError::TooManyVariants(MAX_VARIANTS));
+        }
         let mut target = send_back_to.or_else(|| round.agent.clone()).ok_or(ExecError::NoSendBackTarget)?;
         if !self.plan.order.contains(&target) || !self.plan.reaches(&target, &review_node) {
             return Err(ExecError::NoSendBackTarget);
@@ -68,9 +71,23 @@ impl Machine {
             target = opener;
         }
 
-        // Nothing fails from here on.
         let mut region = self.plan.descendants(&target);
         region.insert(target.clone());
+        // The node whose variants the new round counts, unless the scope stays as it is.
+        let fan = match (&inside, &round.opener) {
+            (Some(_), _) => None,
+            (None, Some(opener)) => Some(opener.clone()).filter(|opener| region.contains(opener)),
+            (None, None) if self.is_agent_node(&target) => Some(target.clone()),
+            (None, None) => round.agent.clone().filter(|agent| region.contains(agent) && variants_of(agent) == [0]),
+        };
+        if count >= 2
+            && let Some(fan) = &fan
+            && self.plan.scope_nodes(fan).iter().any(|node| node != fan && self.asks_for_variants(node))
+        {
+            return Err(ExecError::NestedVariants);
+        }
+
+        // Nothing fails from here on.
         let mut notes: Vec<String> = self.feedback(&review_node).into_iter().map(|note| note.text).collect();
         notes.push(note.clone());
 
@@ -95,12 +112,6 @@ impl Machine {
                 }
             }
             None => {
-                // The node whose variants the new round counts.
-                let fan = match &round.opener {
-                    Some(opener) => Some(opener.clone()).filter(|opener| region.contains(opener)),
-                    None if self.is_agent_node(&target) => Some(target.clone()),
-                    None => round.agent.clone().filter(|agent| region.contains(agent) && variants_of(agent) == [0]),
-                };
                 if let Some(fan) = &fan {
                     let old: BTreeMap<u32, usize> =
                         variants_of(fan).into_iter().filter_map(|variant| Some((variant, self.current(fan, variant)?))).collect();
@@ -163,6 +174,7 @@ impl Machine {
                 let view = &mut self.s.run.nodes[at];
                 view.status = NodeStatus::Cancelled;
                 view.finished = Some(now);
+                view.question = None;
             }
             self.s.meta[at].superseded = true;
         }
@@ -194,6 +206,16 @@ impl Machine {
         fx.push(Effect::ReviewClosed(round.review.clone()));
         self.log(fx, now, Some(idx), LogLevel::Info, format!("Sent back to {target_name}: {note}"));
         Ok(())
+    }
+
+    /// Whether `node` would open a variant scope of its own when the item reaches it.
+    fn asks_for_variants(&self, node: &NodeId) -> bool {
+        match self.def(node).map(|def| &def.kind) {
+            Some(NodeKind::Agent(agent) | NodeKind::Orchestrator(agent)) => {
+                self.s.scopes.get(node).map_or(agent.variants >= 2, |variants| variants.as_slice() != [0])
+            }
+            _ => false,
+        }
     }
 
     /// How variant `variant` of `node` begins its next attempt, building on instance `from`.

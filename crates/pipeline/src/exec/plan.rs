@@ -15,9 +15,21 @@ pub(super) fn is_agent(kind: &NodeKind) -> bool {
     matches!(kind, NodeKind::Agent(_) | NodeKind::Orchestrator(_))
 }
 
+/// The most variants one scope may have; the same number the validator allows.
+pub(super) const MAX_VARIANTS: u32 = 8;
+
 /// Variant indices of a node that asks for `count` variants: `[0]` when it opens no scope.
+/// Callers refuse counts over [`MAX_VARIANTS`]; the clamp only keeps a slip from allocating.
 pub(super) fn variant_set(count: u32) -> Vec<u32> {
-    if count >= 2 { (1..=count).collect() } else { vec![0] }
+    if count >= 2 { (1..=count.min(MAX_VARIANTS)).collect() } else { vec![0] }
+}
+
+/// How many variants a node asks for on its own; 1 for everything but agents.
+fn own_variants(def: &NodeDef) -> u32 {
+    match &def.kind {
+        NodeKind::Agent(agent) | NodeKind::Orchestrator(agent) => agent.variants,
+        _ => 1,
+    }
 }
 
 /// Route edges between the nodes an item can reach from a source.
@@ -30,6 +42,7 @@ pub(super) struct Plan {
     pub problem: Option<String>,
     incoming: BTreeMap<NodeId, Vec<(NodeId, String)>>,
     outgoing: BTreeMap<NodeId, Vec<NodeId>>,
+    reviews: BTreeSet<NodeId>,
 }
 
 impl Plan {
@@ -93,7 +106,48 @@ impl Plan {
                 graph.nodes.iter().filter(|node| waiting.contains_key(&node.id)).map(|node| node.name.clone()).collect();
             problem = Some(format!("The pipeline has a loop of route edges through {}.", names.join(", ")));
         }
-        Plan { order, sources, problem, incoming, outgoing }
+        let reviews: BTreeSet<NodeId> =
+            graph.nodes.iter().filter(|node| matches!(node.kind, NodeKind::Review(_))).map(|node| node.id.clone()).collect();
+        let mut plan = Plan { order, sources, problem, incoming, outgoing, reviews };
+        if plan.problem.is_none() {
+            plan.problem = plan.variant_problem(graph);
+        }
+        plan
+    }
+
+    /// A node that asks for more variants than a scope may have, or for variants inside the
+    /// scope of another node.
+    fn variant_problem(&self, graph: &GraphDef) -> Option<String> {
+        let openers: Vec<&NodeDef> =
+            self.order.iter().filter_map(|id| graph.node(id)).filter(|def| own_variants(def) >= 2).collect();
+        if let Some(def) = openers.iter().find(|def| own_variants(def) > MAX_VARIANTS) {
+            return Some(format!("{} asks for {} variants; the most is {MAX_VARIANTS}.", def.name, own_variants(def)));
+        }
+        for outer in &openers {
+            let scope = self.scope_nodes(&outer.id);
+            if let Some(inner) = openers.iter().find(|inner| scope.contains(&inner.id)) {
+                return Some(format!(
+                    "{} asks for variants inside the variant scope of {}; put a review between them.",
+                    inner.name, outer.name
+                ));
+            }
+        }
+        None
+    }
+
+    /// The nodes a variant scope opened by `opener` would cover: everything after it up to and
+    /// including the first review on each path.
+    pub fn scope_nodes(&self, opener: &NodeId) -> BTreeSet<NodeId> {
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![opener.clone()];
+        while let Some(at) = stack.pop() {
+            for to in self.outgoing.get(&at).map(Vec::as_slice).unwrap_or_default() {
+                if seen.insert(to.clone()) && !self.reviews.contains(to) {
+                    stack.push(to.clone());
+                }
+            }
+        }
+        seen
     }
 
     /// Route edges into `node` as (from, port).

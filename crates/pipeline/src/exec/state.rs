@@ -41,7 +41,9 @@ pub struct Snapshot {
     /// The "budget reached" line was logged for the current cap.
     #[serde(default)]
     pub budget_noted: bool,
-    /// Sequence number of the last log line.
+    /// The highest log sequence number that may have been handed out. Numbers are reserved in
+    /// blocks: the value moves once per block of lines, and a snapshot stored whenever it moves
+    /// guarantees that a restored machine never repeats a number.
     #[serde(default)]
     pub log_seq: u64,
     /// Counter behind [`Meta::order`].

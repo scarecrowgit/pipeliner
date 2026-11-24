@@ -69,12 +69,16 @@ impl Machine {
                 self.s.meta[idx].hold = Some(Hold::Question { text: question.clone() });
                 self.s.meta[idx].answer = None;
                 self.s.meta[idx].resume = false;
+                let summary = self.s.meta[idx].output.as_ref().map(|out| out.summary.clone()).filter(|text| !text.is_empty());
                 let view = &mut self.s.run.nodes[idx];
-                view.summary = question.clone();
+                if let Some(summary) = summary {
+                    view.summary = summary;
+                }
                 // In a stopped run the question is kept and asked again on resume.
                 if self.s.halt.is_none() {
                     view.status = NodeStatus::Waiting;
                     view.finished = None;
+                    view.question = Some(question.clone());
                     self.log(fx, now, Some(idx), LogLevel::Info, format!("Asks: {question}"));
                     fx.push(Effect::Asked { key: self.key_of(idx), question });
                 }
@@ -169,6 +173,7 @@ impl Machine {
         meta.resume = false;
         let view = &mut self.s.run.nodes[idx];
         view.status = NodeStatus::Done;
+        view.question = None;
         view.port = Some(port);
         view.started.get_or_insert(now);
         view.finished = Some(now);
@@ -184,6 +189,7 @@ impl Machine {
         let view = &mut self.s.run.nodes[idx];
         view.status = NodeStatus::Failed;
         view.finished = Some(now);
+        view.question = None;
         view.summary = error.clone();
         let (name, variant, node) = (view.name.clone(), view.variant, view.node.clone());
         self.log(fx, now, Some(idx), LogLevel::Error, format!("Failed: {error}"));
@@ -266,7 +272,8 @@ impl Machine {
                 let found = (0..self.s.meta.len())
                     .find(|&at| self.s.meta[at].spawn.as_ref().is_some_and(|link| link.id == id && link.parent == parent));
                 let at = found.unwrap_or_else(|| {
-                    self.s.run.nodes.push(NodeInstance { question: None,
+                    self.s.run.nodes.push(NodeInstance {
+                        question: None,
                         node: id.as_str().into(),
                         name: name.clone(),
                         variant: parent.variant,

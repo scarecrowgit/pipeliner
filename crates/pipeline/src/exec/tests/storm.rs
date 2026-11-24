@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use model::{ReviewState, StartFrom};
 
+use super::edges::exclusive_scope;
 use super::restore::self_edit;
 use super::rounds::{planned, side_branches};
 use super::*;
@@ -54,16 +55,18 @@ fn strip_costs(snapshot: &Snapshot) -> Snapshot {
 }
 
 fn graph_for(seed: u64) -> GraphDef {
-    let mut def = match seed % 7 {
+    let mut def = match seed % 9 {
         0 => fix_graph(3),
         1 => fix_graph(1),
         2 => planned("planner"),
         3 => planned("polish"),
         4 => side_branches(),
         5 => self_edit(),
+        7 => exclusive_scope(review("review", Some("team"))),
+        8 => exclusive_scope(command("join", false)),
         _ => fix_graph(2),
     };
-    def.limits.max_parallel = 1 + (seed / 7 % 3) as u32;
+    def.limits.max_parallel = 1 + (seed / 9 % 3) as u32;
     def.limits.max_loops = 2;
     def.limits.budget_usd = seed.is_multiple_of(3).then_some(2.0);
     def

@@ -22,6 +22,7 @@ const GATE_POLL: Duration = Duration::from_millis(5);
 enum Step {
     Note(JobNote),
     Delay(Duration),
+    Busy(Duration),
     Gate(String),
 }
 
@@ -105,6 +106,12 @@ impl Script {
     /// Sleeps; ends as cancelled when the token fires meanwhile.
     pub fn delay(mut self, time: Duration) -> Script {
         self.steps.push(Step::Delay(time));
+        self
+    }
+
+    /// Works for `time` without looking at the cancel token, like a job stuck in a long call.
+    pub fn busy(mut self, time: Duration) -> Script {
+        self.steps.push(Step::Busy(time));
         self
     }
 
@@ -317,6 +324,7 @@ impl NodeRunner for FakeRunner {
             match step {
                 Step::Note(note) => sink.note(note.clone()),
                 Step::Delay(time) => cancelled = !cancel.sleep(*time),
+                Step::Busy(time) => std::thread::sleep(*time),
                 Step::Gate(name) => cancelled = !self.pass_gate(name, cancel),
             }
         }

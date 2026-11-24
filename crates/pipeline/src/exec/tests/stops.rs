@@ -122,6 +122,7 @@ fn cancel_while_waiting_for_an_answer_keeps_the_question_for_resume() {
 
     assert_eq!(bench.state(), RunState::Cancelled);
     assert_eq!(bench.status("coder", 0), NodeStatus::Cancelled);
+    assert_eq!(bench.inst("coder", 0).question, None, "a stopped run asks nobody");
     assert!(bench.cancelled.is_empty(), "no job was running");
     assert_eq!(bench.machine.answer(&key("coder"), "x".into(), 1), Err(ExecError::NotWaiting(key("coder"))));
 
@@ -129,6 +130,7 @@ fn cancel_while_waiting_for_an_answer_keeps_the_question_for_resume() {
     bench.resume();
     assert_eq!(bench.state(), RunState::WaitingAnswer);
     assert_eq!(bench.machine.holds(), [(key("coder"), Hold::Question { text: "Which?".into() })]);
+    assert_eq!(bench.inst("coder", 0).question.as_deref(), Some("Which?"));
     assert!(bench.effects.contains(&Effect::Asked { key: key("coder"), question: "Which?".into() }), "asked again");
     assert!(bench.queue.is_empty(), "the agent is not run again without an answer");
 
@@ -289,4 +291,54 @@ fn a_job_stopped_from_outside_interrupts_the_run() {
     assert_eq!(bench.status("a", 0), NodeStatus::Interrupted);
     assert_eq!(bench.status("b", 0), NodeStatus::Interrupted);
     assert!(!fx.iter().any(|effect| matches!(effect, Effect::Finished(_))), "an interrupted run is not closed");
+}
+
+#[test]
+fn interrupt_also_stops_what_waits_behind_a_cancelled_job() {
+    let mut bench = Bench::start(line());
+    bench.cancel();
+    bench.resume();
+    assert_eq!(bench.status("coder", 0), NodeStatus::Pending, "it waits for its cancelled job to report");
+
+    let fx = bench.machine.interrupt(bench.now);
+    bench.apply(fx);
+    assert_eq!(bench.state(), RunState::Interrupted, "a job is in flight: nothing may start behind it");
+
+    // The old job ignored the cancel and reports its work.
+    bench.cancelled.clear();
+    bench.effects.clear();
+    bench.step();
+    assert!(!bench.effects.iter().any(|effect| matches!(effect, Effect::Start(_))), "{:?}", bench.effects);
+    assert_eq!(bench.status("coder", 0), NodeStatus::Done);
+    assert_eq!(bench.machine.jobs_in_flight(), 0);
+
+    bench.resume();
+    assert_eq!(bench.queued(), ["pr#0"]);
+}
+
+#[test]
+fn log_numbers_are_reserved_in_blocks_and_never_repeat_after_a_restore() {
+    let mut bench = Bench::start(line());
+    let mut seen = Vec::new();
+    let mut stored = bench.machine.snapshot().clone();
+    let mut stores = 0;
+    for n in 0..600 {
+        let fx = bench.machine.note(&key("coder"), JobNote::Log { level: model::LogLevel::Info, text: format!("line {n}") }, 1).expect("log");
+        // What a driver does: store when the step changed the snapshot, before the line goes out.
+        if bench.machine.snapshot() != &stored {
+            stored = bench.machine.snapshot().clone();
+            stores += 1;
+        }
+        seen.extend(fx.iter().filter_map(|effect| if let Effect::Log(line) = effect { Some(line.seq) } else { None }));
+    }
+    assert_eq!(seen.len(), 600);
+    assert!(seen.windows(2).all(|pair| pair[0] < pair[1]), "numbers grow");
+    assert!(stores <= 3, "a snapshot per block, not per line: {stores}");
+
+    let graph = bench.machine.graph().clone();
+    let mut restored = Machine::restore(graph, stored);
+    let fx = restored.resume(2).expect("the coder was running");
+    let next: Vec<u64> = fx.iter().filter_map(|effect| if let Effect::Log(line) = effect { Some(line.seq) } else { None }).collect();
+    assert!(!next.is_empty());
+    assert!(next.iter().all(|seq| seq > seen.last().expect("lines")), "{next:?} after {:?}", seen.last());
 }

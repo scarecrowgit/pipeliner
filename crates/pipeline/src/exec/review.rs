@@ -38,18 +38,24 @@ impl Machine {
         let agent = self.reviewed_agent(review, scope.opener.as_ref(), first);
 
         let mut variants = Vec::new();
-        let mut renders: Vec<Render> = Vec::new();
         for (path, &lane) in paths.iter().zip(arrived) {
             let span = self.span(path, agent.as_ref(), lane);
             let index = if scope.opener.is_some() { lane } else { 1 };
             variants.push(self.variant(index, &span, agent.as_ref()));
-            renders.extend(span.iter().filter_map(|&idx| self.s.meta[idx].output.as_ref()).flat_map(|out| out.renders.clone()));
         }
+        // Renders made outside a variant scope belong to the review as a whole; those made
+        // inside one are on their variant.
+        let renders: Vec<Render> = first
+            .iter()
+            .filter(|&&idx| self.s.run.nodes[idx].variant == 0)
+            .filter_map(|&idx| self.s.meta[idx].output.as_ref())
+            .flat_map(|out| out.renders.clone())
+            .collect();
 
         let idx = self.push_instance(def, 0, NodeStatus::Waiting);
         self.s.run.nodes[idx].started = Some(now);
         let attempt = self.s.run.nodes[idx].attempt;
-        let nothing = renders.is_empty() && variants.iter().all(|variant| variant.files.is_empty());
+        let nothing = renders.is_empty() && variants.iter().all(|variant| variant.files.is_empty() && variant.renders.is_empty());
         let round = ReviewRound {
             review: Review {
                 id: ReviewId::new(format!("{}-{}-{}", self.s.run.id, def.id, attempt)),
@@ -133,7 +139,15 @@ impl Machine {
             .filter_map(|view| Some((view.finished? - view.started?).max(0) as u64))
             .sum::<u64>()
             / 1000;
-        Variant { renders: Vec::new(),
+        // Renders of its own lane; a single variant outside a scope has them on the review.
+        let renders = span
+            .iter()
+            .filter(|&&idx| self.s.run.nodes[idx].variant != 0)
+            .filter_map(|&idx| self.s.meta[idx].output.as_ref())
+            .flat_map(|out| out.renders.clone())
+            .collect();
+        Variant {
+            renders,
             index,
             name,
             approach,

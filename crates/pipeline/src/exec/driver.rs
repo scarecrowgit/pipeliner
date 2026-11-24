@@ -123,6 +123,7 @@ impl Driver {
             workers: HashMap::new(),
             discards: None,
             stopping: false,
+            stored_log_seq: 0,
         };
         let thread = thread::Builder::new().name(name).spawn(move || driving.run()).context("starting the run's thread")?;
         Ok(Driver { handle: DriverHandle { tx }, thread: Some(thread) })
@@ -181,6 +182,8 @@ struct Loop {
     /// The thread doing `discard` calls, one after the other, started on first use.
     discards: Option<(Sender<NodeOutput>, JoinHandle<()>)>,
     stopping: bool,
+    /// `log_seq` of the last snapshot handed to the observer.
+    stored_log_seq: u64,
 }
 
 impl Loop {
@@ -188,7 +191,7 @@ impl Loop {
         if !self.machine.snapshot().started {
             let now = self.clock.now_ms();
             if let Ok(fx) = self.machine.start(now) {
-                self.apply(fx);
+                self.apply(fx, true);
             }
         }
         while !(self.stopping && self.workers.is_empty()) {
@@ -199,7 +202,7 @@ impl Loop {
                     if !self.stopping {
                         self.stopping = true;
                         let fx = self.machine.interrupt(now);
-                        self.apply(fx);
+                        self.apply(fx, false);
                         for worker in self.workers.values() {
                             worker.cancel.cancel();
                         }
@@ -207,12 +210,14 @@ impl Loop {
                 }
                 Msg::Command(command, reply) => {
                     let outcome = if self.stopping { Err(ExecError::DriverStopped) } else { self.command(command, now) };
-                    let _ = reply.send(outcome.map(|fx| self.apply(fx)));
+                    // A command can change what no effect shows (a budget raised on a run that
+                    // was not waiting for it), so its outcome is always stored.
+                    let _ = reply.send(outcome.map(|fx| self.apply(fx, true)));
                 }
                 Msg::Note(key, note) => {
                     // A note of a job the machine no longer waits for is dropped.
                     if let Ok(fx) = self.machine.note(&key, note, now) {
-                        self.apply(fx);
+                        self.apply(fx, false);
                     }
                 }
                 Msg::Finished(key, result) => {
@@ -222,8 +227,7 @@ impl Loop {
                     }
                     if let Ok(fx) = self.machine.job_finished(&key, result, now) {
                         // Even a result that moves nothing leaves the job's output behind.
-                        self.observer.snapshot(self.machine.snapshot());
-                        self.apply(fx);
+                        self.apply(fx, true);
                     }
                 }
             }
@@ -246,23 +250,38 @@ impl Loop {
         }
     }
 
+    /// Stores the machine's state and remembers the log numbers that are now safe to use.
+    fn store(&mut self) {
+        self.stored_log_seq = self.machine.snapshot().log_seq;
+        self.observer.snapshot(self.machine.snapshot());
+    }
+
     /// Carries out the effects of one step and whatever they lead to. The state is stored
     /// before anyone hears about it, so what the engine publishes is never ahead of the store.
-    fn apply(&mut self, fx: Vec<Effect>) {
-        if fx.iter().any(|effect| !matches!(effect, Effect::Log(_))) {
-            self.observer.snapshot(self.machine.snapshot());
+    /// It is stored when the step changed it: `changed` says so for steps whose effects may
+    /// not show it; a step that only logged changes it when it reserved new log numbers.
+    fn apply(&mut self, fx: Vec<Effect>, changed: bool) {
+        let logged_only = fx.iter().all(|effect| matches!(effect, Effect::Log(_)));
+        if changed || !logged_only || self.machine.snapshot().log_seq != self.stored_log_seq {
+            self.store();
         }
         let mut queue: VecDeque<Effect> = fx.into();
         while let Some(effect) = queue.pop_front() {
             match effect {
                 Effect::Start(job) => {
                     let key = job.key.clone();
-                    if let Err(error) = self.start_worker(*job) {
-                        let result = JobResult::Failed { error: format!("{error:#}"), output: NodeOutput::default() };
-                        if let Ok(more) = self.machine.job_finished(&key, result, self.clock.now_ms()) {
-                            self.observer.snapshot(self.machine.snapshot());
-                            queue.extend(more);
-                        }
+                    // Once stopping nothing new starts; the machine hears that the job was
+                    // stopped, like any job the stop cancels.
+                    let result = if self.stopping {
+                        Some(JobResult::Cancelled { output: NodeOutput::default() })
+                    } else {
+                        self.start_worker(*job).err().map(|error| JobResult::Failed { error: format!("{error:#}"), output: NodeOutput::default() })
+                    };
+                    if let Some(result) = result
+                        && let Ok(more) = self.machine.job_finished(&key, result, self.clock.now_ms())
+                    {
+                        self.store();
+                        queue.extend(more);
                     }
                 }
                 Effect::CancelJob(key) => {
@@ -313,13 +332,17 @@ impl Loop {
             let (runner, run) = (self.runner.clone(), self.run.clone());
             let spawned = thread::Builder::new().name("discard".to_string()).spawn(move || {
                 for output in outputs {
-                    runner.discard(&run, &output);
+                    // Best effort: a discard that panics must not take the later ones with it.
+                    let _ = catch_unwind(AssertUnwindSafe(|| runner.discard(&run, &output)));
                 }
             });
             match spawned {
                 Ok(thread) => self.discards = Some((queue, thread)),
                 // Best effort, as the contract says: without a thread it is done here.
-                Err(_) => return self.runner.discard(&self.run, &output),
+                Err(_) => {
+                    let _ = catch_unwind(AssertUnwindSafe(|| self.runner.discard(&self.run, &output)));
+                    return;
+                }
             }
         }
         if let Some((queue, _)) = &self.discards {

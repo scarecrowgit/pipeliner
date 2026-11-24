@@ -64,7 +64,13 @@ impl Machine {
                     None => match kind {
                         NodeKind::Agent(agent) | NodeKind::Orchestrator(agent) => {
                             let variants = self.s.scopes.get(id).cloned().unwrap_or_else(|| variant_set(agent.variants));
-                            if variants == [0] { Lane::single() } else { Lane { variants, opener: Some(id.clone()) } }
+                            // An opener the item never reaches opens nothing: it is skipped
+                            // once, and what follows it is not in a scope.
+                            if variants == [0] || self.inputs(def, 0, &lanes) == Inputs::Dead {
+                                Lane::single()
+                            } else {
+                                Lane { variants, opener: Some(id.clone()) }
+                            }
                         }
                         _ => Lane::single(),
                     },
@@ -75,15 +81,15 @@ impl Machine {
         lanes
     }
 
-    /// The open variant scope the item is in when it reaches `node`, if any.
+    /// The open variant scope the item is in when it reaches `node`, if any. A scope comes in
+    /// only along an edge that some variant can still take: a branch that is dead for every
+    /// variant (not taken by a router, skipped) brings no scope with it.
     pub(super) fn scope_into(&self, node: &NodeId, lanes: &Lanes) -> Option<Lane> {
-        self.plan
-            .incoming(node)
-            .iter()
-            .filter(|(pred, _)| !self.is_review(pred))
-            .filter_map(|(pred, _)| lanes.get(pred))
-            .find(|lane| lane.opener.is_some())
-            .cloned()
+        self.plan.incoming(node).iter().filter(|(pred, _)| !self.is_review(pred)).find_map(|(pred, port)| {
+            let lane = lanes.get(pred).filter(|lane| lane.opener.is_some())?;
+            let live = lane.variants.iter().any(|&variant| !matches!(self.edge_state(pred, port, variant, lanes), EdgeState::Dead));
+            live.then(|| lane.clone())
+        })
     }
 
     /// Which variant of `pred` feeds variant `variant` of a node after it.
@@ -130,11 +136,16 @@ impl Machine {
         if matches!(def.kind, NodeKind::Source(_)) {
             return if self.entry.contains(&def.id) { Inputs::Ready } else { Inputs::Dead };
         }
+        // The node that opens the scope fans out from the single lane before it.
+        let opens = variant != 0 && lanes.get(&def.id).is_some_and(|lane| lane.opener.as_ref() == Some(&def.id));
         let mut delivered = false;
         for (pred, port) in self.plan.incoming(&def.id) {
+            // Inside a scope a variant arrives through its own work, not through a branch
+            // that every variant shares.
+            let own = variant == 0 || opens || lanes.get(pred).is_some_and(|lane| lane.variants.contains(&variant));
             match self.edge_state(pred, port, variant, lanes) {
                 EdgeState::Pending => return Inputs::Waiting,
-                EdgeState::Delivered => delivered = true,
+                EdgeState::Delivered => delivered |= own,
                 EdgeState::Dead => {}
             }
         }
@@ -155,8 +166,6 @@ impl Machine {
         for &variant in &scope.variants {
             let mut delivered = false;
             for (pred, port) in self.plan.incoming(node) {
-                // Inside a scope a variant arrives through its own work, not through a branch
-                // that every variant shares.
                 let own = variant == 0 || lanes.get(pred).is_some_and(|lane| lane.variants.contains(&variant));
                 match self.edge_state(pred, port, variant, lanes) {
                     EdgeState::Pending => return ReviewInputs::Waiting,
@@ -240,7 +249,11 @@ impl Machine {
                 let Some(def) = self.def(&view.node) else { return false };
                 match def.kind {
                     NodeKind::Review(_) => !matches!(self.review_inputs(&def.id, lanes), ReviewInputs::Dead),
-                    _ => self.inputs(def, view.variant, lanes) != Inputs::Dead,
+                    // Also a placeholder of a variant the node no longer runs in.
+                    _ => {
+                        !lanes.get(&def.id).is_some_and(|lane| lane.variants.contains(&view.variant))
+                            || self.inputs(def, view.variant, lanes) != Inputs::Dead
+                    }
                 }
             });
             let Some(idx) = stale else { break };
@@ -332,6 +345,8 @@ impl Machine {
             view.status = NodeStatus::Running;
             view.started.get_or_insert(now);
             view.finished = None;
+            // The job that starts carries the answer.
+            view.question = None;
             if agent {
                 agents += 1;
             }

@@ -68,11 +68,16 @@ impl Rig {
     }
 
     fn drive(machine: Machine, fake: Arc<FakeRunner>) -> Rig {
+        Rig::drive_with(machine, fake.clone(), fake)
+    }
+
+    /// Drives with `runner`, which is expected to pass its work on to `fake`.
+    fn drive_with(machine: Machine, runner: Arc<dyn NodeRunner>, fake: Arc<FakeRunner>) -> Rig {
         let (tx, seen) = channel();
         let stored = Arc::new(Mutex::new(None));
         let logs = Arc::new(Mutex::new(Vec::new()));
         let watch = Watch { seen: tx, stored: stored.clone(), logs: logs.clone() };
-        let driver = Driver::spawn(machine, fake.clone(), Box::new(watch), Arc::new(SystemClock)).expect("driver");
+        let driver = Driver::spawn(machine, runner, Box::new(watch), Arc::new(SystemClock)).expect("driver");
         Rig { driver: Some(driver), fake, seen, stored, logs }
     }
 
@@ -310,4 +315,93 @@ fn a_runner_that_panics_fails_the_run_instead_of_hanging_it() {
     assert_eq!(run.state, RunState::Failed);
     assert_eq!(run.error.as_deref(), Some("A failed: The node runner panicked."));
     driver.stop().expect("stop");
+}
+
+fn line() -> GraphDef {
+    graph(vec![source("src"), agent("coder", 1), command("pr", false)], chain(&["src", "coder", "pr"]))
+}
+
+#[test]
+fn stop_starts_nothing_new_when_a_cancelled_job_reports_late() {
+    let fake = Arc::new(FakeRunner::new());
+    fake.on("coder", Script::done().busy(Duration::from_millis(300)));
+    fake.on("pr", Script::done().busy(Duration::from_secs(4)));
+    let mut rig = Rig::new(line(), fake);
+    assert!(rig.fake.wait_for_jobs(1, WAIT));
+    // The coder is to run again, but its first job does not listen and is still at work.
+    rig.handle().cancel().expect("cancel");
+    rig.handle().resume().expect("resume");
+
+    let begun = Instant::now();
+    let machine = rig.stop();
+    assert!(begun.elapsed() < Duration::from_secs(3), "stop waited for a job it should never have started: {:?}", begun.elapsed());
+    assert!(rig.fake.jobs_of("pr").is_empty(), "nothing starts once the driver is stopping");
+    assert_eq!(machine.run().state, RunState::Interrupted);
+    assert_eq!(machine.jobs_in_flight(), 0);
+    assert_eq!(rig.fake.running(), 0);
+    assert_eq!(&rig.stored(), machine.snapshot());
+}
+
+#[test]
+fn a_raise_that_unblocks_nothing_is_stored_all_the_same() {
+    let fake = Arc::new(FakeRunner::new());
+    fake.on("coder", Script::done().gate("go"));
+    let mut def = line();
+    def.limits.budget_usd = Some(5.0);
+    let mut rig = Rig::new(def, fake);
+    assert!(rig.fake.wait_at_gates(1, WAIT));
+    rig.handle().raise_budget(2.0).expect("raise");
+    assert_eq!(rig.stored().budget_usd, Some(7.0), "a restart must not forget the raise");
+    rig.fake.release("go");
+    assert_eq!(rig.wait_finished().state, RunState::Done);
+    rig.stop();
+}
+
+#[test]
+fn log_numbers_handed_out_before_a_crash_are_not_used_again() {
+    let fake = Arc::new(FakeRunner::new());
+    fake.on("coder", Script::done().log("one").log("two").log("three").gate("go"));
+    let mut rig = Rig::new(line(), fake);
+    assert!(rig.fake.wait_at_gates(1, WAIT));
+    let end = Instant::now() + WAIT;
+    while rig.logs.lock().expect("logs").len() < 3 {
+        assert!(Instant::now() < end, "the log lines arrive");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let last = rig.logs.lock().expect("logs").iter().map(|line| line.seq).max().expect("lines");
+
+    // The process dies here; what was stored is all that is left.
+    let mut restored = Machine::restore(line(), rig.stored());
+    let fx = restored.resume(1).expect("the coder was running");
+    let next: Vec<u64> = fx.iter().filter_map(|effect| if let Effect::Log(line) = effect { Some(line.seq) } else { None }).collect();
+    assert!(!next.is_empty() && next.iter().all(|seq| *seq > last), "{next:?} must come after {last}");
+
+    rig.fake.release("go");
+    rig.stop();
+}
+
+#[test]
+fn a_discard_that_panics_does_not_stop_the_later_ones() {
+    /// Passes everything to the fake, but cannot remove variant A.
+    struct Touchy(Arc<FakeRunner>);
+    impl NodeRunner for Touchy {
+        fn run(&self, job: &Job, sink: &dyn JobSink, cancel: &CancelToken) -> JobResult {
+            self.0.run(job, sink, cancel)
+        }
+        fn discard(&self, run: &RunId, output: &NodeOutput) {
+            assert!(output.branch.as_deref() != Some("fix/a"), "the worktree is locked");
+            self.0.discard(run, output);
+        }
+    }
+    let fake = Arc::new(FakeRunner::new());
+    fake.on("triage", Script::port("bug"));
+    script_variants(&fake, 1, &["a", "b", "c"]);
+    let machine = Machine::new(fix_graph(3), run_shell(), item());
+    let mut rig = Rig::drive_with(machine, Arc::new(Touchy(fake.clone())), fake);
+    let review = rig.wait_review();
+    rig.handle().decide(review.id, ReviewDecision::Ship { variant: 3 }).expect("ship");
+    assert_eq!(rig.wait_finished().state, RunState::Done);
+    rig.stop();
+    let discarded: Vec<Option<String>> = rig.fake.discards().into_iter().map(|out| out.branch).collect();
+    assert_eq!(discarded, [Some("fix/b".to_string())], "B is discarded although A's discard panicked");
 }

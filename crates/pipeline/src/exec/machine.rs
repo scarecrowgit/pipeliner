@@ -13,6 +13,9 @@ use crate::api::{InstanceKey, Item, JobNote, JobResult};
 /// Budgets are compared with this slack so that sums of cents do not miss the cap by rounding.
 const CENT_SLACK: f64 = 1e-9;
 
+/// Log sequence numbers are reserved in blocks of this size; see [`Snapshot::log_seq`].
+const LOG_BLOCK: u64 = 256;
+
 /// One run of one graph. Feed it what happened; do what it answers.
 ///
 /// Every input takes the current time and returns the effects in the order they must be carried
@@ -23,6 +26,8 @@ pub struct Machine {
     /// The source nodes the item enters at.
     pub(super) entry: Vec<NodeId>,
     pub(super) s: Snapshot,
+    /// Sequence number of the last log line handed out; never above `s.log_seq`.
+    log_last: u64,
 }
 
 impl Machine {
@@ -53,23 +58,26 @@ impl Machine {
 
     /// Continues from a stored snapshot after a restart. No job survived the restart, so
     /// instances that were running become `Interrupted` and so does the run; [`Self::resume`]
-    /// re-issues their jobs. A run that had no job in flight (it waited for a person, or was
-    /// closed) is left as it was.
+    /// re-issues their jobs. A run that owes no job (it waited for a person, or was closed) is
+    /// left as it was, whatever cancelled jobs were still winding down when it was stored.
     pub fn restore(graph: GraphDef, snapshot: Snapshot) -> Machine {
         let mut machine = Self::build(graph, snapshot);
         // A snapshot written by hand or by an older build may have lost the pairing.
         machine.s.meta.resize_with(machine.s.run.nodes.len(), Meta::default);
         let mut interrupted = false;
         for (view, meta) in machine.s.run.nodes.iter_mut().zip(machine.s.meta.iter_mut()) {
-            // Any job that died may have held up something that waits to start: a slot, or
-            // the key of an instance that is to run again. `resume` gets those going.
-            interrupted |= std::mem::take(&mut meta.in_flight);
+            meta.in_flight = false;
             if view.status == NodeStatus::Running {
                 view.status = NodeStatus::Interrupted;
                 interrupted |= meta.spawn.is_none() && !meta.superseded;
             }
         }
-        if interrupted && machine.s.halt.is_none() {
+        // An instance that waited to start behind a job that died (for its slot, or for its
+        // own cancelled job to return) has nothing left to wake it: `resume` does.
+        let over_budget = machine.over_budget();
+        interrupted |= !over_budget
+            && (0..machine.s.meta.len()).any(|idx| machine.is_current(idx) && machine.s.run.nodes[idx].status == NodeStatus::Pending);
+        if interrupted && machine.s.halt.is_none() && machine.s.started {
             machine.s.halt = Some(Halt::Interrupted);
         }
         machine.s.run.state = machine.derive_state();
@@ -88,7 +96,9 @@ impl Machine {
             // A manual or test run of a pipeline that only has an issue source still has to enter.
             entry.extend(plan.sources.first().cloned());
         }
-        Machine { graph, plan, entry, s: snapshot }
+        // Numbers up to the stored bound may have been used by lines the store already has.
+        let log_last = snapshot.log_seq;
+        Machine { graph, plan, entry, s: snapshot, log_last }
     }
 
     /// The whole state, for storing.
@@ -208,7 +218,9 @@ impl Machine {
     }
 
     /// Allows `usd` more to be spent from now: the run's cap moves to what was spent plus `usd`,
-    /// and so does the node cap of every instance that stopped for its budget.
+    /// and so does the node cap of every instance that stopped for its budget. Also taken by a
+    /// cancelled, failed or interrupted run, where a person raises first and resumes after;
+    /// only a run that is done refuses it.
     pub fn raise_budget(&mut self, usd: f64, now: Millis) -> Result<Vec<Effect>, ExecError> {
         if !usd.is_finite() || usd <= 0.0 {
             return Err(ExecError::BadAmount);
@@ -255,11 +267,13 @@ impl Machine {
     }
 
     /// Stops the run because its driver is going away: running jobs are cancelled and marked
-    /// `Interrupted`. Reviews and questions stay open. Does nothing when no job is running.
+    /// `Interrupted`, and nothing starts any more, also not when a job that was cancelled
+    /// earlier reports. Reviews and questions stay open. Does nothing when the run has no job
+    /// in flight and none running: a run that only waits for a person stays as it is.
     pub fn interrupt(&mut self, now: Millis) -> Vec<Effect> {
-        let running =
-            (0..self.s.meta.len()).any(|idx| self.is_current(idx) && self.s.run.nodes[idx].status == NodeStatus::Running);
-        if self.s.halt.is_some() || !running {
+        let busy = (0..self.s.meta.len())
+            .any(|idx| self.s.meta[idx].in_flight || (self.is_current(idx) && self.s.run.nodes[idx].status == NodeStatus::Running));
+        if self.s.halt.is_some() || !busy {
             return Vec::new();
         }
         let before = self.s.run.clone();
@@ -306,6 +320,7 @@ impl Machine {
                 Some(hold) => {
                     view.status = NodeStatus::Waiting;
                     if let Hold::Question { text } = hold {
+                        view.question = Some(text.clone());
                         fx.push(Effect::Asked { key: self.key_of(idx), question: text });
                     }
                 }
@@ -409,6 +424,8 @@ impl Machine {
                     let view = &mut self.s.run.nodes[idx];
                     view.status = NodeStatus::Cancelled;
                     view.finished = Some(now);
+                    // Asked again when the run resumes.
+                    view.question = None;
                 }
                 _ => {}
             }
@@ -497,7 +514,8 @@ impl Machine {
             NodeKind::Agent(agent) | NodeKind::Orchestrator(agent) => agent.budget_usd,
             _ => None,
         };
-        self.s.run.nodes.push(NodeInstance { question: None,
+        self.s.run.nodes.push(NodeInstance {
+            question: None,
             node: def.id.clone(),
             name: def.name.clone(),
             variant,
@@ -532,7 +550,11 @@ impl Machine {
 
     /// Adds a log line, about an instance when `idx` is given.
     pub(super) fn log(&mut self, fx: &mut Vec<Effect>, now: Millis, idx: Option<usize>, level: LogLevel, text: String) {
-        self.s.log_seq += 1;
+        self.log_last += 1;
+        if self.log_last > self.s.log_seq {
+            // Reserve a block, so that the snapshot changes once per block and not per line.
+            self.s.log_seq = self.log_last + LOG_BLOCK - 1;
+        }
         let (node, variant) = match idx {
             Some(idx) => {
                 let view = &self.s.run.nodes[idx];
@@ -541,6 +563,6 @@ impl Machine {
             }
             None => (None, 0),
         };
-        fx.push(Effect::Log(RunLogLine { seq: self.s.log_seq, at: now, node, variant, level, text }));
+        fx.push(Effect::Log(RunLogLine { seq: self.log_last, at: now, node, variant, level, text }));
     }
 }

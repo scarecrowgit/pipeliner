@@ -84,13 +84,9 @@ fn a_router_without_a_match_goes_through_else_and_skips_the_whole_other_path() {
 
     assert_eq!(bench.state(), RunState::Done);
     assert_eq!(bench.status("report", 0), NodeStatus::Done);
-    for dead in ["tests", "render"] {
-        for variant in 1..=3 {
-            assert_eq!(bench.status(dead, variant), NodeStatus::Skipped, "{dead} #{variant}");
-        }
-    }
-    for dead in ["review", "merge", "pr"] {
+    for dead in ["fixer", "tests", "render", "review", "merge", "pr"] {
         assert_eq!(bench.status(dead, 0), NodeStatus::Skipped, "{dead}");
+        assert!(!bench.has(dead, 1), "{dead}: a scope the item never enters is not opened");
     }
     assert!(bench.fake.jobs_of("fixer").is_empty());
     assert!((bench.machine.run().progress() - 1.0).abs() < 1e-6, "skipped instances do not count");

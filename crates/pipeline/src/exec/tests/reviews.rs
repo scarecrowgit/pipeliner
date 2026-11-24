@@ -44,11 +44,40 @@ fn three_variants_run_through_tests_and_render_into_one_review() {
     };
     assert!(took("fixer") > 0 && took("tests") > 0);
     assert_eq!(b.secs, took("fixer") + took("tests") + took("render"), "the agent and what ran on its work");
-    let renders: Vec<&str> = review.renders.iter().map(|render| render.path.as_str()).collect();
-    assert_eq!(renders, ["a.html", "b.html", "c.html"]);
+    assert!(review.renders.is_empty(), "nothing was rendered outside the scope");
+    let renders: Vec<Vec<&str>> =
+        review.variants.iter().map(|variant| variant.renders.iter().map(|render| render.path.as_str()).collect()).collect();
+    assert_eq!(renders, [["a.html"], ["b.html"], ["c.html"]], "each variant has its own");
 
     let opened = bench.effects.iter().filter(|effect| matches!(effect, Effect::ReviewOpened(_))).count();
     assert_eq!(opened, 1);
+}
+
+#[test]
+fn renders_made_outside_the_scope_stay_on_the_review() {
+    // `sketch > render > fixer ×2 > shot > review`: one render before the scope, one in each variant.
+    let action = |id: &str| node(id, id, NodeKind::Action(ActionNode::Render { workdir: "code".into(), files: "*.html".into() }));
+    let fake = Arc::new(FakeRunner::new());
+    fake.on("render", Script::done().output(rendered("sketch")));
+    fake.on_variant("shot", 1, Script::done().output(rendered("a")));
+    fake.on_variant("shot", 2, Script::done().output(rendered("b")));
+    let mut bench = Bench::start_with(
+        graph(vec![source("src"), agent("sketch", 1), action("render"), agent("fixer", 2), action("shot"), review("review", None)], chain(&["src", "sketch", "render", "fixer", "shot", "review"])),
+        fake,
+    );
+    bench.drain();
+    let review = bench.review();
+    assert_eq!(review.renders.iter().map(|render| render.path.as_str()).collect::<Vec<_>>(), ["sketch.html"]);
+    assert_eq!(review.variants[0].renders.iter().map(|render| render.path.as_str()).collect::<Vec<_>>(), ["a.html"]);
+    assert_eq!(review.variants[1].renders.iter().map(|render| render.path.as_str()).collect::<Vec<_>>(), ["b.html"]);
+}
+
+#[test]
+fn a_single_variant_outside_a_scope_has_its_renders_on_the_review() {
+    let bench = at_review(1);
+    let review = bench.review();
+    assert_eq!(review.renders.iter().map(|render| render.path.as_str()).collect::<Vec<_>>(), ["a.html"]);
+    assert!(review.variants[0].renders.is_empty());
 }
 
 #[test]

@@ -14,14 +14,15 @@ fn key(node: &str, variant: u32, attempt: u32) -> InstanceKey {
 #[test]
 fn a_question_makes_the_run_wait_and_the_answer_continues_the_same_instance() {
     let fake = Arc::new(FakeRunner::new());
-    fake.on("coder", Script::ask("Which database?").session("s-1").cost(0.2));
+    fake.on("coder", Script::ask("Which database?").session("s-1").summary("Read the schema.").cost(0.2));
     fake.on("coder", Script::done().summary("Used Postgres.").cost(0.3));
     let mut bench = Bench::start_with(line(), fake);
     bench.step();
 
     assert_eq!(bench.state(), RunState::WaitingAnswer);
     let coder = bench.inst("coder", 0);
-    assert_eq!((coder.status, coder.summary.as_str(), coder.finished), (NodeStatus::Waiting, "Which database?", None));
+    assert_eq!((coder.status, coder.question.as_deref(), coder.finished), (NodeStatus::Waiting, Some("Which database?"), None));
+    assert_eq!(coder.summary, "Read the schema.", "the question is not the summary");
     assert_eq!(bench.machine.holds(), [(key("coder", 0, 1), Hold::Question { text: "Which database?".into() })]);
     assert!(bench.effects.contains(&Effect::Asked { key: key("coder", 0, 1), question: "Which database?".into() }));
     assert!(bench.queue.is_empty());
@@ -29,6 +30,7 @@ fn a_question_makes_the_run_wait_and_the_answer_continues_the_same_instance() {
     let fx = bench.machine.answer(&key("coder", 0, 1), "Postgres.".into(), bench.now + 1).expect("answer");
     bench.apply(fx);
     assert_eq!(bench.state(), RunState::Running);
+    assert_eq!(bench.inst("coder", 0).question, None, "gone once the job with the answer starts");
     let job = bench.queue[0].clone();
     assert_eq!(job.key, key("coder", 0, 1), "the same key");
     assert_eq!(job.answer.as_deref(), Some("Postgres."));
@@ -38,6 +40,7 @@ fn a_question_makes_the_run_wait_and_the_answer_continues_the_same_instance() {
     assert_eq!(bench.state(), RunState::Done);
     let coder = bench.inst("coder", 0);
     assert_eq!((coder.status, coder.summary.as_str(), coder.attempt), (NodeStatus::Done, "Used Postgres.", 1));
+    assert_eq!(coder.question, None);
     assert!((coder.cost_usd - 0.5).abs() < 1e-9, "both jobs count: {}", coder.cost_usd);
     assert!(bench.machine.holds().is_empty());
     assert_eq!(bench.machine.run().nodes.iter().filter(|instance| instance.node.as_str() == "coder").count(), 1);

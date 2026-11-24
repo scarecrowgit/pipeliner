@@ -5,6 +5,7 @@ use std::path::Path;
 use catalog::{SelfEditModels, self_edit_pipeline};
 use model::{ReviewState, SpanKind, StartFrom};
 
+use super::rounds::side_branches;
 use super::*;
 use crate::api::SpawnedState;
 use crate::exec::Snapshot;
@@ -132,6 +133,52 @@ fn a_decision_is_taken_while_the_run_is_interrupted_and_acted_on_after_resume() 
     let fx = machine.resume(6).expect("resume");
     let started: Vec<&str> = fx.iter().filter_map(|effect| if let Effect::Start(job) = effect { Some(job.key.node.as_str()) } else { None }).collect();
     assert_eq!(started, ["docs", "pr"]);
+}
+
+#[test]
+fn a_finished_run_is_restored_as_finished_even_if_a_replaced_job_never_reported() {
+    let mut bench = Bench::start(side_branches());
+    bench.step_node("coder", 0);
+    bench.step_node("docs", 0);
+    bench.decide(ReviewDecision::SendBack { note: "Again.".into(), start: StartFrom::All, variants: 1 }).expect("send back");
+    // The lint of the first attempt was told to stop and is never heard of again.
+    assert_eq!(bench.queue.remove(0).map(|job| (job.key.node.to_string(), job.key.attempt)), Some(("lint".to_string(), 1)));
+    bench.cancelled.clear();
+    bench.drain();
+    bench.ship(1);
+    bench.drain();
+    assert_eq!(bench.state(), RunState::Done);
+    assert_eq!(bench.machine.jobs_in_flight(), 1);
+
+    let mut machine = Machine::restore(bench.machine.graph().clone(), through_json(bench.machine.snapshot()));
+    assert_eq!(machine.run().state, RunState::Done, "a closed run stays closed");
+    assert_eq!(machine.resume(1), Err(ExecError::NotStopped), "and cannot finish a second time");
+    assert_eq!(machine.jobs_in_flight(), 0);
+}
+
+#[test]
+fn a_restored_run_whose_next_job_waited_behind_a_dead_one_is_interrupted() {
+    // One agent at a time: the second attempt of the coder waits for the slot of a replaced
+    // job that died with the process.
+    let mut def = side_branches();
+    def.limits.max_parallel = 1;
+    for node in &mut def.nodes {
+        if node.id.as_str() == "lint" {
+            *node = agent("lint", 1);
+        }
+    }
+    let mut bench = Bench::start_with(def.clone(), Arc::new(FakeRunner::new()));
+    bench.step_node("coder", 0);
+    bench.step_node("docs", 0);
+    assert_eq!(bench.queued(), ["lint#0"]);
+    bench.decide(ReviewDecision::SendBack { note: "Again.".into(), start: StartFrom::All, variants: 1 }).expect("send back");
+    assert_eq!(bench.queued(), ["lint#0"], "the slot is still held");
+    assert_eq!(bench.status("coder", 0), NodeStatus::Pending);
+
+    let mut machine = Machine::restore(def, through_json(bench.machine.snapshot()));
+    assert_eq!(machine.run().state, RunState::Interrupted);
+    let fx = machine.resume(1).expect("resume");
+    assert!(fx.iter().any(|effect| matches!(effect, Effect::Start(job) if job.key.node.as_str() == "coder")));
 }
 
 // ---------------------------------------------------------------- the self-edit pipeline
