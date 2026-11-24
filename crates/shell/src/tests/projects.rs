@@ -137,31 +137,20 @@ fn pipeline_rows_show_their_state_and_open_the_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_editor_starts_with_the_rail_in_a_narrow_window(cx: &mut TestAppContext) {
-    let mut t = setup_with_width(cx, 1440.);
+fn opening_the_editor_never_changes_the_sidebar(cx: &mut TestAppContext) {
+    let mut t = setup_with_width(cx, 1100.);
     let editor = Route::Editor { pipeline: PipelineId::new("pay-triage"), node: None };
     t.navigate(editor.clone());
-    assert!(t.shown().collapsed, "narrow window: the editor gets the rail");
+    assert!(!t.shown().collapsed, "a narrow window keeps the sidebar the person left open");
+    assert!(t.recorded("set_settings").is_empty());
 
-    t.click("sidebar-expand");
-    assert!(!t.shown().collapsed, "expanding by hand holds for the visit");
-    t.navigate(Route::Editor { pipeline: PipelineId::new("nightly-audit"), node: None });
-    assert!(!t.shown().collapsed, "another pipeline is the same visit");
-
+    t.click("sidebar-collapse");
+    assert!(t.shown().collapsed);
     t.navigate(Route::Home);
-    assert!(!t.shown().collapsed);
-    t.navigate(editor.clone());
-    assert!(t.shown().collapsed, "a new visit starts with the rail again");
-    t.navigate(Route::Home);
-    assert!(!t.shown().collapsed, "leaving restores the person's setting");
-    assert!(t.recorded("set_settings").is_empty(), "visits never touch the saved setting");
-}
-
-#[gpui::test]
-fn a_wide_window_keeps_the_sidebar_in_the_editor(cx: &mut TestAppContext) {
-    let mut t = setup_with_width(cx, 1800.);
-    t.navigate(Route::Editor { pipeline: PipelineId::new("pay-triage"), node: None });
-    assert!(!t.shown().collapsed);
+    assert!(t.shown().collapsed, "a collapse made in the editor is the person's setting everywhere");
+    t.navigate(editor);
+    assert!(t.shown().collapsed);
+    assert_eq!(t.recorded("set_settings").len(), 1, "the toggle is saved once");
 }
 
 #[test]

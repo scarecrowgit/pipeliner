@@ -32,10 +32,6 @@ use crate::screen::section_label;
 /// Recent chats listed before "View all".
 const RECENT_ROWS: usize = 30;
 
-/// Below this window width a visit to the pipeline editor starts with the rail, as the
-/// editor's mockup draws it.
-pub const EDITOR_RAIL_BELOW: f32 = 1500.;
-
 /// What the last frame of the sidebar showed, for tests and checks.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shown {
@@ -64,14 +60,12 @@ pub struct Sidebar {
     runs: Entity<RunsModel>,
     catalog: Entity<CatalogModel>,
     shown: Shown,
-    /// The route is the editor (a visit is going on).
-    in_editor: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Sidebar {
     /// A sidebar over the hub's models (loading them if nobody did yet).
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let router = hub::router(cx);
         let chats = hub::chat_index(cx);
         let inbox = hub::inbox(cx);
@@ -79,10 +73,7 @@ impl Sidebar {
         let runs = hub::runs(cx);
         let catalog = hub::catalog(cx);
         let subscriptions = vec![
-            cx.observe_in(&router, window, |this: &mut Self, _, window, cx| {
-                this.follow_editor(window, cx);
-                cx.notify();
-            }),
+            cx.observe(&router, |_, _, cx| cx.notify()),
             cx.observe(&chats, |_, _, cx| cx.notify()),
             cx.observe(&inbox, |_, _, cx| cx.notify()),
             cx.observe(&runs, |_, _, cx| cx.notify()),
@@ -94,7 +85,7 @@ impl Sidebar {
             cx.observe_global::<collapse::Pending>(|_, cx| cx.notify()),
         ];
         ops.update(cx, |ops, cx| ops.ensure_schedules(cx));
-        let mut sidebar = Self {
+        Self {
             router,
             chats,
             inbox,
@@ -102,25 +93,7 @@ impl Sidebar {
             runs,
             catalog,
             shown: Shown::default(),
-            in_editor: false,
             _subscriptions: subscriptions,
-        };
-        sidebar.follow_editor(window, cx);
-        sidebar
-    }
-
-    /// Entering the editor in a narrow window starts a visit drawn as the rail; leaving it
-    /// ends the visit.
-    fn follow_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = matches!(self.router.read(cx).current(), Route::Editor { .. });
-        if editor && !self.in_editor {
-            self.in_editor = true;
-            if window.viewport_size().width < px(EDITOR_RAIL_BELOW) {
-                collapse::begin_visit(&self.ops, cx);
-            }
-        } else if !editor && self.in_editor {
-            self.in_editor = false;
-            collapse::end_visit(cx);
         }
     }
 

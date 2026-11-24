@@ -31,9 +31,6 @@
 //!   built afresh by the factory [`Shell::set_palette`] takes), ⌘N / Ctrl-N goes to the new-chat page,
 //!   ⌘\ / Ctrl-\ collapses or expands the sidebar (saved in the settings), ⌘O opens the
 //!   project switcher, ⌘, the current project's settings, ⌘1–⌘5 switch projects.
-//! - **Editor**: a visit to the pipeline editor in a window narrower than
-//!   [`EDITOR_RAIL_BELOW`] starts with the rail; toggles during it are not saved and the
-//!   person's own setting returns when they leave.
 //! - **Notices**: every [`hub::HubNotice`] becomes a toast through the overlay host.
 
 mod cache;
@@ -57,7 +54,7 @@ pub use notice::toast_for;
 pub use placeholder::Placeholder;
 pub use screen::{Crumb, Header, HeaderFn, Keep, Mounted, Screen, ScreenKind, Screens, ShowFn, section_label};
 pub use shell::{PALETTE_LAYER, Shell};
-pub use sidebar::{EDITOR_RAIL_BELOW, Shown, Sidebar};
+pub use sidebar::{Shown, Sidebar};
 
 actions!(
     shell,
