@@ -340,10 +340,14 @@ fn mcp(view: &Entity<SessionView>, detail: &SessionDetail) -> impl IntoElement {
     section.child(list)
 }
 
-/// What `McpState::Starting` reads as. The engine reports it for a server no turn has used yet
-/// (it starts them on first use), so it says "not started" until the engine tells the two apart.
-pub(crate) fn mcp_starting_word() -> &'static str {
-    "not started"
+/// What a server in a state without detail reads as: `None` for the states that show more.
+pub(crate) fn mcp_state_word(state: McpState) -> Option<&'static str> {
+    match state {
+        McpState::Idle => Some("not started"),
+        McpState::Starting => Some("starting"),
+        McpState::Disabled => Some("off"),
+        McpState::Ready | McpState::Failed => None,
+    }
 }
 
 fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> AnyElement {
@@ -351,9 +355,9 @@ fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> A
     let cell = named(name.clone()).type_style(LABEL).min_h(px(20.));
     let el = match server.state {
         McpState::Ready => cell.text_color(TEXT_MUTED).child(base::fmt::plural(u64::from(server.tools), "tool", "tools")),
-        McpState::Starting => cell.text_color(TEXT_MUTED).child(mcp_starting_word()),
-        McpState::Idle => cell.text_color(TEXT_MUTED).child("not started"),
-        McpState::Disabled => cell.text_color(TEXT_MUTED).child("off"),
+        McpState::Idle | McpState::Starting | McpState::Disabled => {
+            cell.text_color(TEXT_MUTED).child(mcp_state_word(server.state).unwrap_or_default())
+        }
         McpState::Failed => {
             let (v, server_name) = (view.clone(), server.name.clone());
             let reconnect = format!("{name}-reconnect");

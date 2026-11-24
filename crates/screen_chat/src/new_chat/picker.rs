@@ -9,6 +9,7 @@ use ui::prelude::*;
 use ui_rich::text_field;
 
 use super::NewChatView;
+use super::complete::dir_row;
 use crate::workdir::common::{Blocker, FolderRow, display_path, folder_name, mode_words, radio, short_path};
 
 /// Width of the folder column's content, px.
@@ -171,7 +172,17 @@ impl NewChatView {
         if let Some(typed) = &listing.typed {
             list = list.child(group_head("Open folder", String::new()));
             let info = self.typed_folder(typed).cloned();
-            list = list.child(typed_row(typed, info, chosen.as_deref() == Some(typed.as_path()), window, cx));
+            let exists = self.typed_exists(typed);
+            list = list.child(typed_row(typed, info, exists, chosen.as_deref() == Some(typed.as_path()), window, cx));
+            let dirs: Vec<_> = self.dir_rows().to_vec();
+            if !dirs.is_empty() {
+                list = list.child(group_head("Folders here", dirs.len().to_string()));
+                let mut group = col().flex_none().gap(px(1.));
+                for (dir_ix, dir) in dirs.iter().enumerate() {
+                    group = group.child(dir_row(dir_ix, dir, window, cx));
+                }
+                list = list.child(group);
+            }
             if !listing.completions.is_empty() {
                 list = list.child(group_head("Known folders here", listing.completions.len().to_string()));
                 list = rows(&listing.completions, list, window, cx);
@@ -349,27 +360,16 @@ fn empty_line(text: &'static str) -> impl IntoElement {
 fn typed_row(
     path: &std::path::Path,
     info: Option<FolderInfo>,
+    exists: Option<bool>,
     selected: bool,
-    window: &mut Window, cx: &mut Context<NewChatView>) -> AnyElement {
+    window: &mut Window,
+    cx: &mut Context<NewChatView>,
+) -> AnyElement {
     let name: SharedString = "new-chat-folder-path".into();
     let rest = if selected { Look::bg(SURFACE_HOVER) } else { Look::bg(TRANSPARENT) };
     let hover = if selected { rest } else { Look::bg(SURFACE_RAISED) };
     let faded = motion::hover_fade_state(name.clone(), rest, hover, window, cx);
-    // The API cannot tell an empty folder from a missing one: only a repo or files the
-    // harness reads prove the folder is there.
-    let (sub, tone) = match &info {
-        None => ("Looking at the folder…".to_string(), TEXT_MUTED),
-        Some(info) => match &info.facts {
-            Some(facts) => (
-                format!("git repository · {}", facts.branch.as_deref().unwrap_or("detached head")),
-                TEXT_SECONDARY,
-            ),
-            None if info.agents_md_lines.is_some() || !info.skills.is_empty() || !info.commands.is_empty() => {
-                ("Folder · not a git repository".to_string(), TEXT_SECONDARY)
-            }
-            None => ("Not a git repository, or no such folder".to_string(), WARNING),
-        },
-    };
+    let (sub, tone) = typed_words(info.as_ref(), exists);
     let picked = path.to_path_buf();
     let el = row()
         .id(ElementId::Name(name.clone()))
@@ -401,4 +401,18 @@ fn typed_row(
         .child(Kbd::new("↵"))
         .probe(name)
         .into_any_element()
+}
+
+/// What the typed folder's row says under its path, and in which colour: what is known of
+/// the folder once it was looked at, "No such folder" apart from "not a git repository".
+pub(crate) fn typed_words(info: Option<&FolderInfo>, exists: Option<bool>) -> (String, gpui::Hsla) {
+    let Some(info) = info else { return ("Looking at the folder…".to_string(), TEXT_MUTED) };
+    if let Some(facts) = &info.facts {
+        return (format!("git repository · {}", facts.branch.as_deref().unwrap_or("detached head")), TEXT_SECONDARY);
+    }
+    match exists {
+        Some(false) => ("No such folder".to_string(), WARNING),
+        Some(true) => ("Folder · not a git repository".to_string(), TEXT_SECONDARY),
+        None => ("Looking at the folder…".to_string(), TEXT_MUTED),
+    }
 }

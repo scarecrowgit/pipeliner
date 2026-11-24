@@ -38,10 +38,10 @@ fn durations_come_from_the_blocks_own_times(cx: &mut TestAppContext) {
         started: Some(NOW - 14_000),
         finished: Some(NOW),
     };
-    let status = open.view.read_with(cx, |view, _| view.tool_status(&call, false));
+    let status = open.view.read_with(cx, |view, cx| view.tool_status(&call, false, cx));
     assert_eq!((status.phase, status.secs), (Phase::Done, Some(14)), "a call the view never saw run");
     let untimed = ToolBlock { started: None, ..call };
-    assert_eq!(open.view.read_with(cx, |view, _| view.tool_status(&untimed, false)).secs, None);
+    assert_eq!(open.view.read_with(cx, |view, cx| view.tool_status(&untimed, false, cx)).secs, None);
 }
 
 #[gpui::test]
@@ -51,8 +51,8 @@ fn a_call_interrupted_live_keeps_its_command_row(cx: &mut TestAppContext) {
     settle(cx);
     let call = tool(&open, cx, "t8");
     assert!(matches!(&call.display, Some(ToolDisplay::Text { title, .. }) if title == "bash"), "the result replaced the display");
-    let (phase, shown) = open.view.read_with(cx, |view, _| {
-        (view.tool_status(&call, false).phase, interrupted_display(&call, view.call_displays.get("t8")))
+    let (phase, shown) = open.view.read_with(cx, |view, cx| {
+        (view.tool_status(&call, false, cx).phase, interrupted_display(&call, view.call_displays.get("t8")))
     });
     assert_eq!(phase, Phase::Interrupted);
     assert_eq!(
@@ -88,8 +88,8 @@ fn a_call_interrupted_before_a_restart_reads_interrupted(cx: &mut TestAppContext
         }
     });
     let call = tool(&open, cx, "t8");
-    let (phase, shown) = open.view.read_with(cx, |view, _| {
-        (view.tool_status(&call, false).phase, interrupted_display(&call, view.call_displays.get("t8")))
+    let (phase, shown) = open.view.read_with(cx, |view, cx| {
+        (view.tool_status(&call, false, cx).phase, interrupted_display(&call, view.call_displays.get("t8")))
     });
     assert_eq!(phase, Phase::Interrupted);
     assert!(matches!(shown, Some(ToolDisplay::Command { ref command, ref output, .. }) if command == "bun test src/charges" && output.is_empty()));

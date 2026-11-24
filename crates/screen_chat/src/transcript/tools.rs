@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, ClipboardItem, Context, ElementId, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, ClipboardItem, Context, ElementId, IntoElement, SharedString, div, prelude::*, px};
 use hub::Block;
 use hub::model::{FileDiff, ToolDisplay};
 use hub::transcript::{ToolBlock, ToolState};
@@ -70,38 +70,18 @@ impl ToolStatus {
     }
 }
 
-/// How the engine words the result of a call cut off by a stop, a crash or a restart.
-const INTERRUPTED_PREFIX: &str = "Interrupted before the tool finished";
-
-/// The error text a finished call carries in its display.
-fn error_text(display: &ToolDisplay) -> &str {
-    match display {
-        ToolDisplay::Text { body, .. } => body,
-        ToolDisplay::Command { output, .. } => output,
-        ToolDisplay::Line { result, .. } => result,
-        ToolDisplay::Diff(_) => "",
-    }
-}
-
-/// The call never finished: it was answered as interrupted (by a stop, or after a restart).
-pub(crate) fn is_interrupted(tool: &ToolBlock) -> bool {
-    matches!(tool.state, ToolState::Finished { is_error: true })
-        && tool.display.as_ref().is_some_and(|d| error_text(d).trim_start().starts_with(INTERRUPTED_PREFIX))
-}
-
 /// The display an interrupted call keeps: the look of its kind (from before the result, when
 /// the result replaced it with a generic error card), without the error as its output.
 pub(crate) fn interrupted_display(tool: &ToolBlock, before: Option<&ToolDisplay>) -> Option<ToolDisplay> {
     let display = match &tool.display {
-        Some(ToolDisplay::Text { title, .. }) if *title == tool.name => before.cloned().or_else(|| tool.display.clone()),
+        Some(ToolDisplay::Text { title, .. }) if *title == tool.name => {
+            before.cloned().or_else(|| Some(ToolDisplay::Text { title: title.clone(), body: String::new() }))
+        }
         other => other.clone(),
     }?;
     Some(match display {
         ToolDisplay::Command { command, .. } => ToolDisplay::Command { command, output: String::new(), exit_code: None },
         ToolDisplay::Line { verb, target, .. } => ToolDisplay::Line { verb, target, result: String::new() },
-        ToolDisplay::Text { title, body } if body.trim_start().starts_with(INTERRUPTED_PREFIX) => {
-            ToolDisplay::Text { title, body: String::new() }
-        }
         other => other,
     })
 }
@@ -156,9 +136,9 @@ pub(crate) fn clamp_lines(text: &str, limit: usize, expanded: bool) -> (String, 
 
 impl TranscriptView {
     /// Where `tool` is, from its state, the session and what the view timed.
-    pub(crate) fn tool_status(&self, tool: &ToolBlock, busy: bool) -> ToolStatus {
+    pub(crate) fn tool_status(&self, tool: &ToolBlock, busy: bool, cx: &App) -> ToolStatus {
         let phase = match tool.state {
-            _ if is_interrupted(tool) => Phase::Interrupted,
+            _ if self.model.read(cx).is_interrupted(&tool.id) => Phase::Interrupted,
             ToolState::Started if busy => Phase::Preparing,
             ToolState::Ready if busy => Phase::Running,
             ToolState::Started | ToolState::Ready => Phase::Interrupted,
@@ -200,8 +180,8 @@ impl TranscriptView {
                 .probe(probe)
                 .into_any_element();
         }
-        let status = self.tool_status(tool, self.model.read(cx).is_busy());
-        let display = if status.phase == Phase::Interrupted && is_interrupted(tool) {
+        let status = self.tool_status(tool, self.model.read(cx).is_busy(), cx);
+        let display = if self.model.read(cx).is_interrupted(&tool.id) {
             interrupted_display(tool, self.call_displays.get(&tool.id))
         } else {
             tool.display.clone()

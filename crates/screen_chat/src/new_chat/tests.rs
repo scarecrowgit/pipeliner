@@ -11,6 +11,7 @@ use hub::fixtures::{FixtureApi, World};
 use hub::{Hub, Route};
 use ui::OverlayHost;
 
+use super::picker::typed_words;
 use super::{NewChatView, TYPING_REST};
 use super::chats::{ChatsView, Group};
 use crate::workdir::common::Blocker;
@@ -366,4 +367,101 @@ fn a_typed_path_is_offered_once_it_was_looked_at(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     view.read_with(cx, |view, _| assert_eq!(view.facts().path(), Some(std::path::Path::new(typed))));
+}
+
+/// Types `text` into the folder field, which takes the keys, and lets the answers in.
+fn type_path(cx: &mut VisualTestContext, view: &Entity<NewChatView>, text: &str) {
+    view.update_in(cx, |view, window, cx| {
+        view.search.update(cx, |input, cx| input.set_text("", cx));
+        view.search.read(cx).focus(window);
+    });
+    cx.simulate_input(text);
+    cx.executor().advance_clock(TYPING_REST * 2);
+    cx.run_until_parked();
+}
+
+fn dir_names(cx: &mut VisualTestContext, view: &Entity<NewChatView>) -> Vec<(String, bool)> {
+    view.read_with(cx, |view, _| view.dir_rows().iter().map(|dir| (dir.name.clone(), dir.is_repo)).collect())
+}
+
+fn field_text(cx: &mut VisualTestContext, view: &Entity<NewChatView>) -> String {
+    view.read_with(cx, |view, cx| view.search.read(cx).text().to_string())
+}
+
+#[gpui::test]
+fn a_typed_path_lists_the_folders_inside_it_with_repos_marked(cx: &mut TestAppContext) {
+    let (_api, view, cx) = new_chat(cx);
+    type_path(cx, &view, "~/code/acme/");
+    assert_eq!(
+        dir_names(cx, &view),
+        [("checkout-web".to_string(), true), ("ledger".to_string(), true), ("payments-api".to_string(), true), (".archive".to_string(), false)],
+        "visible folders by name, then hidden ones"
+    );
+    assert!(drawn(cx, "new-chat-dir-row-0") && drawn(cx, "new-chat-dir-row-3"));
+
+    type_path(cx, &view, "~/code/acme/pay");
+    assert_eq!(dir_names(cx, &view), [("payments-api".to_string(), true)], "the rest of the name narrows them");
+    type_path(cx, &view, "~/co");
+    assert_eq!(dir_names(cx, &view), [("code".to_string(), false)], "a folder that is no repo is not marked");
+
+    type_path(cx, &view, "pay");
+    assert!(dir_names(cx, &view).is_empty(), "a search that is no path lists no folders");
+}
+
+#[gpui::test]
+fn tab_and_a_click_complete_the_path(cx: &mut TestAppContext) {
+    let (_api, view, cx) = new_chat(cx);
+    type_path(cx, &view, "~/code/ac");
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(field_text(cx, &view), "~/code/acme/", "Tab takes the first folder found");
+    assert_eq!(dir_names(cx, &view).len(), 4, "and the folders inside it are listed");
+
+    click(cx, "new-chat-dir-row-1");
+    assert_eq!(field_text(cx, &view), "~/code/acme/ledger/", "a click takes its folder");
+    assert!(drawn(cx, "new-chat-folder-path"), "which is offered to open");
+}
+
+#[gpui::test]
+fn a_late_answer_for_older_text_is_dropped(cx: &mut TestAppContext) {
+    let (_api, view, cx) = new_chat(cx);
+    view.update(cx, |view, cx| {
+        for text in ["~/code/acme/p", "~/code/acme/l"] {
+            view.search.update(cx, |input, cx| input.set_text(text, cx));
+            view.complete_typed(cx);
+        }
+    });
+    cx.run_until_parked();
+    assert_eq!(dir_names(cx, &view), [("ledger".to_string(), true)], "only the newest text is answered");
+}
+
+#[gpui::test]
+fn a_failed_listing_shows_no_folders(cx: &mut TestAppContext) {
+    let (api, view, cx) = new_chat(cx);
+    type_path(cx, &view, "~/code/acme/");
+    assert_eq!(dir_names(cx, &view).len(), 4);
+    api.fail_next("list_dir");
+    view.update(cx, |view, cx| {
+        view.search.update(cx, |input, cx| input.set_text("~/code/", cx));
+        view.complete_typed(cx);
+    });
+    cx.run_until_parked();
+    assert!(dir_names(cx, &view).is_empty(), "the old folders are not kept under a path they are not in");
+}
+
+#[gpui::test]
+fn the_typed_row_tells_a_missing_folder_from_one_without_git(cx: &mut TestAppContext) {
+    let (_api, view, cx) = new_chat(cx);
+    let (notes, missing) = ("/home/me/notes", "/home/me/nowhere");
+    type_path(cx, &view, notes);
+    let exists = view.read_with(cx, |view, _| view.typed_exists(std::path::Path::new(notes)));
+    assert_eq!(exists, Some(true));
+    type_path(cx, &view, missing);
+    let exists = view.read_with(cx, |view, _| view.typed_exists(std::path::Path::new(missing)));
+    assert_eq!(exists, Some(false));
+
+    let info = |facts| hub::api::FolderInfo { agents_md_lines: None, skills: Vec::new(), commands: Vec::new(), facts };
+    assert_eq!(typed_words(None, None).0, "Looking at the folder…");
+    assert_eq!(typed_words(Some(&info(None)), Some(false)).0, "No such folder");
+    assert_eq!(typed_words(Some(&info(None)), Some(true)).0, "Folder · not a git repository");
 }

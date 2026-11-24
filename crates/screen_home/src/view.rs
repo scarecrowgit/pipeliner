@@ -26,12 +26,6 @@ pub struct HomeView {
     pub(crate) selected: Option<usize>,
     /// A pinned clock for tests; the wall clock otherwise.
     pub(crate) now: Option<i64>,
-    /// Tests: every block reports this failure instead of its data.
-    #[cfg(test)]
-    pub(crate) failing: Option<SharedString>,
-    /// Tests: how many times a retry asked hub again.
-    #[cfg(test)]
-    pub(crate) retries: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -50,10 +44,6 @@ impl HomeView {
             catalog,
             selected: None,
             now: None,
-            #[cfg(test)]
-            failing: None,
-            #[cfg(test)]
-            retries: 0,
             _subscriptions: subscriptions,
         };
         window.focus(&view.focus_handle);
@@ -111,21 +101,13 @@ impl HomeView {
 
     /// Where a block's data stands: the model's slot (`None`: not asked for yet).
     pub(crate) fn state<T>(&self, slot: Option<&hub::Loadable<T>>) -> Block<T> {
-        #[cfg(test)]
-        if let Some(message) = &self.failing {
-            return Block::Failed(message.clone());
-        }
         block(slot)
     }
 
     /// Asks hub again for what the page shows: the retry of a block that failed.
     pub(crate) fn retry(&mut self, cx: &mut Context<Self>) {
-        #[cfg(test)]
-        {
-            self.retries += 1;
-        }
         let period = self.period;
-        self.ops.update(cx, |ops, cx| ops.ensure_period(period, cx));
+        hub::ops(cx).update(cx, |ops, cx| ops.reload(period, cx));
         cx.notify();
     }
 

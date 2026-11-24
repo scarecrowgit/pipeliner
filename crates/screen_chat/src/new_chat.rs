@@ -8,6 +8,7 @@
 //! whoever wants to mount it.
 
 mod chats;
+mod complete;
 mod panel;
 mod picker;
 
@@ -75,6 +76,9 @@ pub struct NewChatView {
     worktrees: Vec<WorkdirEntry>,
     facts: FolderFacts,
     typed: FolderFacts,
+    /// Whether the typed folder exists, answered with its facts.
+    typed_exists: Option<bool>,
+    dirs: complete::DirCompletions,
     typing: Option<Task<()>>,
     focus_pending: bool,
     branches: Vec<String>,
@@ -137,6 +141,8 @@ impl NewChatView {
             worktrees: Vec::new(),
             facts: FolderFacts::default(),
             typed: FolderFacts::default(),
+            typed_exists: None,
+            dirs: complete::DirCompletions::default(),
             typing: None,
             focus_pending: true,
             branches: Vec::new(),
@@ -346,6 +352,7 @@ impl NewChatView {
             }
             input.focus(window);
         });
+        self.look_at_typed(cx);
         cx.notify();
     }
 
@@ -358,6 +365,7 @@ impl NewChatView {
             let completions = merge_places([self.recent.clone(), self.worktrees.clone()])
                 .into_iter()
                 .filter(|entry| entry.path.to_string_lossy().to_lowercase().starts_with(&prefix))
+                .filter(|entry| !self.dirs.rows().iter().any(|dir| dir.path == entry.path))
                 .collect();
             return Listing { typed: Some(typed), completions, ..Listing::default() };
         }
@@ -384,11 +392,13 @@ impl NewChatView {
             TextInputEvent::Up => self.move_selection(-1, cx),
             TextInputEvent::Down => self.move_selection(1, cx),
             TextInputEvent::Tab => {
-                let listing = self.listing(cx);
-                if let Some(first) = listing.completions.first() {
-                    let text = format!("{}/", display_path(&first.path, cx));
-                    self.search.update(cx, |input, cx| input.set_text(&text, cx));
-                    cx.notify();
+                // The folders found on disk first, else the known folders.
+                let next = match self.dirs.rows().first() {
+                    Some(dir) => Some(dir.path.clone()),
+                    None => self.listing(cx).completions.first().map(|entry| entry.path.clone()),
+                };
+                if let Some(path) = next {
+                    self.complete_to(&path, window, cx);
                 }
             }
             // Enter takes a typed path first, else starts in the chosen folder (the ↵ of the
@@ -402,10 +412,12 @@ impl NewChatView {
     }
 
     /// A typed path is looked at once typing rests, so its row can say what is there.
-    fn look_at_typed(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn look_at_typed(&mut self, cx: &mut Context<Self>) {
+        self.complete_typed(cx);
         let Some(path) = self.listing(cx).typed else {
             self.typing = None;
             self.typed.clear();
+            self.typed_exists = None;
             return;
         };
         if self.typed.path() == Some(path.as_path()) {
@@ -413,15 +425,17 @@ impl NewChatView {
         }
         self.typing = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TYPING_REST).await;
-            let Ok(info) = this.update(cx, |this, cx| {
+            let Ok((generation, info, exists)) = this.update(cx, |this, cx| {
                 let generation = this.typed.begin(path.clone());
-                (generation, hub::queries(cx).folder_info(&path, cx))
+                let queries = hub::queries(cx);
+                (generation, queries.folder_info(&path, cx), queries.folder_exists(&path, cx))
             }) else {
                 return;
             };
-            let (generation, info) = (info.0, info.1.await);
+            let (info, exists) = (info.await, exists.await);
             this.update(cx, |this, cx| {
                 if this.typed.finish(generation, info) {
+                    this.typed_exists = Some(exists);
                     cx.notify();
                 }
             })
@@ -432,6 +446,12 @@ impl NewChatView {
     /// What is known about the typed path: `None` until the folder was looked at.
     pub(crate) fn typed_folder(&self, path: &Path) -> Option<&hub::api::FolderInfo> {
         (self.typed.path() == Some(path)).then(|| self.typed.info()).flatten()
+    }
+
+    /// Whether the typed folder is there, once it was looked at: tells a missing folder from
+    /// one that is no git repository.
+    pub(crate) fn typed_exists(&self, path: &Path) -> Option<bool> {
+        (self.typed.path() == Some(path) && self.typed.info().is_some()).then_some(self.typed_exists).flatten()
     }
 
     /// Up and Down in the search field choose the folder above or below.

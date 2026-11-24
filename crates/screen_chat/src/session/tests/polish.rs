@@ -1,5 +1,5 @@
 //! What the real window showed: an unknown context window, the workdir section's path and
-//! Change link, MCP servers no turn has started, and the keys that answer a permission question.
+//! Change link, MCP servers by state, and the keys that answer a permission question.
 
 use gpui::TestAppContext;
 use hub::ContextUsage;
@@ -7,7 +7,7 @@ use hub::api::McpState;
 use hub::model::SessionId;
 
 use super::{FIX, calls, click, focus_composer, open, open_with, shown, type_text};
-use crate::session::panel::{context_amount, context_line, mcp_starting_word, workdir_place};
+use crate::session::panel::{context_amount, context_line, mcp_state_word, workdir_place};
 
 #[test]
 fn an_unknown_context_window_claims_no_share() {
@@ -38,17 +38,33 @@ fn the_workdir_section_shows_the_home_relative_path_and_change_opens_the_popover
     assert_eq!(open, 1, "the workdir popover is up");
 }
 
-#[gpui::test]
-fn mcp_servers_no_turn_started_read_not_started(cx: &mut TestAppContext) {
+#[test]
+fn mcp_states_have_their_words() {
+    assert_eq!(mcp_state_word(McpState::Idle), Some("not started"), "configured, a turn starts it");
+    assert_eq!(mcp_state_word(McpState::Starting), Some("starting"));
+    assert_eq!(mcp_state_word(McpState::Disabled), Some("off"));
+    assert_eq!(mcp_state_word(McpState::Ready), None, "a ready server shows its tools");
+}
+
+fn mcp_row_in(cx: &mut TestAppContext, state: McpState) {
     let (t, cx) = open_with(cx, FIX, |w| {
         if let Some(extras) = w.extras.get_mut(&SessionId::new(FIX)) {
-            extras.mcp[0].state = McpState::Starting;
+            extras.mcp[0].state = state;
         }
     });
-    assert_eq!(mcp_starting_word(), "not started");
-    let state = t.view.read_with(cx, |v, cx| v.model.read(cx).detail().map(|d| d.mcp[0].state));
-    assert_eq!(state, Some(McpState::Starting));
+    let got = t.view.read_with(cx, |v, cx| v.model.read(cx).detail().map(|d| d.mcp[0].state));
+    assert_eq!(got, Some(state));
     assert!(shown(cx, "chat-panel-mcp-0"));
+}
+
+#[gpui::test]
+fn an_idle_mcp_server_has_a_row(cx: &mut TestAppContext) {
+    mcp_row_in(cx, McpState::Idle);
+}
+
+#[gpui::test]
+fn a_starting_mcp_server_has_a_row(cx: &mut TestAppContext) {
+    mcp_row_in(cx, McpState::Starting);
 }
 
 #[gpui::test]

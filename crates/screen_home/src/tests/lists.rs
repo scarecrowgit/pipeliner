@@ -4,7 +4,7 @@ use gpui::TestAppContext;
 use hub::api::{InboxId, IssueKey, ReviewId};
 use hub::{InboxFocus, Route};
 
-use super::{click, keys, open, open_with, route, shown};
+use super::{click, keys, open, open_told, open_with, route, shown};
 
 #[gpui::test]
 async fn needs_you_has_a_row_per_need(cx: &mut TestAppContext) {
@@ -110,14 +110,16 @@ async fn empty_blocks_say_so(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn a_failed_block_shows_its_error_and_retry_asks_again(cx: &mut TestAppContext) {
-    let (t, cx) = open(cx);
-    t.view.update(cx, |v, cx| {
-        v.failing = Some("the engine is gone".into());
-        cx.notify();
-    });
-    for block in ["stats", "needs", "working", "spend", "agents", "runtimes"] {
+    let failing = ["home_stats", "needs_you", "working_now", "spend_today", "spend_buckets", "spend_by_runnable"];
+    let (_t, cx) = open_told(cx, |_| {}, &failing);
+    for block in ["stats", "needs", "working", "spend", "agents"] {
         assert!(shown(cx, &format!("home-retry-{block}")), "{block}");
     }
+    assert!(!shown(cx, "home-need-0"), "a failed block shows no rows");
+    assert!(!shown(cx, "home-working-0"));
     click(cx, "home-retry-needs");
-    assert_eq!(t.view.read_with(cx, |v, _| v.retries), 1);
+    assert!(shown(cx, "home-need-0"), "after the retry the rows are there");
+    assert!(shown(cx, "home-working-0"), "and so is every other block");
+    assert!(shown(cx, "home-stat-runs"), "the stats strip");
+    assert!(shown(cx, "home-spend-chart"), "the spend chart");
 }

@@ -406,8 +406,8 @@ fn fail_box(this: &IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &m
 }
 
 impl IssuePanel {
-    /// Deleting a comment needs an engine command that does not exist yet: say so.
-    pub(super) fn delete_comment(&mut self, _seq: u64, window: &mut Window, cx: &mut Context<Self>) {
-        ui::overlays(window, cx).toast(Toast::new("Comments cannot be deleted yet").detail("The engine has no command for it."), cx);
+    /// Deletes one's own comment (feed entry `seq`); the feed drops it when hub does.
+    pub(super) fn delete_comment(&mut self, seq: u64, _window: &mut Window, cx: &mut Context<Self>) {
+        hub::commands(cx).delete_comment(&self.issue, seq, cx);
     }
 }

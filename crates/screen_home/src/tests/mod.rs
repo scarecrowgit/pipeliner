@@ -66,6 +66,16 @@ pub(crate) fn open_with(
     cx: &mut TestAppContext,
     edit: impl FnOnce(&mut World),
 ) -> (Open, &mut VisualTestContext) {
+    open_told(cx, edit, &[])
+}
+
+/// Like [`open_with`], where the fixture fails the first call of each query in `fail` (the
+/// names of `FixtureApi::fail_next`).
+pub(crate) fn open_told<'a>(
+    cx: &'a mut TestAppContext,
+    edit: impl FnOnce(&mut World),
+    fail: &[&str],
+) -> (Open, &'a mut VisualTestContext) {
     cx.update(|cx| {
         ui::init(cx);
         ui_rich::bind_keys(cx);
@@ -74,6 +84,9 @@ pub(crate) fn open_with(
     ui::motion::set_reduced(true);
     let api = Arc::new(FixtureApi::new(World::acme(NOW)));
     api.with_world(edit);
+    for query in fail {
+        api.fail_next(query);
+    }
     let hub = cx.update(|cx| Hub::new_fixture(api.clone(), cx));
     cx.update(|cx| hub::navigate(Route::Home, cx));
     let (view, cx) = mount(cx);
