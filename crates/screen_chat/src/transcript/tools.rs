@@ -15,6 +15,7 @@ use ui_rich::diff_view::{DiffCard, DiffFile, DiffHunk, DiffLine, DiffLineKind};
 
 use super::TranscriptView;
 use super::rows::{Place, group_card};
+use super::texts::{Part, TextKey};
 
 /// Output lines shown before "Show more".
 pub(crate) const OUTPUT_CLAMP: usize = 12;
@@ -28,6 +29,8 @@ const HEAD_H: f32 = 36.;
 const LINE_H: f32 = 32.;
 /// Width of the verb column of a short tool call.
 const VERB_W: f32 = 40.;
+/// Widest the result of a short tool call gets ("58 lines") before it ends in `…`.
+const RESULT_MAX: f32 = 240.;
 
 /// Where a tool call is, as its row says it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,8 +190,13 @@ impl TranscriptView {
             tool.display.clone()
         };
         let body = match &display {
-            None => line_row(place, &tool.name, "", "", status),
-            Some(ToolDisplay::Line { verb, target, result }) => line_row(place, verb, target, result, status),
+            None => line_row(index, place, &tool.name, "", "", status, None),
+            Some(ToolDisplay::Line { verb, target, result }) => {
+                // A failed call's result is an error: it wraps under the row and can be copied.
+                let error = (status.phase == Phase::Failed && !result.trim().is_empty())
+                    .then(|| self.verbatim(TextKey::Block(block.id, Part::Error), result.trim_end(), LABEL, DANGER, cx));
+                line_row(index, place, verb, target, result, status, error)
+            }
             Some(ToolDisplay::Command { command, output, .. }) => self.command_card(index, block, command, output, status, cx),
             Some(ToolDisplay::Diff(file)) => self.diff_card(block, tool, file, status, cx),
             Some(ToolDisplay::Text { title, body }) => self.text_card(index, block, title, body, status, cx),
@@ -197,8 +205,9 @@ impl TranscriptView {
         div().debug_selector(move || selector).child(body).probe(probe).into_any_element()
     }
 
-    /// A command: `$ command`, its state, copy and fold buttons, then its output clamped to
-    /// [`OUTPUT_CLAMP`] lines behind "Show more".
+    /// A command: `$ command` (wrapping, at most [`TEXT_CLAMP`] lines), its state, copy and
+    /// fold buttons, then its output clamped to [`OUTPUT_CLAMP`] lines behind "Show more".
+    /// The command and the output can be selected and copied.
     fn command_card(
         &mut self,
         index: usize,
@@ -227,32 +236,57 @@ impl TranscriptView {
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_open(id, true, cx)))
             .probe(format!("toggle-{index}"))
         });
+        let (command_shown, command_hidden) = clamp_lines(command, TEXT_CLAMP, ui.expanded);
+        let command_text = self.verbatim(TextKey::Block(id, Part::Command), &command_shown, MONO, TEXT, cx);
+        // The marks and buttons keep the header's height; a long command wraps between them.
         let header = row()
             .flex_none()
-            .h(px(HEAD_H))
+            .items_start()
+            .min_h(px(HEAD_H))
             .pl(px(SPACE_3))
             .pr(px(SPACE_1))
             .gap(px(SPACE_2))
-            .child(icon(IconName::Terminal, 12., TEXT_MUTED))
-            .child(truncate(format!("$ {command}")).type_style(MONO).text_color(TEXT))
-            .child(status.element())
-            .child(copy)
-            .children(toggle);
-        let (shown, hidden) = clamp_lines(output, OUTPUT_CLAMP, ui.expanded);
-        let body = open.then(|| {
-            div()
-                .flex_none()
-                .px(px(SPACE_3))
-                .py(px(SPACE_1_5))
-                .bg(BG_SIDEBAR)
-                .border_t_1()
-                .border_color(LINE)
-                .type_style(MONO)
-                .text_color(TEXT_SECONDARY)
-                .overflow_hidden()
-                .child(shown)
-        });
-        let more = (open && hidden > 0).then(|| self.show_more(index, id, hidden, cx));
+            .child(
+                row()
+                    .flex_none()
+                    .h(px(HEAD_H))
+                    .gap(px(SPACE_2))
+                    .child(icon(IconName::Terminal, 12., TEXT_MUTED))
+                    .child(div().type_style(MONO).text_color(TEXT).child("$")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .py(px((HEAD_H - MONO.line) / 2.))
+                    .debug_selector(move || format!("tool-command-{index}"))
+                    .child(command_text),
+            )
+            .child(row().flex_none().h(px(HEAD_H)).gap(px(SPACE_2)).child(status.element()).child(copy).children(toggle));
+        let (shown, output_hidden) = clamp_lines(output, OUTPUT_CLAMP, ui.expanded);
+        let body = if open {
+            let text = self.verbatim(TextKey::Block(id, Part::Output), &shown, MONO, TEXT_SECONDARY, cx);
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .px(px(SPACE_3))
+                    .py(px(SPACE_1_5))
+                    .bg(BG_SIDEBAR)
+                    .border_t_1()
+                    .border_color(LINE)
+                    .overflow_hidden()
+                    .debug_selector(move || format!("tool-output-{index}"))
+                    .child(text),
+            )
+        } else {
+            None
+        };
+        let hidden = command_hidden + if open { output_hidden } else { 0 };
+        let more = (hidden > 0).then(|| self.show_more(index, id, hidden, cx));
         col()
             .bg(SURFACE)
             .border_1()
@@ -325,7 +359,8 @@ impl TranscriptView {
         diff
     }
 
-    /// Any other tool: its title and state, then its text clamped to [`TEXT_CLAMP`] lines.
+    /// Any other tool: its title and state, then its text (selectable, wrapping) clamped to
+    /// [`TEXT_CLAMP`] lines.
     fn text_card(
         &mut self,
         index: usize,
@@ -345,17 +380,24 @@ impl TranscriptView {
             .child(truncate(SharedString::from(title.to_string())).type_style(MONO).text_color(TEXT_SECONDARY))
             .child(status.element());
         let (shown, hidden) = clamp_lines(body, TEXT_CLAMP, ui.expanded);
-        let text = (!shown.trim().is_empty()).then(|| {
-            div()
-                .flex_none()
-                .px(px(SPACE_3))
-                .py(px(SPACE_2))
-                .border_t_1()
-                .border_color(LINE_SUBTLE)
-                .type_style(LABEL)
-                .text_color(if status.phase == Phase::Failed { DANGER } else { TEXT_SECONDARY })
-                .child(shown)
-        });
+        let text = if shown.trim().is_empty() {
+            None
+        } else {
+            let color = if status.phase == Phase::Failed { DANGER } else { TEXT_SECONDARY };
+            let text = self.verbatim(TextKey::Block(block.id, Part::Body), &shown, LABEL, color, cx);
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .px(px(SPACE_3))
+                    .py(px(SPACE_2))
+                    .border_t_1()
+                    .border_color(LINE_SUBTLE)
+                    .debug_selector(move || format!("tool-text-{index}"))
+                    .child(text),
+            )
+        };
         let more = (hidden > 0).then(|| self.show_more(index, block.id, hidden, cx));
         col()
             .bg(SURFACE)
@@ -370,15 +412,24 @@ impl TranscriptView {
     }
 }
 
-/// A short call as one row of the shared "N tool calls" card: verb, target, result.
-fn line_row(place: &Place, verb: &str, target: &str, result: &str, status: ToolStatus) -> AnyElement {
+/// A short call as one row of the shared "N tool calls" card: verb, target, result; a
+/// failed call's `error` wraps under the row.
+fn line_row(
+    index: usize,
+    place: &Place,
+    verb: &str,
+    target: &str,
+    result: &str,
+    status: ToolStatus,
+    error: Option<gpui::Entity<ui_rich::markdown::Markdown>>,
+) -> AnyElement {
     let outcome: AnyElement = match status.phase {
-        Phase::Done if !result.is_empty() => {
-            div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(result.to_string()).into_any_element()
-        }
-        Phase::Failed if !result.is_empty() => {
-            div().flex_none().type_style(LABEL).text_color(DANGER).child(result.to_string()).into_any_element()
-        }
+        Phase::Done if !result.is_empty() => truncate_lh(result.to_string(), LABEL.line)
+            .flex_initial()
+            .max_w(px(RESULT_MAX))
+            .type_style(LABEL)
+            .text_color(TEXT_MUTED)
+            .into_any_element(),
         _ => status.element(),
     };
     let line = row()
@@ -391,6 +442,17 @@ fn line_row(place: &Place, verb: &str, target: &str, result: &str, status: ToolS
         .child(div().flex_none().min_w(px(VERB_W)).type_style(MONO).text_color(TEXT_MUTED).child(verb.to_string()))
         .child(truncate(target.to_string()).type_style(MONO).text_color(TEXT))
         .child(outcome);
+    let error = error.map(|text| {
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .pl(px(SPACE_3 + VERB_W + SPACE_2))
+            .pr(px(SPACE_3))
+            .pb(px(SPACE_2))
+            .debug_selector(move || format!("tool-error-{index}"))
+            .child(text)
+    });
     let group = place.group.unwrap_or(super::rows::GroupPlace { first: true, last: true, size: 1 });
     let header = row()
         .flex_none()
@@ -402,5 +464,6 @@ fn line_row(place: &Place, verb: &str, target: &str, result: &str, status: ToolS
         .child(icon(IconName::Terminal, 12., TEXT_MUTED))
         .child(base::fmt::plural(group.size as u64, "tool call", "tool calls"))
         .into_any_element();
-    group_card(group, LINE, Some(header), line.into_any_element())
+    let content = col().child(line).children(error).into_any_element();
+    group_card(group, LINE, Some(header), content)
 }

@@ -4,14 +4,16 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, ElementId, IntoElement, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, ElementId, Entity, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::Block;
 use hub::transcript::{BlockKind, CompactionBlock, NoticeBlock, NoticeKind};
 use ui::dev::Probe;
 use ui::prelude::*;
+use ui_rich::markdown::Markdown;
 
 use super::TranscriptView;
 use super::rows::INDENT;
+use super::texts::{Part, TextKey};
 
 /// "30 older messages summarised", or the running line.
 pub(crate) fn compaction(block: CompactionBlock) -> AnyElement {
@@ -38,8 +40,9 @@ pub(crate) fn compaction(block: CompactionBlock) -> AnyElement {
 }
 
 impl TranscriptView {
-    /// A notice line: its mark and text; a pull request's URL is a link.
-    pub(crate) fn notice(&mut self, block: &Block, notice: &NoticeBlock, _cx: &mut Context<Self>) -> AnyElement {
+    /// A notice line: its mark and text, which wraps and can be selected; a pull request's
+    /// URL is a link.
+    pub(crate) fn notice(&mut self, index: usize, block: &Block, notice: &NoticeBlock, cx: &mut Context<Self>) -> AnyElement {
         let (mark, color) = match notice.kind {
             NoticeKind::Info => (IconName::Alert, TEXT_MUTED),
             NoticeKind::Retry => (IconName::Replay, TEXT_MUTED),
@@ -50,21 +53,35 @@ impl TranscriptView {
             NoticeKind::PullRequest => {
                 let url = notice.text.clone();
                 row()
+                    .flex_1()
+                    .min_w_0()
                     .gap(px(SPACE_1_5))
-                    .child("Pull request opened")
+                    .child(div().flex_none().child("Pull request opened"))
                     .child(
-                        Link::new(ElementId::NamedInteger("pr-link".into(), block.id), url.clone())
-                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                        // A link does not shrink: a URL longer than the row is clipped.
+                        div().flex_1().min_w_0().overflow_hidden().flex().child(
+                            Link::new(ElementId::NamedInteger("pr-link".into(), block.id), url.clone())
+                                .on_click(move |_, _, cx| cx.open_url(&url)),
+                        ),
                     )
                     .into_any_element()
             }
-            _ => truncate(notice.text.clone()).into_any_element(),
+            _ => {
+                let md = self.verbatim(TextKey::Block(block.id, Part::Error), &notice.text, LABEL, color, cx);
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .debug_selector(move || format!("notice-text-{index}"))
+                    .child(md)
+                    .into_any_element()
+            }
         };
         row()
+            .items_start()
             .gap(px(SPACE_2))
             .type_style(LABEL)
             .text_color(color)
-            .child(icon(mark, 12., color))
+            .child(row().flex_none().h(px(LABEL.line)).child(icon(mark, 12., color)))
             .child(text)
             .into_any_element()
     }
@@ -79,6 +96,7 @@ impl TranscriptView {
     ) -> AnyElement {
         let latest = blocks[index + 1..].iter().all(|block| matches!(block.kind, BlockKind::Notice(_)));
         let busy = self.model.read(cx).is_busy();
+        let error = self.verbatim(TextKey::Block(blocks[index].id, Part::Error), error, LABEL, TEXT_SECONDARY, cx);
         let retry = (latest && !busy).then(|| {
             Button::new("retry-turn", "Retry")
                 .small()
@@ -94,7 +112,7 @@ impl TranscriptView {
                     .flex_1()
                     .min_w_0()
                     .child(div().type_style(BODY_STRONG).text_color(TEXT).child("The turn failed"))
-                    .child(div().type_style(LABEL).text_color(TEXT_SECONDARY).child(error.to_string())),
+                    .child(div().debug_selector(move || format!("failure-text-{index}")).child(error)),
             )
             .children(retry)
             .into_any_element()
@@ -179,18 +197,30 @@ pub(crate) fn loading_state() -> AnyElement {
     )
 }
 
-/// The whole view when the chat could not be read.
-pub(crate) fn error_state(error: SharedString) -> AnyElement {
+/// Widest the load error banner gets.
+const ERROR_MAX: f32 = 560.;
+
+/// The whole view when the chat could not be read; `error` is the selectable reason.
+pub(crate) fn error_state(error: Entity<Markdown>) -> AnyElement {
     centred(
         "transcript-error",
-        Banner::new()
-            .tone(BannerTone::Danger)
-            .child(icon(IconName::Alert, 16., DANGER))
+        // A definite width: the reason wraps to it rather than to one line.
+        div()
+            .w_full()
+            .max_w(px(ERROR_MAX))
+            .flex()
+            .flex_col()
             .child(
-                col()
-                    .min_w_0()
-                    .child(div().type_style(BODY_STRONG).text_color(TEXT).child("Could not load this chat"))
-                    .child(div().type_style(LABEL).text_color(TEXT_SECONDARY).child(error)),
+                Banner::new()
+                    .tone(BannerTone::Danger)
+                    .child(icon(IconName::Alert, 16., DANGER))
+                    .child(
+                        col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().type_style(BODY_STRONG).text_color(TEXT).child("Could not load this chat"))
+                            .child(div().debug_selector(|| "transcript-error-text".into()).child(error)),
+                    ),
             )
             .probe("transcript-error")
             .into_any_element(),

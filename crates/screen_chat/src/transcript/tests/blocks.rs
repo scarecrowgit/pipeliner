@@ -183,3 +183,12 @@ fn clamping_keeps_the_first_lines() {
     assert_eq!(clamp_lines(&text, 12, true).1, 0);
     assert_eq!(clamp_lines("a\nb\n", 12, false), ("a\nb".to_string(), 0));
 }
+
+#[test]
+fn a_summary_row_shows_its_first_line_without_heading_marks() {
+    use crate::transcript::agents::summary_line;
+    assert_eq!(summary_line("\n## Findings\nThe retry path double-charges."), "Findings");
+    assert_eq!(summary_line("Found **two** call sites.\nMore."), "Found **two** call sites.");
+    assert_eq!(summary_line("#hashtag first"), "#hashtag first");
+    assert_eq!(summary_line("###"), "");
+}

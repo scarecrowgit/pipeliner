@@ -11,6 +11,7 @@ use ui::prelude::*;
 use ui_rich::text_field;
 
 use super::TranscriptView;
+use super::texts::TextKey;
 
 /// Size of the banner's policy mark (`.tile` without its fill).
 const MARK: f32 = 24.;
@@ -57,11 +58,13 @@ impl TranscriptView {
             .items_center()
             .justify_center()
             .child(icon(IconName::Policy, 16., WARNING));
+        // What it wants to run wraps and can be selected and copied.
+        let call = self.verbatim(TextKey::Request(request.id.clone()), &call_line(&request.display), MONO, TEXT, cx);
         let what = col()
             .flex_1()
             .min_w_0()
             .child(div().type_style(BODY_STRONG).text_color(TEXT).child(format!("{} wants to {}", request.agent, wants(request))))
-            .child(div().type_style(MONO).text_color(TEXT).child(call_line(&request.display)));
+            .child(div().flex().flex_col().debug_selector(|| "perm-call".into()).child(call));
         let policy = div().flex_none().type_style(MONO_SM).text_color(TEXT_MUTED).child(format!("policy: {}", request.policy));
         let top = row().gap(px(SPACE_3)).child(mark).child(what).child(policy);
 

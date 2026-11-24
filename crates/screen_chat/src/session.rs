@@ -53,6 +53,8 @@ pub struct SessionView {
     models: pickers::ModelList,
     share: share::ShareOptions,
     rename: Option<(Entity<ui_rich::TextInput>, Subscription)>,
+    /// The selectable errors of failed MCP servers in the context panel, by server name.
+    mcp_errors: std::collections::HashMap<String, Entity<ui_rich::markdown::Markdown>>,
     panel_open: bool,
     /// What was last pushed into the composer, so it is told only about changes.
     applied: Option<input::Applied>,
@@ -92,6 +94,7 @@ impl SessionView {
             models: pickers::ModelList::default(),
             share: share::ShareOptions::default(),
             rename: None,
+            mcp_errors: Default::default(),
             panel_open,
             applied: None,
             _subs: subs,

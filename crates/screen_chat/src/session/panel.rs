@@ -2,11 +2,14 @@
 //! context use and cost, skills in context, todo list, modified files, sub-agents, LSP
 //! (coming soon) and MCP servers.
 
-use gpui::{AnyElement, App, Context, Entity, IntoElement, SharedString, Window, div, prelude::*, px};
+use std::collections::HashMap;
+
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, IntoElement, SharedString, Window, div, prelude::*, px};
 use hub::api::{McpServerInfo, McpState, RepoHost, Session, SessionDetail, SessionState, TodoStatus};
 use hub::{ContextUsage, Route};
 use ui::dev::Probe;
 use ui::prelude::*;
+use ui_rich::markdown::Markdown;
 
 use super::SessionView;
 
@@ -16,7 +19,8 @@ const PANEL_WIDTH: f32 = 320.;
 const SKILLS_ANCHOR: &str = "chat-panel-manage-skills";
 
 /// The whole panel.
-pub(super) fn panel(this: &SessionView, cx: &mut Context<SessionView>) -> impl IntoElement {
+pub(super) fn panel(this: &mut SessionView, cx: &mut Context<SessionView>) -> impl IntoElement {
+    let errors = this.mcp_errors(cx);
     let view = cx.entity();
     let model = this.model.read(cx);
     let detail = model.detail().cloned();
@@ -42,7 +46,7 @@ pub(super) fn panel(this: &SessionView, cx: &mut Context<SessionView>) -> impl I
     }
     sections.push(lsp().into_any_element());
     if let Some(detail) = detail.as_deref() {
-        sections.push(mcp(&view, detail).into_any_element());
+        sections.push(mcp(&view, detail, &errors).into_any_element());
     }
     div()
         .id("chat-panel")
@@ -329,7 +333,7 @@ fn lsp() -> impl IntoElement {
         .child(empty("Language server diagnostics show here"))
 }
 
-fn mcp(view: &Entity<SessionView>, detail: &SessionDetail) -> impl IntoElement {
+fn mcp(view: &Entity<SessionView>, detail: &SessionDetail, errors: &HashMap<String, Entity<Markdown>>) -> impl IntoElement {
     let mut section = Section::new("MCP servers").last();
     if detail.mcp.is_empty() {
         return section.child(empty("No MCP servers"));
@@ -337,7 +341,7 @@ fn mcp(view: &Entity<SessionView>, detail: &SessionDetail) -> impl IntoElement {
     section = section.meta(meta(detail.mcp.len().to_string()));
     let mut list = KeyValue::new();
     for (ix, server) in detail.mcp.iter().enumerate() {
-        list = list.mono_row(server.name.clone(), mcp_value(view, ix, server));
+        list = list.mono_row(server.name.clone(), mcp_value(view, ix, server, errors.get(&server.name).cloned()));
     }
     section.child(list)
 }
@@ -352,7 +356,12 @@ pub(crate) fn mcp_state_word(state: McpState) -> Option<&'static str> {
     }
 }
 
-fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> AnyElement {
+/// The text of a failed server's error: what the server said, or "failed".
+fn mcp_error(server: &McpServerInfo) -> String {
+    server.error.clone().unwrap_or_else(|| "failed".into())
+}
+
+fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo, error: Option<Entity<Markdown>>) -> AnyElement {
     let name = format!("chat-panel-mcp-{ix}");
     let cell = named(name.clone()).type_style(LABEL).min_h(px(20.));
     let el = match server.state {
@@ -363,7 +372,12 @@ fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> A
         McpState::Failed => {
             let (v, server_name) = (view.clone(), server.name.clone());
             let reconnect = format!("{name}-reconnect");
-            cell.child(div().text_color(DANGER).child(server.error.clone().unwrap_or_else(|| "failed".into())))
+            // The error wraps (a long one is not cut or pushed out of the panel) and can be copied.
+            let text: AnyElement = match error {
+                Some(md) => md.into_any_element(),
+                None => div().text_color(DANGER).child(mcp_error(server)).into_any_element(),
+            };
+            cell.child(div().flex().flex_col().flex_1().min_w_0().debug_selector(move || format!("chat-panel-mcp-{ix}-error")).child(text))
                 .child(
                     Link::new(gpui::ElementId::Name(reconnect.clone().into()), "Reconnect")
                         .on_click(move |_, _, cx| v.update(cx, |this, cx| this.reconnect(&server_name, cx)))
@@ -375,6 +389,33 @@ fn mcp_value(view: &Entity<SessionView>, ix: usize, server: &McpServerInfo) -> A
 }
 
 impl SessionView {
+    /// The selectable error of every failed MCP server, by server name, kept across frames.
+    fn mcp_errors(&mut self, cx: &mut Context<Self>) -> HashMap<String, Entity<Markdown>> {
+        let failed: Vec<(String, String)> = self
+            .model
+            .read(cx)
+            .detail()
+            .map(|detail| {
+                detail.mcp.iter().filter(|s| s.state == McpState::Failed).map(|s| (s.name.clone(), mcp_error(s))).collect()
+            })
+            .unwrap_or_default();
+        self.mcp_errors.retain(|name, _| failed.iter().any(|(n, _)| n == name));
+        for (name, error) in failed {
+            match self.mcp_errors.get(&name) {
+                Some(md) => md.update(cx, |md, cx| {
+                    if md.text() != error {
+                        md.set_text(error, cx);
+                    }
+                }),
+                None => {
+                    let md = cx.new(|cx| Markdown::verbatim(error, cx).type_style(LABEL).color(DANGER));
+                    self.mcp_errors.insert(name, md);
+                }
+            }
+        }
+        self.mcp_errors.clone()
+    }
+
     /// A modified file's row: mention it in the message being written.
     fn mention_file(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.composer.read(cx).disabled_reason().is_some() {

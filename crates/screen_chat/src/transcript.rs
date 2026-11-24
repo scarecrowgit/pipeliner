@@ -20,6 +20,7 @@
 //! | [`agents`] | sub-agent groups and todo lists |
 //! | [`notices`] | compaction, notices, failures, the footer, empty and error states |
 //! | [`links`] | which permission question belongs on which tool row |
+//! | [`texts`] | the selectable texts of tool cards, errors, summaries and questions |
 
 mod agents;
 mod links;
@@ -27,6 +28,7 @@ mod message;
 mod notices;
 mod permission;
 mod rows;
+mod texts;
 mod tools;
 
 #[cfg(test)]
@@ -102,6 +104,8 @@ pub struct TranscriptView {
     links: Links,
     ui: HashMap<BlockId, RowUi>,
     markdown: HashMap<BlockId, Entity<Markdown>>,
+    /// Selectable texts that are not messages: tool input and output, errors, summaries.
+    texts: HashMap<texts::TextKey, Entity<Markdown>>,
     diffs: HashMap<BlockId, (Arc<Block>, Arc<DiffFile>)>,
     timings: HashMap<String, Timing>,
     /// Each call's display from before its result, by call id: an interrupted call's result
@@ -144,6 +148,7 @@ impl TranscriptView {
                 if gone {
                     this.cancel_reject(cx);
                 }
+                this.prune_texts(cx);
                 this.remeasure_footer();
                 this.ensure_ticker(cx);
                 cx.notify();
@@ -158,6 +163,7 @@ impl TranscriptView {
             links: Links::default(),
             ui: HashMap::new(),
             markdown: HashMap::new(),
+            texts: HashMap::new(),
             diffs: HashMap::new(),
             timings: HashMap::new(),
             call_displays: HashMap::new(),
@@ -497,6 +503,7 @@ impl Render for TranscriptView {
         match state {
             LoadState::Loading => return root.child(notices::loading_state()).probe("transcript").into_any_element(),
             LoadState::Failed(error) => {
+                let error = self.verbatim(texts::TextKey::LoadError, &error, LABEL, TEXT_SECONDARY, cx);
                 return root.child(notices::error_state(error)).probe("transcript").into_any_element();
             }
             LoadState::Ready if empty => {

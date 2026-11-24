@@ -6,6 +6,7 @@ mod heights;
 mod permissions;
 mod polish;
 mod scrolling;
+mod selection;
 
 use std::sync::Arc;
 

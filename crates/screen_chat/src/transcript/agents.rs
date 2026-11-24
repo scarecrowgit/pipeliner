@@ -10,9 +10,12 @@ use ui::prelude::*;
 
 use super::TranscriptView;
 use super::rows::{GroupPlace, Place, group_card};
+use super::texts::{Mode, Part, TextKey};
 
 /// Size of a todo check box (`.check`).
 const CHECK: f32 = 16.;
+/// Lines of a sub-agent's summary shown in its row; the rest is in its session.
+const SUMMARY_LINES: f32 = 3.;
 
 /// "haiku-5.5 · 4 tool calls · 14s · $0.01": what a finished sub-agent used.
 pub(crate) fn subagent_meta(model: Option<&str>, state: &SubagentState) -> String {
@@ -31,6 +34,16 @@ pub(crate) fn subagent_meta(model: Option<&str>, state: &SubagentState) -> Strin
     parts.join(" · ")
 }
 
+/// The line of a sub-agent's summary its row shows: the first one with text, without the
+/// `#` of a heading (the row's type stays small).
+pub(crate) fn summary_line(summary: &str) -> &str {
+    let line = base::fmt::first_line(summary);
+    match line.trim_start_matches('#') {
+        rest if rest.len() < line.len() && (rest.is_empty() || rest.starts_with(' ')) => rest.trim(),
+        _ => line,
+    }
+}
+
 /// "depth 1 of 2", or "depth 1" when the spawning policy's limit is not known.
 pub(crate) fn depth_words(sub: &SubagentBlock) -> String {
     let depth = sub.depth.max(1);
@@ -47,7 +60,8 @@ pub(crate) fn todo_progress(items: &[TodoItem]) -> String {
 }
 
 impl TranscriptView {
-    /// One sub-agent: tile, name and task, what it used, its state and "Open session".
+    /// One sub-agent: tile, name and task, what it used, the first line of its summary
+    /// (selectable, up to three wrapped lines), its state and "Open session".
     pub(crate) fn subagent(
         &mut self,
         index: usize,
@@ -80,7 +94,7 @@ impl TranscriptView {
                     .child(icon(if *ok { IconName::Check } else { IconName::X }, 12., if *ok { SUCCESS } else { DANGER }))
                     .child(if *ok { "done" } else { "failed" })
                     .into_any_element(),
-                Some(base::fmt::first_line(summary).to_string()).filter(|s| !s.is_empty()),
+                Some(summary_line(summary).to_string()).filter(|s| !s.is_empty()),
             ),
         };
         let open = sub.session.clone().map(|session| {
@@ -99,7 +113,23 @@ impl TranscriptView {
             .min_w_0()
             .child(title)
             .when(!meta.is_empty(), |d| d.child(truncate_block(meta, LABEL.line).type_style(LABEL).text_color(TEXT_MUTED)))
-            .children(summary.map(|s| truncate_block(s, LABEL.line).type_style(LABEL).text_color(TEXT_SECONDARY)));
+            .children(summary.map(|summary| {
+                let text = self.text_view(
+                    TextKey::Block(block.id, Part::Summary),
+                    &summary,
+                    Mode::Markdown,
+                    LABEL,
+                    TEXT_SECONDARY,
+                    cx,
+                );
+                div()
+                    .flex()
+                    .flex_col()
+                    .max_h(px(LABEL.line * SUMMARY_LINES))
+                    .overflow_hidden()
+                    .debug_selector(move || format!("subagent-summary-{index}"))
+                    .child(text)
+            }));
         let line = row()
             .gap(px(SPACE_2_5))
             .py(px(SPACE_2_5))

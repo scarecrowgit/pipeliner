@@ -165,7 +165,7 @@ pub(crate) fn row(
         BlockKind::Subagent(sub) => view.subagent(index, &block, sub, &place, cx),
         BlockKind::Todos(items) => super::agents::todos(items),
         BlockKind::Permission(question) => view.standalone_permission(index, question, cx),
-        BlockKind::Notice(notice) => view.notice(&block, notice, cx),
+        BlockKind::Notice(notice) => view.notice(index, &block, notice, cx),
         BlockKind::Failure(error) => view.failure(blocks, index, error, cx),
     };
     let body = div().ml(px(INDENT)).flex().flex_col().child(content);

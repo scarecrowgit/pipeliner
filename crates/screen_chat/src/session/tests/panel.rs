@@ -54,3 +54,21 @@ fn the_toggle_folds_the_panel_for_every_chat(cx: &mut TestAppContext) {
     click(cx, "chat-panel-toggle");
     assert!(t.view.read_with(cx, |v, _| v.is_panel_open()));
 }
+
+#[gpui::test]
+fn a_failed_mcp_servers_error_can_be_copied(cx: &mut TestAppContext) {
+    use gpui::{Modifiers, MouseButton, point, px};
+    let (_t, cx) = open(cx, FIX);
+    let b = cx.debug_bounds("chat-panel-mcp-2-error").unwrap_or_else(|| panic!("the error was not drawn"));
+    let y = b.top() + px(ui::theme::LABEL.line / 2.);
+    let (from, to) = (point(b.left() + px(1.), y), point(b.right() - px(1.), y));
+    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(to, Some(MouseButton::Left), Modifiers::none());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("ctrl-c");
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()).as_deref(), Some("token expired"));
+    // The error and its Reconnect link stay inside the panel.
+    let panel = cx.debug_bounds("chat-panel").unwrap_or_else(|| panic!("no panel"));
+    assert!(b.right() <= panel.right(), "{b:?} leaves {panel:?}");
+}
