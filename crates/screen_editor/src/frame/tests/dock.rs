@@ -138,3 +138,12 @@ async fn a_log_line_can_be_copied_and_a_long_one_wraps(cx: &mut TestAppContext) 
     assert!(text.size.height > gpui::px(ui::theme::LABEL.line), "{text:?}");
     assert_eq!(super::narrow::drag_and_copy(cx, "log-text-2"), Some(long));
 }
+
+#[gpui::test]
+async fn an_empty_log_says_so(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx);
+    assert!(shown(cx, "test-run-new"), "the last test run is on show");
+    click(cx, "dock-tabs-1");
+    assert_eq!(t.view.read_with(cx, |v, cx| v.log_count(cx)), 0);
+    assert!(shown(cx, "log-empty"), "not a blank list");
+}

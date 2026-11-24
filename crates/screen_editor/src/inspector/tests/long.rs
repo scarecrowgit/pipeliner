@@ -2,7 +2,7 @@
 //! stay inside the panel: they end in `…` or wrap.
 
 use gpui::{Bounds, Pixels, TestAppContext, VisualTestContext, px};
-use hub::model::{ModelRef, NodeKind, ToolGrants};
+use hub::model::{ModelRef, NodeKind, SpawnPolicy, ToolGrants};
 
 use super::{click, graph, leak, open, problem, select};
 use crate::Selection;
@@ -36,6 +36,7 @@ fn long_values_stay_inside_the_panel(cx: &mut TestAppContext) {
                 node.name = long_name.clone();
                 agent.model = Some(ModelRef::new("anthropic", "claude-some-model-with-an-unusually-long-identifier-20261124"));
                 agent.files_out = vec![format!("out/{}", "very-long-file-name-".repeat(6))];
+                agent.spawn = Some(SpawnPolicy { enabled: true, ..Default::default() });
                 agent.tools = Some(ToolGrants {
                     allow: vec!["mcp__a_server_with_a_long_name__a_tool_with_an_even_longer_name_for_testing".into()],
                     ..Default::default()
@@ -55,7 +56,10 @@ fn long_values_stay_inside_the_panel(cx: &mut TestAppContext) {
     let message = format!("Fixer writes to {} which no node reads", "a/very/long/path/".repeat(8));
     t.draft.update(cx, |d, cx| d.set_problems(revision, vec![problem("fixer", &message)], cx));
     select(&t, cx, Selection::Node("fixer".into()));
-    for selector in ["insp-problems", "insp-files-out-0", "insp-tools-allow-0", "insp-name", "insp-runnable"] {
+    for selector in ["insp-problems", "insp-files-out-0", "insp-tools-allow-0", "insp-name", "insp-runnable", "insp-spawn-chip-0"] {
         assert_inside(cx, selector);
     }
+    // The "Spawns …" chip takes the panel's width and ends in `…`, not at a character count.
+    let chip = bounds(cx, "insp-spawn-chip-0");
+    assert!(chip.size.width > px(250.), "{chip:?}");
 }

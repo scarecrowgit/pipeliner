@@ -45,13 +45,16 @@ impl InspectorView {
                 (field, rule, message)
             })
             .collect();
+        let count = router.rules.len();
         let add = Button::new("insp-rule-add", "Add rule")
             .ghost()
             .small()
             .icon(IconName::Plus)
-            .on_click(self.on_click(cx, |this, _, cx| this.edit_node("Add rule", router_edit(|r| { ops::add_rule(r); }), cx)))
+            .on_click(self.on_click(cx, move |this, _, cx| {
+                this.edit_node("Add rule", router_edit(|r| { ops::add_rule(r); }), cx);
+                this.focus_field_when_drawn(format!("insp-rule-{count}-label"), cx);
+            }))
             .probe("insp-rule-add");
-        let count = router.rules.len();
         let mut section = titled("Rules", Some(add.into_any_element())).gap(px(SPACE_2));
         section = section.child(note("Tried top to bottom; the first match wins. Each rule is a port on the canvas.", INNER));
         for (index, rule) in router.rules.iter().enumerate() {

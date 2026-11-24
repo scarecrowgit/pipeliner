@@ -58,7 +58,8 @@ pub struct InspectorView {
     /// The test run on show, for the spend of the selected node.
     run: Option<(Entity<RunModel>, Subscription)>,
     scroll: ScrollHandle,
-    focus_first: bool,
+    /// A field to put the caret in once it is drawn.
+    pending_focus: Option<PendingFocus>,
     /// Problems and field messages, selectable.
     texts: Texts,
     _subs: Vec<Subscription>,
@@ -100,7 +101,7 @@ impl InspectorView {
             blocked_workdir: None,
             run: None,
             scroll: ScrollHandle::new(),
-            focus_first: false,
+            pending_focus: None,
             texts: Texts::default(),
             _subs: subs,
         };
@@ -121,13 +122,29 @@ impl InspectorView {
     /// Puts the caret in the first text field (the name) once it is drawn: after adding a
     /// node, or when the person presses Enter on a selected one.
     pub fn focus_first_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.fields.keys().first().and_then(|key| self.fields.editor(key)) {
+        // A node added a moment ago is selected, but the draft's event has not reached this
+        // view yet: drop the fields of what it showed before, or the old name takes focus.
+        self.follow_selection(cx);
+        match self.first_field() {
             Some(editor) => editor.focus(window, cx),
             None => {
-                self.focus_first = true;
+                self.pending_focus = Some(PendingFocus::First);
                 cx.notify();
             }
         }
+    }
+
+    /// The name field, or the first field drawn when there is no name (an edge). Fields are
+    /// not made in the order they are shown: an agent makes its role before its name.
+    fn first_field(&self) -> Option<fields::Editor> {
+        self.fields.editor("insp-name").or_else(|| self.fields.keys().first().and_then(|key| self.fields.editor(key)))
+    }
+
+    /// Puts the caret in field `key` once it is drawn: a field that just appeared (a new
+    /// rule's label, a new workdir's name).
+    fn focus_field_when_drawn(&mut self, key: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.pending_focus = Some(PendingFocus::Field(key.into()));
+        cx.notify();
     }
 
     /// The text of field `key` (its probe name) as last drawn.
@@ -147,6 +164,7 @@ impl InspectorView {
             self.shown = selection;
             self.open_workdir = None;
             self.blocked_workdir = None;
+            self.pending_focus = None;
             self.scroll.set_offset(gpui::point(px(0.), px(0.)));
         }
     }
@@ -337,6 +355,14 @@ impl InspectorView {
     }
 }
 
+/// Which field takes the caret once drawn.
+enum PendingFocus {
+    /// The first text field (the name).
+    First,
+    /// The field of this key.
+    Field(SharedString),
+}
+
 /// The word after the name in the header: the kind, and the action's kind for actions.
 fn kind_word(node: &NodeDef) -> String {
     match &node.kind {
@@ -368,11 +394,14 @@ impl Render for InspectorView {
         };
         self.fields.end_frame();
         self.texts.end_frame();
-        if self.focus_first
-            && let Some(editor) = self.fields.keys().first().and_then(|key| self.fields.editor(key))
-        {
-            self.focus_first = false;
-            window.on_next_frame(move |window, cx| editor.focus(window, cx));
+        let wanted = match &self.pending_focus {
+            Some(PendingFocus::First) => self.first_field(),
+            Some(PendingFocus::Field(key)) => self.fields.editor(key),
+            None => None,
+        };
+        if let Some(editor) = wanted {
+            self.pending_focus = None;
+            window.defer(cx, move |window, cx| editor.focus(window, cx));
         }
         col()
             .debug_selector(|| "inspector".into())

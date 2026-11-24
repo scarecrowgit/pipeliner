@@ -278,11 +278,37 @@ impl EditorView {
         self.parts.draft.update(cx, |draft, cx| draft.redo(cx));
     }
 
-    /// ⇧⌘Z redoes and ⌘S saves at once; ⌘Z arrives as the kit's `Undo` action.
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    /// Focus rests on the editor itself (after a click on something that takes no focus) or
+    /// on selectable text (a log line, a problem): neither has a use for Delete, the arrows or
+    /// Escape, so those act on the canvas without another click on it. A text field keeps
+    /// its keys: they never get here.
+    fn keys_reach_canvas(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+            || window.context_stack().last().is_some_and(|context| context.contains(ui_rich::markdown::KEY_CONTEXT))
+    }
+
+    /// Escape while focus rests where it has no use: the canvas cancels.
+    fn on_cancel(&mut self, _: &keys::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.keys_reach_canvas(window) {
+            cx.propagate();
+            return;
+        }
+        self.parts.canvas.update(cx, |canvas, cx| canvas.cancel(cx));
+    }
+
+    /// ⇧⌘Z redoes and ⌘S saves at once; ⌘Z arrives as the kit's `Undo` action. Canvas keys
+    /// go to the canvas while focus rests where they have no use ([`Self::keys_reach_canvas`]).
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         let primary = k.modifiers.platform || k.modifiers.control;
         if !primary {
+            // Escape comes as the kit's `Cancel` action.
+            if k.key != "escape"
+                && self.keys_reach_canvas(window)
+                && self.parts.canvas.update(cx, |canvas, cx| canvas.press_key(k, cx))
+            {
+                cx.stop_propagation();
+            }
             return;
         }
         match k.key.as_str() {
@@ -351,6 +377,7 @@ impl Render for EditorView {
             .bg(BG)
             .child(measure_width(move |width| store_width(&measured.width, width)))
             .on_action(cx.listener(|this, _: &keys::Undo, _, cx| this.undo(cx)))
+            .on_action(cx.listener(Self::on_cancel))
             .on_key_down(cx.listener(Self::on_key))
             .on_mouse_down(
                 MouseButton::Left,

@@ -307,7 +307,7 @@ impl InspectorView {
             cx,
         );
         self.open_workdir = Some(index);
-        cx.notify();
+        self.focus_field_when_drawn(format!("insp-wd-{index}-name"), cx);
     }
 
     /// Removes workdir `index` unless a node works in it; then says which ones do.

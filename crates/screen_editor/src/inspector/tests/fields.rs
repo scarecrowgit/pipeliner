@@ -112,3 +112,20 @@ fn a_dollar_field_checks_its_shape_only(cx: &mut TestAppContext) {
     assert_eq!(budget(&t, cx), Some(0.5), "not a number: nothing written");
     assert_eq!(text(&t, cx, "insp-budget"), "0.5x", "what was typed stays");
 }
+
+#[gpui::test]
+fn a_new_rule_and_a_new_workdir_take_the_caret(cx: &mut TestAppContext) {
+    let (t, cx) = open(cx, graph(), Selection::Node("triage".into()));
+    click(cx, "insp-rule-add");
+    type_text(cx, "X");
+    let NodeKind::Router(router) = node_now(&t, cx, "triage").kind else { panic!("router") };
+    let label = &router.rules.last().expect("a rule was added").label;
+    assert!(label.contains('X') && label != "X", "typing goes into the new rule's label: {label}");
+
+    select(&t, cx, Selection::None);
+    click(cx, "insp-workdir-add");
+    type_text(cx, "X");
+    let workdirs = graph_now(&t, cx).workdirs;
+    let name = &workdirs.last().expect("a workdir was added").name;
+    assert!(name.contains('X'), "typing goes into the new workdir's name: {name}");
+}

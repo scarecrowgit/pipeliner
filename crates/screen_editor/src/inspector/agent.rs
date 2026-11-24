@@ -277,7 +277,9 @@ impl InspectorView {
         );
         if let Some(id) = added {
             self.select(Selection::Node(id), cx);
-            self.focus_first = true;
+            // Rebind to the new node now, so the pending focus is not dropped with the old fields.
+            self.follow_selection(cx);
+            self.pending_focus = Some(super::PendingFocus::First);
         }
     }
 

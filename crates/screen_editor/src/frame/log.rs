@@ -334,11 +334,40 @@ impl EditorView {
         .flex_1()
         .min_h_0()
         .py(px(SPACE_1));
+        let body = match self.empty_log_note(count, cx) {
+            Some(note) => div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .items_center()
+                .justify_center()
+                .type_style(LABEL)
+                .text_color(TEXT_MUTED)
+                .debug_selector(|| "log-empty".into())
+                .child(note)
+                .into_any_element(),
+            None => list.into_any_element(),
+        };
         col()
             .flex_1()
             .min_h_0()
             .child(bar)
-            .child(div().flex().flex_col().flex_1().min_h_0().child(list).probe("test-run-log"))
+            .child(div().flex().flex_col().flex_1().min_h_0().child(body).probe("test-run-log"))
             .into_any_element()
+    }
+
+    /// What an empty log says instead of a blank list: the filter left nothing, or the run
+    /// has not written (or never wrote) a line.
+    fn empty_log_note(&self, count: usize, cx: &App) -> Option<String> {
+        if count > 0 {
+            return None;
+        }
+        if let Some(node) = self.log_node(cx) {
+            let draft = self.parts.draft.read(cx);
+            let name = draft.graph().and_then(|g| g.node(&node)).map_or_else(|| node.to_string(), |n| n.name.clone());
+            return Some(format!("No lines from {name} in this run"));
+        }
+        let open = self.shown_run(cx).is_none_or(|run| run.state.is_open());
+        Some(if open { "No lines yet: they appear here as the run goes" } else { "This run wrote no log lines" }.to_string())
     }
 }

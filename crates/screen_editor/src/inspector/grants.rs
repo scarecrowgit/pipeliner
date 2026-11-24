@@ -22,8 +22,6 @@ fn level_tools(access: ToolAccess) -> &'static [&'static str] {
     }
 }
 
-/// The longest text of a "Spawns …" chip: what fits the panel in the chip's type.
-const SPAWN_CHIP_CHARS: usize = 36;
 const LEVELS: [ToolAccess; 3] = [ToolAccess::ReadOnly, ToolAccess::ReadAndRun, ToolAccess::Full];
 
 /// Where a grants section writes: the agent node's override, or the sub-agent's own value.
@@ -406,13 +404,20 @@ impl InspectorView {
             .edges_from(&node.id)
             .filter(|e| e.kind == hub::model::EdgeKind::Spawn)
             .filter_map(|e| graph.node(&e.to))
-            .map(|sub| {
+            .enumerate()
+            .map(|(ix, sub)| {
                 let per = match &sub.kind {
                     NodeKind::Subagent(s) => format!(" · ≤{} per run", s.per_run),
                     _ => String::new(),
                 };
-                // The chip does not shrink: a long name is cut to what fits the panel.
-                SpawnChip::new(base::fmt::truncate_chars(&format!("Spawns {}{per}", sub.name), SPAWN_CHIP_CHARS)).into_any_element()
+                // A long name ends in `…` at the panel's width.
+                div()
+                    .flex()
+                    .flex_none()
+                    .max_w(px(INNER))
+                    .debug_selector(move || format!("insp-spawn-chip-{ix}"))
+                    .child(SpawnChip::new(format!("Spawns {}{per}", sub.name)).shrinks())
+                    .into_any_element()
             })
             .collect();
         let section = titled("Can spawn sub-agents", Some(toggle.probe("insp-spawn").into_any_element())).gap(px(SPACE_1_5));

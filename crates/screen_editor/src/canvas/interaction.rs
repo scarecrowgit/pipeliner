@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use gpui::{
-    Context, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
+    Context, KeyDownEvent, Keystroke, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
     point, px,
 };
 use hub::model::{EdgeKind, GraphDef, NodeId, Pos};
@@ -264,7 +264,7 @@ impl CanvasView {
     }
 
     /// Escape: drops the edge being drawn, or else the selection.
-    pub(super) fn cancel(&mut self, cx: &mut Context<Self>) {
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
         if matches!(self.gesture, Some(Gesture::Connect(_))) {
             self.gesture = None;
         } else {
@@ -308,21 +308,29 @@ impl CanvasView {
     }
 
     pub(super) fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let k = &event.keystroke;
-        let m = &k.modifiers;
+        if self.press_key(&event.keystroke, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    /// What a key does on the canvas: Delete and Backspace remove the selection, arrows
+    /// nudge the selected node, Escape cancels. Returns whether the key did anything. The
+    /// frame passes keys here too while focus rests on something that has no use for them.
+    pub fn press_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        let m = &keystroke.modifiers;
         if m.control || m.alt || m.platform || m.function {
-            return;
+            return false;
         }
         let step = if m.shift { NUDGE_FINE } else { NUDGE };
-        match k.key.as_str() {
+        match keystroke.key.as_str() {
             "delete" | "backspace" => self.delete_selected(cx),
             "left" => self.nudge(-step, 0.0, cx),
             "right" => self.nudge(step, 0.0, cx),
             "up" => self.nudge(0.0, -step, cx),
             "down" => self.nudge(0.0, step, cx),
             "escape" => self.cancel(cx),
-            _ => return,
+            _ => return false,
         }
-        cx.stop_propagation();
+        true
     }
 }

@@ -3,6 +3,7 @@
 
 mod deploy;
 mod dock;
+mod keys;
 mod load_save;
 mod narrow;
 
