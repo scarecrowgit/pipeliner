@@ -6,6 +6,16 @@
 //!
 //! Everything shown comes from `hub` models; rows lead elsewhere through the router.
 
+mod blocks;
+mod needs;
+mod period;
+mod runtimes;
+mod spend;
+mod stats;
 mod view;
+mod working;
+
+#[cfg(test)]
+mod tests;
 
 pub use view::HomeView;
