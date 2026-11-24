@@ -5,6 +5,7 @@ mod misc;
 mod models;
 mod pump;
 mod session;
+mod views;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

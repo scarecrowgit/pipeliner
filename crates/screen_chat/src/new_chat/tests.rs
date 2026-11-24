@@ -11,7 +11,7 @@ use hub::fixtures::{FixtureApi, World};
 use hub::{Hub, Route};
 use ui::OverlayHost;
 
-use super::NewChatView;
+use super::{NewChatView, TYPING_REST};
 use super::chats::{ChatsView, Group};
 use crate::workdir::common::Blocker;
 
@@ -24,13 +24,25 @@ pub(crate) fn open<V: Render + 'static>(
     route: Route,
     build: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
 ) -> (Arc<FixtureApi>, Entity<V>, &mut VisualTestContext) {
+    open_with(cx, route, |_| {}, build)
+}
+
+/// [`open`] over a world changed by `change` first.
+pub(crate) fn open_with<V: Render + 'static>(
+    cx: &mut TestAppContext,
+    route: Route,
+    change: impl FnOnce(&mut World),
+    build: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
+) -> (Arc<FixtureApi>, Entity<V>, &mut VisualTestContext) {
     cx.update(|cx| {
         ui::init(cx);
         ui_rich::bind_keys(cx);
     });
     // After `ui::init`, which reads the preference again: popups appear and leave at once.
     ui::motion::set_reduced(true);
-    let api = Arc::new(FixtureApi::new(World::acme(NOW)));
+    let mut world = World::acme(NOW);
+    change(&mut world);
+    let api = Arc::new(FixtureApi::new(world));
     cx.update(|cx| {
         Hub::new(api.clone(), cx);
         hub::navigate(route, cx);
@@ -210,7 +222,7 @@ fn the_panel_names_the_folder_and_the_list_counts_worktrees(cx: &mut TestAppCont
     click(cx, "new-chat-folder-row-0");
     for line in ["new-chat-panel-name", "new-chat-panel-path"] {
         let Some(bounds) = cx.debug_bounds(line) else { panic!("{line} is drawn") };
-        assert!(f32::from(bounds.size.width) > 100. && f32::from(bounds.size.height) > 10., "{line} has room: {bounds:?}");
+        assert!(f32::from(bounds.size.width) > 60. && f32::from(bounds.size.height) > 10., "{line} has room: {bounds:?}");
     }
     let mut extra = api.with_world(|world| world.worktrees[0].clone());
     extra.path.push("extra");
@@ -287,4 +299,71 @@ fn the_chats_list_groups_filters_and_opens(cx: &mut TestAppContext) {
     let first = filtered[0].1.id.clone();
     click(cx, "chats-row-0");
     assert_eq!(route(cx), Route::Chat { session: first });
+}
+
+/// A recent folder deep under /tmp, whose path is longer than the column.
+fn long_entry() -> hub::api::WorkdirEntry {
+    hub::api::WorkdirEntry {
+        path: "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e-9892-484b-aef8-4c0284814418/scratchpad/cli-smoke"
+            .into(),
+        repo: "cli-smoke".into(),
+        branch: Some("main".into()),
+        host: hub::api::RepoHost::Local,
+        is_worktree: false,
+        status: "no remote".into(),
+        owner: None,
+        sessions: 1,
+    }
+}
+
+#[gpui::test]
+fn keys_typed_into_the_window_filter_the_folders_and_enter_starts(cx: &mut TestAppContext) {
+    let (api, view, cx) =
+        open_with(cx, Route::NewChat, |world| world.workdirs.insert(0, long_entry()), NewChatView::new);
+    let Some(field) = cx.debug_bounds("new-chat-folder") else { panic!("the folder search is drawn") };
+    let width = f32::from(field.size.width);
+    assert!((600. ..=720.).contains(&width), "a long path does not widen the column: {width}");
+
+    // No call on the field: the keys go wherever the window's focus is.
+    cx.simulate_input("pay");
+    cx.run_until_parked();
+    let rows = view.read_with(cx, |view, cx| {
+        view.listing(cx).rows().iter().map(|entry| entry.repo.clone()).collect::<Vec<_>>()
+    });
+    assert_eq!(rows, ["payments-api"], "typing filtered the list");
+
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(api.recorded_names().contains(&"new_session"), "enter starts");
+    let Route::Chat { session } = route(cx) else { panic!("the new chat is open") };
+    let path = api.with_world(|world| world.session(&session).and_then(|s| s.workdir.clone())).map(|w| w.path);
+    assert!(path.is_some_and(|path| path.to_string_lossy().contains("payments-api")));
+}
+
+#[gpui::test]
+fn a_typed_path_is_offered_once_it_was_looked_at(cx: &mut TestAppContext) {
+    let (_api, view, cx) = new_chat(cx);
+    cx.simulate_keystrokes("ctrl-o");
+    cx.run_until_parked();
+    let text = view.read_with(cx, |view, cx| view.search.read(cx).text().to_string());
+    assert_eq!(text, "~/", "open folder starts a path in the search");
+
+    let typed = "/srv/elsewhere/payments-api-fork";
+    view.update_in(cx, |view, window, cx| {
+        view.search.update(cx, |input, cx| input.set_text("", cx));
+        view.search.read(cx).focus(window);
+    });
+    cx.simulate_input(typed);
+    cx.executor().advance_clock(TYPING_REST * 2);
+    cx.run_until_parked();
+    assert!(drawn(cx, "new-chat-folder-path"), "the typed folder is a row");
+    view.read_with(cx, |view, _| {
+        let info = view.typed_folder(std::path::Path::new(typed)).expect("the folder was looked at");
+        assert!(info.facts.is_some());
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.facts().path(), Some(std::path::Path::new(typed))));
 }

@@ -49,7 +49,7 @@ impl Transcript {
         if older.compacted_run > 0 && self.oldest_compacted == Some(false) {
             older.push(BlockKind::Compaction(CompactionBlock { summarised: older.compacted_run, running: false }));
         }
-        older.dirty = None;
+        older.touched = None;
         self.prepend(older)
     }
 
@@ -75,7 +75,7 @@ impl Transcript {
                             self.push(BlockKind::Thinking(text_block(stored, text.clone())));
                         }
                         ContentBlock::Text { text } if !text.is_empty() => self.push_assistant_text(stored, text),
-                        ContentBlock::ToolUse { id, name, .. } => self.tool_use(id, name, block),
+                        ContentBlock::ToolUse { id, name, .. } => self.tool_use(id, name, block, Some(stored.at)),
                         _ => {}
                     }
                 }
@@ -101,7 +101,7 @@ impl Transcript {
                     bytes: *bytes,
                 }),
                 ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                    self.tool_result(tool_use_id, content, *is_error);
+                    self.tool_result(tool_use_id, content, *is_error, Some(stored.at));
                 }
                 _ => {}
             }
@@ -128,8 +128,9 @@ impl Transcript {
         }
     }
 
-    /// A tool call from a stored message, unless the live stream already added it.
-    pub(crate) fn tool_use(&mut self, id: &str, name: &str, block: &ContentBlock) {
+    /// A tool call from a stored message (stored at `at`), unless the live stream already
+    /// added it.
+    pub(crate) fn tool_use(&mut self, id: &str, name: &str, block: &ContentBlock, at: Option<i64>) {
         match tool_role(name) {
             ToolRole::Todo => self.push(BlockKind::Todos(todo_items(block))),
             ToolRole::Spawn => {
@@ -143,9 +144,10 @@ impl Transcript {
                     task: field(block, &["task", "description", "prompt"]).unwrap_or_default().to_string(),
                     depth: 1,
                     state: SubagentState::Running,
+                    max_depth: self.max_depth,
                 }));
-                if let Some((content, is_error)) = self.orphans.remove(id) {
-                    self.tool_result(id, &content, is_error);
+                if let Some((content, is_error, at)) = self.orphans.remove(id) {
+                    self.tool_result(id, &content, is_error, at);
                 }
             }
             ToolRole::Plain => {
@@ -158,22 +160,26 @@ impl Transcript {
                     class: None,
                     display: Some(display_for(name, block)),
                     state: ToolState::Ready,
+                    started: at,
+                    finished: None,
                 }));
-                if let Some((content, is_error)) = self.orphans.remove(id) {
-                    self.tool_result(id, &content, is_error);
+                if let Some((content, is_error, at)) = self.orphans.remove(id) {
+                    self.tool_result(id, &content, is_error, at);
                 }
             }
         }
     }
 
-    /// A stored tool result: finishes its call, or waits for the call to be loaded.
-    fn tool_result(&mut self, id: &str, content: &str, is_error: bool) {
+    /// A stored tool result (stored at `at`): finishes its call, or waits for the call to be
+    /// loaded.
+    fn tool_result(&mut self, id: &str, content: &str, is_error: bool, at: Option<i64>) {
         if let Some(index) = self.tool_index(id) {
             self.edit(index, |kind| {
                 if let BlockKind::Tool(tool) = kind
                     && !matches!(tool.state, ToolState::Finished { .. })
                 {
                     tool.state = ToolState::Finished { is_error };
+                    tool.finished = tool.finished.or(at);
                     if let Some(display) = tool.display.as_mut() {
                         finish_display(display, content, is_error);
                     }
@@ -198,7 +204,7 @@ impl Transcript {
             });
             return;
         }
-        self.orphans.insert(id.to_string(), (content.to_string(), is_error));
+        self.orphans.insert(id.to_string(), (content.to_string(), is_error, at));
     }
 
     /// Gives sub-agent rows from history their sessions: the n-th row is the n-th child.

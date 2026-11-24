@@ -2,7 +2,10 @@
 //! app through a global.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::sync::Arc;
+
+use base::paths::Paths;
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, Task, WeakEntity};
 
@@ -42,6 +45,7 @@ pub struct Hub {
     pub(crate) run_models: HashMap<RunId, WeakEntity<RunModel>>,
     pub(crate) reviews: HashMap<ReviewId, WeakEntity<ReviewModel>>,
     notices: VecDeque<HubNotice>,
+    paths: Paths,
     _pump: Task<()>,
     _router: Subscription,
 }
@@ -78,6 +82,7 @@ impl Hub {
                 run_models: HashMap::new(),
                 reviews: HashMap::new(),
                 notices: VecDeque::new(),
+                paths: Paths::from_env(),
                 api,
                 _pump: pump,
                 _router: router_subscription,
@@ -100,6 +105,38 @@ impl Hub {
     /// A handle for one-off reads.
     pub fn queries(&self) -> Queries {
         Queries::new(self.api.clone())
+    }
+
+    /// A hub whose paths are the fixture world's (home `/home/me`), for previews and tests.
+    pub fn new_fixture(api: Arc<crate::fixtures::FixtureApi>, cx: &mut App) -> Entity<Hub> {
+        let paths = api.paths();
+        Self::new_with_paths(api, paths, cx)
+    }
+
+    /// [`Hub::new`] with the app's resolved paths, so views show paths the way the engine
+    /// sees them.
+    pub fn new_with_paths(api: Arc<dyn Api>, paths: Paths, cx: &mut App) -> Entity<Hub> {
+        let hub = Self::new(api, cx);
+        hub.update(cx, |hub, cx| hub.set_paths(paths, cx));
+        hub
+    }
+
+    /// Replaces the paths views use for display (they default to [`Paths::from_env`]).
+    pub fn set_paths(&mut self, paths: Paths, cx: &mut Context<Self>) {
+        if self.paths != paths {
+            self.paths = paths;
+            cx.notify();
+        }
+    }
+
+    /// The app's directories as the engine resolved them.
+    pub fn paths(&self) -> &Paths {
+        &self.paths
+    }
+
+    /// The user's home directory: where `~` points in displayed paths and where pickers start.
+    pub fn home(&self) -> &Path {
+        &self.paths.home
     }
 
     /// Where the app is.
@@ -209,6 +246,16 @@ pub fn commands(cx: &App) -> Commands {
 /// The handle for one-off reads.
 pub fn queries(cx: &App) -> Queries {
     hub(cx).read(cx).queries()
+}
+
+/// A path for showing to the user: `~/code/acme/payments-api` under the home directory.
+pub fn display_path(path: &Path, cx: &App) -> String {
+    hub(cx).read(cx).paths.display(path)
+}
+
+/// The user's home directory, as the hub's paths name it.
+pub fn home(cx: &App) -> std::path::PathBuf {
+    hub(cx).read(cx).paths.home.clone()
 }
 
 /// The router: the current route, history and overlays.

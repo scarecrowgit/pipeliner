@@ -19,7 +19,9 @@ pub const PAGE: u64 = 40;
 /// One-shot effects of a session, emitted with `cx.emit`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SessionEvent {
-    /// Blocks changed: apply to the list with `ListState::splice(old, count)`.
+    /// Blocks changed: apply to the list with `ListState::splice(old, count)`. One batch may
+    /// send several, in order; each covers only rows that changed (edited runs, then the rows
+    /// appended at the end), so rows in between keep their measured heights.
     Spliced(Splice),
     /// New content arrived at the end.
     ScrollToBottom,
@@ -128,9 +130,20 @@ impl SessionModel {
         self.transcript.blocks()
     }
 
-    /// A turn is running.
+    /// A turn is under way: the agent works, or one of its tool calls waits for a person.
+    /// The composer queues messages and offers "Stop" while this holds.
     pub fn is_busy(&self) -> bool {
-        self.busy
+        self.busy || self.is_waiting()
+    }
+
+    /// The agent itself is working (streaming, running tools), as opposed to waiting.
+    pub fn is_running(&self) -> bool {
+        self.busy && !self.is_waiting()
+    }
+
+    /// A tool call of this session waits for a person's answer.
+    pub fn is_waiting(&self) -> bool {
+        !self.pending().is_empty()
     }
 
     /// Context use and cost so far.
@@ -177,7 +190,8 @@ impl SessionModel {
                 let detail = api.session_detail(&id)?.ok_or_else(|| anyhow!("This chat no longer exists"))?;
                 let from = u64::from(detail.session.message_count).saturating_sub(PAGE);
                 let messages = api.messages(&id, from, u64::MAX)?;
-                Ok((detail, from, messages))
+                let max_depth = spawn_depth(api, &detail.session);
+                Ok((detail, from, messages, max_depth))
             },
             |this: &mut Self, result, cx| match result {
                 Err(error) => {
@@ -185,7 +199,8 @@ impl SessionModel {
                     this.buffer.clear();
                     cx.notify();
                 }
-                Ok((detail, from, messages)) => {
+                Ok((detail, from, messages, max_depth)) => {
+                    this.transcript.set_max_depth(max_depth);
                     this.oldest_seq = messages.first().map(|message| message.seq);
                     this.has_older = from > 0 && !messages.is_empty();
                     this.transcript.append_history(&messages);
@@ -345,7 +360,7 @@ impl SessionModel {
             }
             _ => {}
         }
-        match self.transcript.apply(&event) {
+        match self.transcript.apply(&event, base::time::now_ms()) {
             Some(LiveEffect::TurnStarted) => self.busy = true,
             Some(LiveEffect::TurnFinished(stop)) => {
                 self.busy = false;
@@ -376,13 +391,22 @@ impl SessionModel {
 
     /// Reports the batch's block changes and notifies once.
     fn flush(&mut self, cx: &mut Context<Self>) {
-        if let Some(splice) = self.transcript.take_splice() {
-            let grew = splice.count > splice.old.len();
+        let mut grew = false;
+        for splice in self.transcript.take_splices() {
+            grew |= splice.count > splice.old.len();
             cx.emit(SessionEvent::Spliced(splice));
-            if grew {
-                cx.emit(SessionEvent::ScrollToBottom);
-            }
+        }
+        if grew {
+            cx.emit(SessionEvent::ScrollToBottom);
         }
         cx.notify();
     }
+}
+
+/// The depth limit of the spawn policy of the agent answering in `session`, when the library
+/// names one and spawning is on.
+fn spawn_depth(api: &dyn Api, session: &Session) -> Option<u32> {
+    let runnable = api.runnables().into_iter().find(|runnable| runnable.reference == session.runnable)?;
+    let spawn = runnable.agent?.spawn;
+    spawn.enabled.then_some(spawn.max_depth)
 }

@@ -296,9 +296,16 @@ impl FixtureApi {
         lock(&self.recorded).iter().map(|command| command.name).collect()
     }
 
-    /// Makes the next call of `command` (an [`Api`] method name) fail.
+    /// Makes the next call of `command` (an [`Api`] method name) fail. Commands and
+    /// `search_sessions` honour it.
     pub fn fail_next(&self, command: &str) {
         lock(&self.failing).insert(command.to_string());
+    }
+
+    /// The app's directories in this world: home is `/home/me`, the rest derived from it as
+    /// the engine would. Nothing is created on disk.
+    pub fn paths(&self) -> base::paths::Paths {
+        base::paths::Paths::resolve(|name| (name == "HOME").then(|| data_sessions::HOME.to_string()))
     }
 
     /// Subscribers whose receiver is still alive: a dropped hub no longer counts.
@@ -353,6 +360,14 @@ impl FixtureApi {
     /// Records a command and fails it if a test asked for that.
     fn record(&self, name: &'static str, detail: impl Into<String>) -> Result<()> {
         lock(&self.recorded).push(Recorded { name, detail: detail.into() });
+        if lock(&self.failing).remove(name) {
+            bail!("the fixture was told to fail {name}");
+        }
+        Ok(())
+    }
+
+    /// Fails a query if a test asked for that; queries are not recorded.
+    fn fail_if_told(&self, name: &str) -> Result<()> {
         if lock(&self.failing).remove(name) {
             bail!("the fixture was told to fail {name}");
         }

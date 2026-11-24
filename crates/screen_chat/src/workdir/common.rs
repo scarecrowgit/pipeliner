@@ -86,6 +86,29 @@ pub(crate) fn display_path(path: &Path) -> String {
     PATHS.with(|paths| paths.display(path))
 }
 
+/// A path shortened in the middle to about `max` characters, keeping its first part and as
+/// many of its last parts as fit: `/tmp/…/scratchpad/cli-smoke`.
+pub(crate) fn short_path(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let parts: Vec<&str> = text.split('/').collect();
+    let head = if parts.first().is_some_and(|p| p.is_empty()) { format!("/{}", parts.get(1).unwrap_or(&"")) } else { parts[0].to_string() };
+    let skip = if text.starts_with('/') { 2 } else { 1 };
+    let mut tail: Vec<&str> = Vec::new();
+    for part in parts.iter().skip(skip).rev() {
+        let len = head.chars().count() + 3 + tail.iter().map(|p| p.chars().count() + 1).sum::<usize>() + part.chars().count();
+        if len > max && !tail.is_empty() {
+            break;
+        }
+        tail.insert(0, part);
+    }
+    if tail.len() + skip >= parts.len() {
+        return text.to_string();
+    }
+    format!("{head}/…/{}", tail.join("/"))
+}
+
 /// A path as the user typed it: `~` resolves to the home directory.
 pub(crate) fn expand_path(text: &str) -> PathBuf {
     PATHS.with(|paths| paths.expand(text.trim()))
@@ -344,7 +367,7 @@ impl RenderOnce for ModeCard {
                     .child(
                         row()
                             .gap(px(SPACE_1_5))
-                            .child(div().flex_shrink().min_w_0().type_style(BODY_STRONG).child(truncate(self.title)))
+                            .child(div().flex_none().type_style(BODY_STRONG).child(self.title))
                             .when(mode == WorkMode::Worktree, |d| {
                                 d.child(Badge::new("Recommended").tone(BadgeTone::Accent))
                             }),
@@ -589,6 +612,14 @@ mod tests {
         assert_eq!(worktree.branch.as_deref(), Some("chat/x"));
         let in_place = choice(Path::new("/r"), WorkMode::InPlace, Some("main"), "chat/x");
         assert_eq!((in_place.base, in_place.branch), (None, None));
+    }
+
+    #[test]
+    fn long_paths_lose_their_middle() {
+        assert_eq!(short_path("~/code/acme", 40), "~/code/acme");
+        let long = "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e-9892/scratchpad/cli-smoke";
+        assert_eq!(short_path(long, 40), "/tmp/…/scratchpad/cli-smoke");
+        assert!(short_path(long, 40).chars().count() <= 40);
     }
 
     #[test]

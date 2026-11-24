@@ -2,14 +2,14 @@
 //! action bar.
 
 use gpui::{AnyElement, App, Context, ElementId, IntoElement, KeyDownEvent, SharedString, Window, div, prelude::*, px};
-use hub::api::{Runtime, RuntimeKind, WorkMode, WorkdirEntry};
+use hub::api::{FolderInfo, Runtime, RuntimeKind, WorkMode, WorkdirEntry};
 use ui::dev::Probe;
 use ui::motion::{self, Look};
 use ui::prelude::*;
 use ui_rich::text_field;
 
 use super::NewChatView;
-use crate::workdir::common::{Blocker, FolderRow, display_path, folder_name, mode_words, radio};
+use crate::workdir::common::{Blocker, FolderRow, display_path, folder_name, mode_words, radio, short_path};
 
 /// Width of the folder column's content, px.
 const COLUMN: f32 = 720.;
@@ -40,6 +40,7 @@ impl NewChatView {
         let content = col()
             .w_full()
             .max_w(px(COLUMN))
+            .overflow_hidden()
             .px(px(SPACE_6))
             .py(px(SPACE_8))
             .child(self.render_heading(cx))
@@ -169,7 +170,8 @@ impl NewChatView {
 
         if let Some(typed) = &listing.typed {
             list = list.child(group_head("Open folder", String::new()));
-            list = list.child(typed_row(typed, chosen.as_deref() == Some(typed.as_path()), window, cx));
+            let info = self.typed_folder(typed).cloned();
+            list = list.child(typed_row(typed, info, chosen.as_deref() == Some(typed.as_path()), window, cx));
             if !listing.completions.is_empty() {
                 list = list.child(group_head("Known folders here", listing.completions.len().to_string()));
                 list = rows(&listing.completions, list, window, cx);
@@ -324,9 +326,19 @@ fn group_head(title: &str, meta: String) -> impl IntoElement {
         .gap(px(SPACE_2))
         .type_style(LABEL)
         .text_color(TEXT_MUTED)
-        .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(TEXT_SECONDARY).child(title.to_string()))
-        .child(grow())
-        .child(div().flex_none().type_style(MONO_SM).child(meta))
+        .child(
+            div().flex_none().font_weight(gpui::FontWeight::MEDIUM).text_color(TEXT_SECONDARY).child(title.to_string()),
+        )
+        // A long path loses its middle and then its end; it never pushes the column wider.
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .type_style(MONO_SM)
+                .text_right()
+                .child(truncate_lh(short_path(&meta, 64), MONO_SM.line)),
+        )
 }
 
 fn empty_line(text: &'static str) -> impl IntoElement {
@@ -334,18 +346,37 @@ fn empty_line(text: &'static str) -> impl IntoElement {
 }
 
 /// "Use ~/code/x": the typed path as a row.
-fn typed_row(path: &std::path::Path, selected: bool, window: &mut Window, cx: &mut Context<NewChatView>) -> AnyElement {
+fn typed_row(
+    path: &std::path::Path,
+    info: Option<FolderInfo>,
+    selected: bool,
+    window: &mut Window, cx: &mut Context<NewChatView>) -> AnyElement {
     let name: SharedString = "new-chat-folder-path".into();
     let rest = if selected { Look::bg(SURFACE_HOVER) } else { Look::bg(TRANSPARENT) };
     let hover = if selected { rest } else { Look::bg(SURFACE_RAISED) };
     let faded = motion::hover_fade_state(name.clone(), rest, hover, window, cx);
+    // The API cannot tell an empty folder from a missing one: only a repo or files the
+    // harness reads prove the folder is there.
+    let (sub, tone) = match &info {
+        None => ("Looking at the folder…".to_string(), TEXT_MUTED),
+        Some(info) => match &info.facts {
+            Some(facts) => (
+                format!("git repository · {}", facts.branch.as_deref().unwrap_or("detached head")),
+                TEXT_SECONDARY,
+            ),
+            None if info.agents_md_lines.is_some() || !info.skills.is_empty() || !info.commands.is_empty() => {
+                ("Folder · not a git repository".to_string(), TEXT_SECONDARY)
+            }
+            None => ("Not a git repository, or no such folder".to_string(), WARNING),
+        },
+    };
     let picked = path.to_path_buf();
     let el = row()
         .id(ElementId::Name(name.clone()))
         .debug_selector(|| "new-chat-folder-path".into())
         .flex_none()
         .gap(px(SPACE_3))
-        .h(px(44.))
+        .h(px(52.))
         .px(px(SPACE_3))
         .rounded(px(RADIUS_LG))
         .cursor_pointer()
@@ -356,8 +387,17 @@ fn typed_row(path: &std::path::Path, selected: bool, window: &mut Window, cx: &m
     faded
         .apply(el)
         .child(Tile::new(IconName::Folder))
-        .child(div().text_color(TEXT_MUTED).child("Use"))
-        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(display_path(path))))
+        .child(
+            col()
+                .flex_1()
+                .child(
+                    row()
+                        .gap(px(SPACE_1_5))
+                        .child(div().flex_none().type_style(BODY_STRONG).child("Open"))
+                        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(display_path(path)))),
+                )
+                .child(div().type_style(LABEL).text_color(tone).child(sub)),
+        )
         .child(Kbd::new("↵"))
         .probe(name)
         .into_any_element()

@@ -81,7 +81,7 @@ pub fn fill(world: &mut World) {
         Row { reference: RunnableRef::pipeline("release-notes"), kind: Pipeline, name: "Release notes", description: "Collects merged PRs and drafts notes for review.",
             origin: library(), uses: "IP", agent: None, state: RunnableState::Draft { version: 1 }, runs_today: 0, cost_today: 0.0, queued: 0 },
         Row { reference: RunnableRef::agent("build"), kind: Agent, name: "Build", description: "General coding agent with full tools. The default in chat.",
-            origin: Origin::Builtin, uses: "CIP", agent: Some(def("General coding agent.", model("opus-5.5"), "mac-mini", ToolAccess::Full)), state: RunnableState::Ready, runs_today: 9, cost_today: 0.62, queued: 0 },
+            origin: Origin::Builtin, uses: "CIP", agent: Some(AgentDef { spawn: SpawnPolicy { enabled: true, ..SpawnPolicy::default() }, ..def("General coding agent.", model("opus-5.5"), "mac-mini", ToolAccess::Full) }), state: RunnableState::Ready, runs_today: 9, cost_today: 0.62, queued: 0 },
         Row { reference: fixer.clone(), kind: Agent, name: "Fixer", description: "Fixes bugs and writes the failing test first. May spawn Test writer.",
             origin: library(), uses: "CIP", agent: Some(fixer_def), state: RunnableState::Running { issue: issue("PAY-1423") }, runs_today: 6, cost_today: 0.41, queued: 0 },
         Row { reference: RunnableRef::agent("reproducer"), kind: Agent, name: "Reproducer", description: "Finds a minimal reproduction and attaches logs. Never edits code.",

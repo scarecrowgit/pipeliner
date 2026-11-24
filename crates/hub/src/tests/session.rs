@@ -72,7 +72,11 @@ fn a_scripted_stream_builds_blocks_and_reports_changed_ranges(cx: &mut TestAppCo
     ]);
     cx.run_until_parked();
     assert_eq!(cx.update(|cx| tool_state(&session.read(cx).blocks()[3])), Some(ToolState::Started));
-    assert_eq!(events.borrow()[0], SessionEvent::Spliced(Splice { old: 2..3, count: 2 }));
+    // The edited text row and the new tool row are reported apart.
+    assert_eq!(
+        events.borrow()[..2],
+        [SessionEvent::Spliced(Splice { old: 2..3, count: 1 }), SessionEvent::Spliced(Splice { old: 3..3, count: 1 })]
+    );
     events.borrow_mut().clear();
 
     // The call is ready and needs a person.
@@ -100,7 +104,8 @@ fn a_scripted_stream_builds_blocks_and_reports_changed_ranges(cx: &mut TestAppCo
         assert_eq!(model.pending().len(), 1);
     });
     assert!(events.borrow().contains(&SessionEvent::PermissionArrived(RequestId::new("perm-x"))));
-    assert!(events.borrow().contains(&SessionEvent::Spliced(Splice { old: 3..4, count: 2 })));
+    assert!(events.borrow().contains(&SessionEvent::Spliced(Splice { old: 3..4, count: 1 })));
+    assert!(events.borrow().contains(&SessionEvent::Spliced(Splice { old: 4..4, count: 1 })));
     events.borrow_mut().clear();
 
     // Answered; the tool finishes, a sub-agent runs, the todo list changes twice, the turn fails.
@@ -133,7 +138,8 @@ fn a_scripted_stream_builds_blocks_and_reports_changed_ranges(cx: &mut TestAppCo
     });
     let events = events.borrow();
     assert_eq!(events[0], SessionEvent::Failed("rate limited".into()));
-    assert!(events.contains(&SessionEvent::Spliced(Splice { old: 2..5, count: 6 })));
+    assert!(events.contains(&SessionEvent::Spliced(Splice { old: 2..5, count: 3 })));
+    assert!(events.contains(&SessionEvent::Spliced(Splice { old: 5..5, count: 3 })));
 }
 
 #[gpui::test]

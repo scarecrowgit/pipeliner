@@ -75,7 +75,11 @@ fn main() {
         ui_rich::bind_keys(cx);
         shell::init(cx);
         palette::init(cx);
-        Hub::new(api.clone(), cx);
+        match &fixture {
+            // A fixture world has its own home folder for display paths.
+            Some(fixture) => Hub::new_fixture(fixture.clone(), cx),
+            None => Hub::new_with_paths(api.clone(), base::paths::Paths::from_env(), cx),
+        };
         if let Some((route, overlay)) = args.fixture.as_deref().and_then(start_route) {
             hub::navigate(route, cx);
             if let Some(overlay) = overlay {

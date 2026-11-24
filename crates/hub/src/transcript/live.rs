@@ -1,6 +1,6 @@
 //! Blocks from the live agent stream.
 
-use crate::api::{AgentEvent, ContentBlock, Role, StopReason, StoredMessage};
+use crate::api::{AgentEvent, ContentBlock, Millis, Role, StopReason, StoredMessage};
 
 use super::history::{ToolRole, tool_role};
 use super::{
@@ -17,9 +17,9 @@ pub(crate) enum LiveEffect {
 }
 
 impl Transcript {
-    /// Applies one live event. Events about the session rather than the conversation (usage,
-    /// files, skills) change no block.
-    pub(crate) fn apply(&mut self, event: &AgentEvent) -> Option<LiveEffect> {
+    /// Applies one live event that arrived at `now`. Events about the session rather than the
+    /// conversation (usage, files, skills) change no block.
+    pub(crate) fn apply(&mut self, event: &AgentEvent, now: Millis) -> Option<LiveEffect> {
         match event {
             AgentEvent::TurnStarted => return Some(LiveEffect::TurnStarted),
             AgentEvent::TextDelta { text } => self.stream(text, false),
@@ -33,6 +33,8 @@ impl Transcript {
                         class: None,
                         display: None,
                         state: ToolState::Started,
+                        started: Some(now),
+                        finished: None,
                     }));
                 }
             }
@@ -45,6 +47,7 @@ impl Transcript {
                         if let BlockKind::Tool(tool) = kind {
                             tool.class = Some(*class);
                             tool.display = Some(display.clone());
+                            tool.started.get_or_insert(now);
                             if tool.state == ToolState::Started {
                                 tool.state = ToolState::Ready;
                             }
@@ -56,6 +59,8 @@ impl Transcript {
                         class: Some(*class),
                         display: Some(display.clone()),
                         state: ToolState::Ready,
+                        started: Some(now),
+                        finished: None,
                     })),
                 }
             }
@@ -65,6 +70,7 @@ impl Transcript {
                         if let BlockKind::Tool(tool) = kind {
                             tool.display = Some(display.clone());
                             tool.state = ToolState::Finished { is_error: *is_error };
+                            tool.finished.get_or_insert(now);
                         }
                     });
                 }
@@ -86,6 +92,7 @@ impl Transcript {
                         task: task.clone(),
                         depth: *depth,
                         state: SubagentState::Running,
+                        max_depth: self.max_depth,
                     }));
                 }
             }
@@ -206,7 +213,7 @@ impl Transcript {
             if let ContentBlock::ToolUse { id, name, .. } = block
                 && tool_role(name) == ToolRole::Plain
             {
-                self.tool_use(id, name, block);
+                self.tool_use(id, name, block, Some(stored.at));
             }
         }
     }

@@ -53,7 +53,9 @@ impl SessionView {
         let model = self.model.read(cx);
         let queued = model.queued().len() as u64;
         let next = Applied {
-            busy: model.is_busy(),
+            // While a call waits for the person the composer offers Send, as the mockup draws it:
+            // the message is queued behind the answer.
+            busy: model.is_running(),
             disabled: super::disabled_reason(model),
             placeholder: format!("Message {}…", pickers::current_label(self, cx)).into(),
             hint: (queued > 0).then(|| format!("{} queued", base::fmt::plural(queued, "message", "messages")).into()),

@@ -1,6 +1,6 @@
 //! The new-chat page, or the list of every chat, in a window over the fixture world.
 //!
-//! `cargo run -p screen_chat --example new_chat [-- --fixture new-chat] [--page chats]`
+//! `cargo run -p screen_chat --example new_chat [-- --fixture new-chat] [--page chats] [--long-path]`
 //!
 //! Any scenario of `hub::fixtures::SCENARIOS` works (`empty` shows a fresh install). Starting a
 //! chat or opening one shows a stand-in for the session view, with a way back.
@@ -20,6 +20,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut fixture = "new-chat".to_string();
     let mut chats = false;
+    let mut long_path = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--fixture" => {
@@ -28,16 +29,34 @@ fn main() {
                 }
             }
             "--page" => chats = args.next().as_deref() == Some("chats"),
+            "--long-path" => long_path = true,
             _ => {}
         }
     }
     ui::run_app("New chat", 1440., 900., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
+        if long_path {
+            api.with_world(|world| world.workdirs.insert(0, long_entry()));
+        }
         Hub::new(api, cx);
         hub::navigate(if chats { Route::Chats } else { Route::NewChat }, cx);
         cx.new(|cx| Stage::new(window, cx))
     });
+}
+
+/// A recent folder deep under /tmp, for checking how long paths fit.
+fn long_entry() -> hub::api::WorkdirEntry {
+    hub::api::WorkdirEntry {
+        path: "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e-9892-484b-aef8-4c0284814418/scratchpad/cli-smoke".into(),
+        repo: "cli-smoke".into(),
+        branch: Some("main".into()),
+        host: hub::api::RepoHost::Local,
+        is_worktree: false,
+        status: "no remote".into(),
+        owner: None,
+        sessions: 1,
+    }
 }
 
 /// A stand-in for the shell: a header bar over whichever of the two views the route shows.

@@ -15,10 +15,11 @@ mod picker;
 pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Render, SharedString, Subscription, Window, div,
-    prelude::*,
+    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Render, SharedString, Subscription, Task, Window,
+    div, prelude::*,
 };
 use hub::api::{
     ChatMode, FolderInfo, NewSession, RunnableRef, Runtime, WorkMode, WorkdirChoice, WorkdirEntry,
@@ -34,6 +35,9 @@ use crate::workdir::common::{
 use crate::workdir::{WorkdirChip, WorkdirChipEvent};
 
 pub use chats::ChatsView;
+
+/// How long typing a path rests before the folder is looked at.
+const TYPING_REST: Duration = Duration::from_millis(250);
 
 /// Worktrees listed before the search narrows them ("3 of 8").
 pub(crate) const WORKTREES_SHOWN: usize = 3;
@@ -70,6 +74,9 @@ pub struct NewChatView {
     recent: Vec<WorkdirEntry>,
     worktrees: Vec<WorkdirEntry>,
     facts: FolderFacts,
+    typed: FolderFacts,
+    typing: Option<Task<()>>,
+    focus_pending: bool,
     branches: Vec<String>,
     base: Option<String>,
     mode: WorkMode,
@@ -107,11 +114,12 @@ impl NewChatView {
             cx.subscribe(&clone_url, |_: &mut Self, _, _: &TextInputEvent, cx| cx.notify()),
             cx.observe(&catalog, |_, _, cx| cx.notify()),
             cx.observe(&ops, |_, _, cx| cx.notify()),
-            cx.observe_in(&router, window, |this: &mut Self, router, window, cx| {
+            cx.observe(&router, |this: &mut Self, router, cx| {
                 let here = *router.read(cx).current() == Route::NewChat;
                 if here && !this.shown {
                     this.load_recent(cx);
-                    this.search.read(cx).focus(window);
+                    this.focus_pending = true;
+                    cx.notify();
                 }
                 this.shown = here;
             }),
@@ -128,6 +136,9 @@ impl NewChatView {
             recent: Vec::new(),
             worktrees: Vec::new(),
             facts: FolderFacts::default(),
+            typed: FolderFacts::default(),
+            typing: None,
+            focus_pending: true,
             branches: Vec::new(),
             base: None,
             mode: WorkMode::Worktree,
@@ -138,9 +149,9 @@ impl NewChatView {
             shown,
             _subs: subs,
         };
+        // Focus is taken on the first frame drawn (see `render`): the shell builds the view
+        // before it is in the window, and the overlay host takes focus when it is made.
         this.load_recent(cx);
-        let search = this.search.clone();
-        window.defer(cx, move |window, cx| search.read(cx).focus(window));
         this
     }
 
@@ -366,7 +377,10 @@ impl NewChatView {
 
     fn on_search(&mut self, event: &TextInputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            TextInputEvent::Changed => cx.notify(),
+            TextInputEvent::Changed => {
+                self.look_at_typed(cx);
+                cx.notify();
+            }
             TextInputEvent::Up => self.move_selection(-1, cx),
             TextInputEvent::Down => self.move_selection(1, cx),
             TextInputEvent::Tab => {
@@ -385,6 +399,39 @@ impl NewChatView {
             },
             _ => {}
         }
+    }
+
+    /// A typed path is looked at once typing rests, so its row can say what is there.
+    fn look_at_typed(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.listing(cx).typed else {
+            self.typing = None;
+            self.typed.clear();
+            return;
+        };
+        if self.typed.path() == Some(path.as_path()) {
+            return;
+        }
+        self.typing = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TYPING_REST).await;
+            let Ok(info) = this.update(cx, |this, cx| {
+                let generation = this.typed.begin(path.clone());
+                (generation, hub::queries(cx).folder_info(&path, cx))
+            }) else {
+                return;
+            };
+            let (generation, info) = (info.0, info.1.await);
+            this.update(cx, |this, cx| {
+                if this.typed.finish(generation, info) {
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// What is known about the typed path: `None` until the folder was looked at.
+    pub(crate) fn typed_folder(&self, path: &Path) -> Option<&hub::api::FolderInfo> {
+        (self.typed.path() == Some(path)).then(|| self.typed.info()).flatten()
     }
 
     /// Up and Down in the search field choose the folder above or below.
@@ -544,6 +591,11 @@ impl NewChatView {
 
 impl Render for NewChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_pending {
+            self.focus_pending = false;
+            let search = self.search.clone();
+            window.defer(cx, move |window, cx| search.read(cx).focus(window));
+        }
         div()
             .flex()
             .flex_row()

@@ -63,7 +63,7 @@ impl NewChatView {
                 .child(StatusDot::new(if facts.remote_url.is_some() { Status::Live } else { Status::Idle }).small())
                 .child(div().flex_none().child(host_label(facts.host)))
                 .children(match facts.remote_url.as_deref().map(remote_owner) {
-                    Some(owner) => Some(div().flex_shrink().min_w_0().type_style(MONO).child(truncate(owner))),
+                    Some(owner) => Some(div().flex_none().type_style(MONO).child(owner)),
                     None => Some(div().flex_none().text_color(TEXT_MUTED).child("no remote")),
                 }),
         };
@@ -77,23 +77,36 @@ impl NewChatView {
                 row()
                     .gap(px(SPACE_2_5))
                     .child(Tile::new(IconName::Folder).large())
+                    // The pattern of the folder rows, which measure right in this GPUI.
                     .child(
                         col()
                             .flex_1()
-                            .min_w_0()
                             .child(
-                                truncate_block(folder_name(&path), HEADING.line)
-                                    .type_style(HEADING)
-                                    .font_family(FONT_MONO)
-                                    .debug_selector(|| "new-chat-panel-name".into())
-                                    .probe("new-chat-panel-name"),
+                                row().child(
+                                    div()
+                                        .flex_shrink()
+                                        .min_w_0()
+                                        .type_style(HEADING)
+                                        .font_family(FONT_MONO)
+                                        .debug_selector(|| "new-chat-panel-name".into())
+                                        .child(truncate_lh(folder_name(&path), HEADING.line))
+                                        .probe("new-chat-panel-name"),
+                                ),
                             )
                             .child(
-                                truncate_block(format!("{runtime} · {}", display_path(&path)), MONO_SM.line)
-                                    .type_style(MONO_SM)
-                                    .text_color(TEXT_MUTED)
-                                    .debug_selector(|| "new-chat-panel-path".into())
-                                    .probe("new-chat-panel-path"),
+                                row().child(
+                                    div()
+                                        .flex_shrink()
+                                        .min_w_0()
+                                        .type_style(MONO_SM)
+                                        .text_color(TEXT_MUTED)
+                                        .debug_selector(|| "new-chat-panel-path".into())
+                                        .child(truncate_lh(
+                                            format!("{runtime} · {}", display_path(&path)),
+                                            MONO_SM.line,
+                                        ))
+                                        .probe("new-chat-panel-path"),
+                                ),
                             ),
                     ),
             )

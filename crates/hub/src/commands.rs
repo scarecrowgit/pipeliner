@@ -98,13 +98,19 @@ impl Commands {
     pub fn send(&self, id: &SessionId, message: UserMessage, cx: &mut App) {
         let session = id.clone();
         let sent = self.call("send the message", cx, move |api| api.send(&session, message));
+        // The queue is not part of the event stream: read it again.
+        self.refresh_after(id, sent, cx);
+    }
+
+    /// Re-reads an open session's detail once `done` succeeded: for changes the event stream
+    /// does not carry (the queue, MCP state, forced skills).
+    fn refresh_after(&self, id: &SessionId, done: Task<Option<()>>, cx: &mut App) {
         let hub = self.hub.clone();
         let id = id.clone();
         cx.spawn(async move |cx| {
-            if sent.await.is_none() {
+            if done.await.is_none() {
                 return;
             }
-            // The queue is not part of the event stream: read it again.
             hub.update(cx, |hub, cx| {
                 if let Some(model) = hub.sessions.get(&id).and_then(WeakEntity::upgrade) {
                     model.update(cx, |model, cx| model.refresh_detail(cx));
@@ -162,8 +168,9 @@ impl Commands {
 
     /// Sets the skills sent with every request of the session.
     pub fn set_forced_skills(&self, id: &SessionId, skills: Vec<String>, cx: &mut App) {
-        let id = id.clone();
-        self.fire("change the skills", cx, move |api| api.set_forced_skills(&id, skills));
+        let session = id.clone();
+        let done = self.call("change the skills", cx, move |api| api.set_forced_skills(&session, skills));
+        self.refresh_after(id, done, cx);
     }
 
     /// Renames a chat.
@@ -218,8 +225,9 @@ impl Commands {
 
     /// Restarts an MCP server of the session.
     pub fn reconnect_mcp(&self, id: &SessionId, server: &str, cx: &mut App) {
-        let (id, server) = (id.clone(), server.to_string());
-        self.fire("reconnect the server", cx, move |api| api.reconnect_mcp(&id, &server));
+        let (session, server) = (id.clone(), server.to_string());
+        let done = self.call("reconnect the server", cx, move |api| api.reconnect_mcp(&session, &server));
+        self.refresh_after(id, done, cx);
     }
 
     // ------------------------------------------------------------ workdirs

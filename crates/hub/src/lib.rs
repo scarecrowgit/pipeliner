@@ -44,7 +44,7 @@ pub use model;
 
 pub use commands::Commands;
 pub use hub::{
-    Hub, catalog, chat_index, commands, hub, inbox, issues, navigate, open, ops, permissions, queries, review,
+    Hub, catalog, chat_index, commands, display_path, home, hub, inbox, issues, navigate, open, ops, permissions, queries, review,
     router, run, runs, search, session,
 };
 pub use load::{LoadState, Loadable};

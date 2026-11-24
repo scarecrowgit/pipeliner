@@ -8,7 +8,7 @@ use crate::api::{
     AgentEvent, Attachment, BlobId, ChatApi, ChatMode, Event, ExportFormat, ExportOptions, FolderInfo, Message,
     McpState, ModelRef, NewSession, PermissionDecision, ProviderInfo, ProviderModels, RepoFacts, RequestId, Role,
     RunnableRef, SearchResult, Session, SessionDetail, SessionFilter, SessionId, SessionOrigin, SessionQuery,
-    SessionState, SlashCommand, StoredMessage, UserMessage, WorkMode, Workdir, WorkdirApi, WorkdirChoice, WorkdirEntry,
+    SessionState, SkillInContext, SlashCommand, StoredMessage, UserMessage, WorkMode, Workdir, WorkdirApi, WorkdirChoice, WorkdirEntry,
 };
 
 use super::data_sessions::{FIX_1423, chat, repo_facts};
@@ -62,6 +62,7 @@ impl ChatApi for FixtureApi {
     }
 
     fn search_sessions(&self, query: &SessionQuery) -> Result<SearchResult> {
+        self.fail_if_told("search_sessions")?;
         Ok(search::search(&self.world(), query))
     }
 
@@ -181,6 +182,18 @@ impl ChatApi for FixtureApi {
 
     fn set_forced_skills(&self, id: &SessionId, skills: Vec<String>) -> Result<()> {
         self.record("set_forced_skills", format!("{id} {skills:?}"))?;
+        {
+            let mut world = self.world();
+            let extras = world.extras.entry(id.clone()).or_default();
+            for skill in &mut extras.skills {
+                skill.forced = skills.contains(&skill.name);
+            }
+            for name in &skills {
+                if !extras.skills.iter().any(|skill| &skill.name == name) {
+                    extras.skills.push(SkillInContext { name: name.clone(), forced: true, loaded: true, tokens: 0 });
+                }
+            }
+        }
         self.changed(id, |session| session.forced_skills = skills)
     }
 
