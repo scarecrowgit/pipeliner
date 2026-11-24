@@ -78,7 +78,8 @@ impl Sidebar {
                     .text_color(TEXT_MUTED)
                     .whitespace_nowrap()
                     .overflow_hidden()
-                    .children(runtimes.iter().map(|runtime| {
+                    // Runtimes that cannot be picked yet are listed in the popover, not here.
+                    .children(runtimes.iter().filter(|runtime| runtime.available).map(|runtime| {
                         let (status, label) = if runtime.online {
                             (Status::Live, runtime.name.clone())
                         } else {
