@@ -4,6 +4,7 @@
 mod list;
 mod review;
 mod send_back;
+mod waits;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -85,7 +86,7 @@ pub(crate) fn open_with(
     ui::motion::set_reduced(true);
     let api = Arc::new(FixtureApi::new(World::acme(NOW)));
     api.with_world(edit);
-    let hub = cx.update(|cx| Hub::new(api.clone(), cx));
+    let hub = cx.update(|cx| Hub::new_fixture(api.clone(), cx));
     cx.update(|cx| {
         hub::navigate(
             Route::Inbox {

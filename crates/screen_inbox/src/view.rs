@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement,
-    KeyDownEvent, MouseButton, Render, SharedString, Subscription, Task, Window, canvas, div,
-    prelude::*, px,
+    MouseButton, Render, SharedString, Subscription, Task, Window, canvas, div, prelude::*, px,
 };
 use hub::api::{InboxId, InboxItem, InboxKind, PullRequest, ReviewDecision, ReviewId, RunnableRef};
 use hub::{
@@ -19,6 +18,7 @@ use ui_rich::markdown::Markdown;
 
 use crate::list::{self, Tab};
 use crate::send_back::SendBack;
+use crate::waits::{self, ItemRun};
 
 /// Width of the queue on the left (`aside` in the mockup).
 pub(crate) const QUEUE_WIDTH: f32 = 300.;
@@ -72,6 +72,8 @@ pub struct InboxView {
     pub(crate) markdown: Option<(InboxId, Entity<Markdown>)>,
     pub(crate) prs: HashMap<String, PrStatus>,
     pub(crate) send_back: Option<Entity<SendBack>>,
+    /// The run of the open item, when it has one (questions, budget stops).
+    pub(crate) item_run: Option<ItemRun>,
     /// The item last marked read on opening, so "Mark unread" sticks while it stays open.
     marked: Option<InboxId>,
     /// Width of the detail column in the last frame.
@@ -116,6 +118,7 @@ impl InboxView {
             markdown: None,
             prs: HashMap::new(),
             send_back: None,
+            item_run: None,
             marked: None,
             detail_width: width.clamp(320., DETAIL_MAX),
             now: None,
@@ -167,7 +170,7 @@ impl InboxView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let waiting = self.inbox.read(cx).waiting();
+        let waiting = self.live_items(Tab::Waiting, cx).len();
         if waiting == 0 {
             return Vec::new();
         }
@@ -471,6 +474,7 @@ impl InboxView {
         let Some(item) = self.current_item(cx) else {
             return;
         };
+        self.sync_item_run(&item, cx);
         if self.marked.as_ref() != Some(&item.id) {
             self.marked = Some(item.id.clone());
             if !item.read && !item.archived {
@@ -531,7 +535,25 @@ impl InboxView {
     pub(crate) fn visible_items(&self, cx: &App) -> Vec<Arc<InboxItem>> {
         match self.tab {
             Tab::Archived => self.archived.items.clone(),
-            tab => list::ordered(self.inbox.read(cx).items(), tab),
+            tab => self.live_items(tab, cx),
+        }
+    }
+
+    /// The live items of a tab, waiting ones first; an item whose run moved on no longer waits.
+    pub(crate) fn live_items(&self, tab: Tab, cx: &App) -> Vec<Arc<InboxItem>> {
+        match tab {
+            Tab::Archived => Vec::new(),
+            tab => {
+                let inbox = self.inbox.read(cx);
+                let runs = self.runs.read(cx);
+                let moved_on = |item: &InboxItem| {
+                    waits::moved_on(
+                        item,
+                        item.run.as_ref().and_then(|id| runs.find(id)).map(|r| &**r),
+                    )
+                };
+                list::ordered(inbox.waiting_items(), inbox.items(), tab, moved_on)
+            }
         }
     }
 
@@ -687,42 +709,6 @@ impl InboxView {
         );
     }
 
-    // ------------------------------------------------------------ keyboard
-
-    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        if keystroke.modifiers.modified() {
-            return;
-        }
-        match keystroke.key.as_str() {
-            "up" | "k" => self.move_selection(-1, window, cx),
-            "down" | "j" => self.move_selection(1, window, cx),
-            "enter" => self.activate(window, cx),
-            "r" => self.open_send_back(window, cx),
-            digit if digit.len() == 1 && digit.as_bytes()[0].is_ascii_digit() => {
-                let n = u32::from(digit.as_bytes()[0] - b'0');
-                if n > 0 {
-                    self.pick_variant(n, cx);
-                }
-            }
-            _ => return,
-        }
-        cx.stop_propagation();
-    }
-
-    /// Enter: goes where the open item leads (a review is decided with its own buttons).
-    fn activate(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.review.is_some() {
-            return;
-        }
-        let Some(item) = self.current_item(cx) else {
-            return;
-        };
-        if let Some(target) = crate::other::main_target(&item) {
-            hub::open(target, cx);
-        }
-    }
-
     /// Follows the detail column's width; a new width lays the column out again.
     fn fit_detail(&mut self, width: f32, cx: &mut Context<Self>) {
         let width = width.clamp(0., DETAIL_MAX);
@@ -760,13 +746,20 @@ impl Render for InboxView {
         .top_0()
         .left_0()
         .size_full();
-        let focus = self.focus_handle.clone();
         div()
             .id("inbox")
             .key_context("Inbox")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
-            .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    // A text field the press focused keeps it; anything else gives the queue its keys.
+                    if !this.typing(window, cx) {
+                        window.focus(&this.focus_handle);
+                    }
+                }),
+            )
             .flex()
             .flex_row()
             .size_full()

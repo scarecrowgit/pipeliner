@@ -7,12 +7,14 @@
 //! Everything shown comes from `hub` models; everything done goes through `hub::commands`.
 
 mod files;
+mod keys;
 mod list;
 mod other;
 mod review;
 mod send_back;
 mod table;
 mod view;
+mod waits;
 
 #[cfg(test)]
 mod tests;

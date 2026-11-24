@@ -56,13 +56,16 @@ impl InboxView {
     ) -> AnyElement {
         let mut content: Vec<AnyElement> = vec![self.item_head(&item, cx)];
         match item.kind {
-            InboxKind::Question { .. } => content.push(self.question_body(&item)),
+            InboxKind::Question { .. } => content.push(self.question_body(&item, cx)),
             InboxKind::Failure => content.push(self.failure_body(&item)),
             InboxKind::Report | InboxKind::Review { .. } => {
                 if let Some(md) = self.summary(&item) {
                     content.push(div().mt(px(SPACE_5)).child(md).into_any_element());
                 }
             }
+        }
+        if let Some(budget) = self.budget_card(cx) {
+            content.push(budget);
         }
         for (ix, link) in item
             .links
@@ -142,13 +145,40 @@ impl InboxView {
     }
 
     /// The question, and where to answer it: the agent waits in its chat.
-    fn question_body(&self, item: &InboxItem) -> AnyElement {
+    fn question_body(&self, item: &InboxItem, cx: &mut Context<Self>) -> AnyElement {
         let target = main_target(item);
         let label = match &target {
             Some(Target::Session(_)) => "Answer in the chat",
             Some(Target::Issue(_)) => "Answer on the issue",
             _ => "Open the run",
         };
+        let link = |primary: bool| {
+            target.clone().map(|target| {
+                let button = Button::new("item-answer", label).icon(IconName::Chat);
+                let button = if primary {
+                    button.primary()
+                } else {
+                    button.secondary()
+                };
+                button
+                    .on_click(move |_, _, cx| hub::open(target.clone(), cx))
+                    .probe("item-answer")
+                    .into_any_element()
+            })
+        };
+        let foot = self.answer_box(link(false), cx).unwrap_or_else(|| {
+            row()
+                .gap(px(SPACE_2))
+                .child(
+                    div()
+                        .type_style(LABEL)
+                        .text_color(TEXT_MUTED)
+                        .child("The agent waits until it is answered."),
+                )
+                .child(grow())
+                .children(link(true))
+                .into_any_element()
+        });
         let card = Card::new()
             .child(
                 row()
@@ -163,26 +193,7 @@ impl InboxView {
                     }),
             )
             .when_some(self.summary(item), |d, md| d.child(md))
-            .child(
-                row()
-                    .gap(px(SPACE_2))
-                    .child(
-                        div()
-                            .type_style(LABEL)
-                            .text_color(TEXT_MUTED)
-                            .child("The agent waits until it is answered."),
-                    )
-                    .child(grow())
-                    .when_some(target, |d, target| {
-                        d.child(
-                            Button::new("item-answer", label)
-                                .primary()
-                                .icon(IconName::Chat)
-                                .on_click(move |_, _, cx| hub::open(target.clone(), cx))
-                                .probe("item-answer"),
-                        )
-                    }),
-            );
+            .child(foot);
         div().mt(px(SPACE_5)).child(card).into_any_element()
     }
 

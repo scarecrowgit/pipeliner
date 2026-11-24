@@ -42,21 +42,23 @@ impl Tab {
     }
 }
 
-/// The rows of a tab of live items: waiting items first, newest first
-/// as the mockup's queue lists them, then the rest, newest first.
-///
-/// Items of the same time keep the order of their ids, so a row does not jump when it changes.
-pub(crate) fn ordered(items: &[Arc<InboxItem>], tab: Tab) -> Vec<Arc<InboxItem>> {
-    let mut items = items.to_vec();
-    items.sort_by(|a, b| {
-        b.created
-            .cmp(&a.created)
-            .then_with(|| a.id.as_str().cmp(b.id.as_str()))
-    });
-    let (waiting, rest): (Vec<_>, Vec<_>) = items.into_iter().partition(|item| item.needs_person());
+/// The rows of a tab of live items: the waiting ones (`waiting`, in the model's order), then
+/// the rest in the model's order (newest first). An item whose run moved on (`moved_on`)
+/// no longer waits.
+pub(crate) fn ordered(
+    waiting: Vec<Arc<InboxItem>>,
+    items: &[Arc<InboxItem>],
+    tab: Tab,
+    moved_on: impl Fn(&InboxItem) -> bool,
+) -> Vec<Arc<InboxItem>> {
+    let waits = |item: &InboxItem| item.needs_person() && !moved_on(item);
+    let first: Vec<Arc<InboxItem>> = waiting.into_iter().filter(|item| waits(item)).collect();
     match tab {
-        Tab::Waiting => waiting,
-        Tab::All => waiting.into_iter().chain(rest).collect(),
+        Tab::Waiting => first,
+        Tab::All => {
+            let rest = items.iter().filter(|item| !waits(item)).cloned();
+            first.into_iter().chain(rest).collect()
+        }
         Tab::Archived => Vec::new(),
     }
 }
@@ -183,9 +185,8 @@ impl InboxView {
 
     /// Waiting / All / Archived, with counts.
     fn render_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let live = self.inbox.read(cx).items();
-        let waiting = live.iter().filter(|item| item.needs_person()).count();
-        let all = live.len();
+        let waiting = self.live_items(Tab::Waiting, cx).len();
+        let all = self.inbox.read(cx).items().len();
         let archived = self.archived.started.then_some(self.archived.items.len());
         let tabs: Vec<AnyElement> = Tab::ALL
             .into_iter()

@@ -114,7 +114,7 @@ impl InboxView {
         match self.current_item(cx) {
             Some(item) => self.render_item(item, window, cx),
             None => {
-                let waiting = self.inbox.read(cx).waiting();
+                let waiting = self.live_items(crate::list::Tab::Waiting, cx).len();
                 match self.inbox.read(cx).state() {
                     LoadState::Loading => placeholder("Loading…", false),
                     LoadState::Failed(error) => {

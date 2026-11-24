@@ -26,7 +26,7 @@ fn main() {
     ui::run_app("Inbox", 1440., 900., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
-        Hub::new(api, cx);
+        Hub::new_fixture(api, cx);
         let focus = match fixtures::start_route(&fixture) {
             Some((Route::Inbox { item }, _)) => item,
             _ => None,
