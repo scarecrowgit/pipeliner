@@ -59,7 +59,7 @@ pub use services::{
 /// Where the runner keeps what it makes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnerConfig {
-    /// Root of the worktrees it creates (`~/.local/share/harness/v2/worktrees`).
+    /// Root of the worktrees it creates (`~/.harness/worktrees`).
     pub worktrees: PathBuf,
     /// Its own records: which worktrees belong to which run.
     pub state: PathBuf,
