@@ -110,6 +110,9 @@ pub(crate) fn classify(status: Option<u16>, kind: Option<&str>, message: String,
         Some(401 | 403) => LlmError::Auth(message),
         Some(429) => LlmError::RateLimited { retry_after, message },
         Some(408) => LlmError::Network(message),
+        // A gateway that relays an upstream rejection of its own credentials answers 5xx with
+        // the upstream's 401 inside; retrying that never helps.
+        Some(s) if s >= 500 && relays_auth_failure(&message) => LlmError::Auth(message),
         Some(s) if s >= 500 => LlmError::Overloaded(message),
         Some(_) if context => LlmError::ContextTooLong(message),
         Some(_) => LlmError::BadRequest(message),
@@ -122,6 +125,15 @@ pub(crate) fn classify(status: Option<u16>, kind: Option<&str>, message: String,
             _ => LlmError::Other(message),
         },
     }
+}
+
+/// Whether a gateway's error text carries an upstream authentication failure, as in
+/// `[claude/opus] [401]: {"type":"error","error":{"type":"authentication_error",…}}`.
+fn relays_auth_failure(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("authentication_error")
+        || m.contains("invalid_api_key")
+        || (m.contains("[401]") && (m.contains("authentic") || m.contains("unauthorized") || m.contains("api key")))
 }
 
 /// Whether a provider's message says the request does not fit the context window, in the
@@ -253,6 +265,8 @@ mod tests {
         );
         assert!(matches!(status_error(529, None, &anthropic("overloaded_error", "Overloaded")), LlmError::Overloaded(_)));
         assert!(matches!(status_error(502, None, "<html>bad gateway</html>"), LlmError::Overloaded(m) if m.contains("bad gateway")));
+        let relayed = r#"[claude/claude-opus-5-5] [401]: {"type":"error","error":{"type":"authentication_error","message":"x"}}"#;
+        assert!(matches!(status_error(502, None, relayed), LlmError::Auth(_)), "a relayed 401 is not retried");
         assert!(matches!(
             status_error(400, None, &anthropic("invalid_request_error", "prompt is too long: 250000 tokens > 200000 maximum")),
             LlmError::ContextTooLong(_)
