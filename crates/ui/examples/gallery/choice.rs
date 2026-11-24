@@ -167,6 +167,7 @@ impl Gallery {
         let strong = gpui::HighlightStyle { font_weight: Some(gpui::FontWeight::MEDIUM), color: Some(TEXT), ..Default::default() };
         let cut = |el: AnyElement| row().w(px(220.)).px(px(SPACE_2)).border_1().border_color(LINE).rounded(px(RADIUS_MD)).child(el).into_any_element();
         let truncation = variants(vec![
+            ("truncate, mono, cut", cut(truncate("~/code/acme/services/payments-api/fix-PAY-1423").font_family(FONT_MONO).text_color(TEXT_SECONDARY).into_any_element())),
             ("truncate_middle", cut(truncate_middle("~/code/acme/services/payments-api/fix-PAY-1423", BODY.line).font_family(FONT_MONO).text_color(TEXT_SECONDARY).into_any_element())),
             ("middle, no slash", cut(truncate_middle("run-2026-11-24-0f3a9c1e-replay-of-nightly-audit", BODY.line).into_any_element())),
             ("truncate_styled", cut(truncate_styled("Retry the charge once the gateway is back", [(0..5, mark), (10..16, strong)], BODY.line).text_color(TEXT_SECONDARY).into_any_element())),

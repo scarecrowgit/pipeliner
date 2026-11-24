@@ -224,13 +224,15 @@ fn the_new_builders_render(cx: &mut TestAppContext) {
             .child(MenuItem::new("mi", "Reproducer").matched(2).hint("running").hint_tone(HintTone::Info))
             // 2 falls inside "é": the mark is dropped, the row still draws.
             .child(MenuItem::new("mi-bad", "Résumé").matched(2))
+            .child(MenuItem::new("mi-suffix", "Fixer").label_suffix("opus-5.5").matched(1).hint("idle"))
+            .child(div().w(px(80.)).flex().font_family(FONT_MONO).child(truncate("~/code/acme/payments-api\nsecond line")))
             .child(SelectBox::new("sel", "opus-5.5").mono().small())
             .child(SelectBox::new("sel-bad", "gone-model").mono().danger(true))
             .child(div().w(px(120.)).flex().child(truncate_middle("~/code/acme/payments-api/fix-PAY-1423", BODY.line)))
             .child(div().w(px(120.)).flex().child(truncate_styled("retry the charge", [(0..5, bold), (3..9, bold)], BODY.line)))
             .into_any_element()
     });
-    for selector in ["mi", "mi-bad", "sel", "sel-bad"] {
+    for selector in ["mi", "mi-bad", "mi-suffix", "sel", "sel-bad"] {
         assert!(cx.debug_bounds(selector).is_some(), "`{selector}` was not laid out");
     }
 }

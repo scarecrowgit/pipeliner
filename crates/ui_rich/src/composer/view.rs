@@ -217,6 +217,7 @@ fn controls_row(
         Button::new(part(name, "stop"), "Stop")
             .small()
             .secondary()
+            .icon(IconName::Stop)
             .on_click(move |_, _, cx| e.update(cx, |c, cx| c.emit(ComposerEvent::Stop, cx)))
             .probe(format!("{name}-stop"))
             .into_any_element()

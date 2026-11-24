@@ -1,6 +1,12 @@
 //! One-line text that does not fit: styled text that ends in `…` ([`truncate_styled`]), and
-//! paths that keep their head and tail and lose the middle ([`truncate_middle`]). Both are
-//! cut at the width they are given, at prepaint.
+//! paths that keep their head and tail and lose the middle ([`truncate_middle`]). Both, and
+//! the plain [`crate::layout::truncate`], are cut at the width they are given, at prepaint.
+//!
+//! Why not GPUI's `line_clamp(1).text_ellipsis()`: its measure closure cuts the captured
+//! text runs in place when a narrow measure truncates the text, and keeps the cut runs for
+//! the next measure. The text past the cut then has no run: it is shaped in the default
+//! (sans, regular) font, so mono text turns sans and weights change after the first
+//! characters, and a run that ends inside the 3-byte `…` breaks it.
 //!
 //! Both follow the recipe of [`crate::layout::truncate`]: the cell fills the rest of its row
 //! and may shrink below its content; in a shrink-to-fit parent it is as wide as the text.
@@ -56,7 +62,7 @@ pub fn truncate_styled(
 ) -> Div {
     let text = text.into();
     let highlights = clean_highlights(&text, highlights);
-    cell(line_height).child(LineText { text, highlights, cut: Cut::End })
+    cell(line_height).child(LineText::new(text, highlights, Cut::End))
 }
 
 /// [`truncate_block`](crate::layout::truncate_block) for text with styled parts: full width,
@@ -75,7 +81,7 @@ pub fn truncate_styled_block(
         .flex_none()
         .h(px(line_height))
         .overflow_hidden()
-        .child(LineText { text, highlights, cut: Cut::End })
+        .child(LineText::new(text, highlights, Cut::End))
 }
 
 /// Wrapped text with styled parts, at most `lines` lines; what does not fit is cut after the
@@ -103,7 +109,25 @@ pub fn clamp_styled(
 /// for other text, characters go from the middle. `line_height` px tall; colour, font and
 /// size are inherited.
 pub fn truncate_middle(text: impl Into<SharedString>, line_height: f32) -> Div {
-    cell(line_height).child(LineText { text: text.into(), highlights: Vec::new(), cut: Cut::Middle })
+    cell(line_height).child(LineText::new(text.into(), Vec::new(), Cut::Middle))
+}
+
+/// One line of styled text as wide as its content, shrinking (and ending in `…`) when the
+/// row is too narrow, but never growing: for text followed by something that sits right
+/// after it (a menu row's label suffix).
+pub(crate) fn fit_styled(
+    text: SharedString,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    line_height: f32,
+) -> Div {
+    let highlights = clean_highlights(&text, highlights);
+    div()
+        .flex()
+        .flex_shrink()
+        .min_w_0()
+        .h(px(line_height))
+        .overflow_hidden()
+        .child(LineText::new(text, highlights, Cut::End))
 }
 
 /// The cell of a one-line text in a row: fills the rest, may shrink below its content.
@@ -200,10 +224,55 @@ enum Cut {
 
 /// One line of text, as wide as its content, shrinking to the width it is given and cut to
 /// fit at prepaint (so styled runs survive the cut).
-struct LineText {
+pub(crate) struct LineText {
     text: SharedString,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
     cut: Cut,
+}
+
+impl LineText {
+    /// One line of `text`: line breaks and tabs become spaces (one byte each, so highlight
+    /// offsets still hold), since a shaped line cannot hold a break.
+    fn new(text: SharedString, highlights: Vec<(Range<usize>, HighlightStyle)>, cut: Cut) -> Self {
+        let text = if text.contains(['\n', '\r', '\t']) {
+            SharedString::from(text.replace(['\n', '\r', '\t'], " "))
+        } else {
+            text
+        };
+        Self { text, highlights, cut }
+    }
+
+    /// The text to draw and its highlights, cut until `fits` accepts them. Stateless: every
+    /// call starts from the whole text.
+    fn cut_to(
+        &self,
+        mut fits: impl FnMut(&str, &[(Range<usize>, HighlightStyle)]) -> bool,
+    ) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
+        match self.cut {
+            Cut::Middle => (middle_cut(&self.text, |s| fits(s, &[])), Vec::new()),
+            Cut::End => {
+                let hl = &self.highlights;
+                match end_cut(&self.text, |s| fits(s, hl)) {
+                    None => (self.text.to_string(), hl.clone()),
+                    // The ellipsis takes the style of the character before it.
+                    Some(head) => {
+                        let shown = format!("{}{ELLIPSIS}", &self.text[..head]);
+                        let hl = hl
+                            .iter()
+                            .filter(|(r, _)| r.start < head)
+                            .map(|(r, h)| (r.start..if r.end >= head { shown.len() } else { r.end }, *h))
+                            .collect();
+                        (shown, hl)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Plain text cut at the end: what [`crate::layout::truncate`] draws.
+    pub(crate) fn plain(text: SharedString) -> Self {
+        Self::new(text, Vec::new(), Cut::End)
+    }
 }
 
 impl IntoElement for LineText {
@@ -243,7 +312,7 @@ fn shape(text: &str, style: &TextStyle, highlights: &[(Range<usize>, HighlightSt
 
 impl Element for LineText {
     type RequestLayoutState = ();
-    type PrepaintState = Option<ShapedLine>;
+    type PrepaintState = Option<(ShapedLine, Pixels, gpui::TextAlign)>;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -281,33 +350,13 @@ impl Element for LineText {
         _: &mut (),
         window: &mut Window,
         _: &mut App,
-    ) -> Option<ShapedLine> {
+    ) -> Option<(ShapedLine, Pixels, gpui::TextAlign)> {
         let style = window.text_style();
+        let line_height = style.line_height_in_pixels(window.rem_size());
         let room = bounds.size.width + px(0.5);
-        let line = match self.cut {
-            Cut::Middle => {
-                let shown = middle_cut(&self.text, |s| shape(s, &style, &[], window).width <= room);
-                shape(&shown, &style, &[], window)
-            }
-            Cut::End => {
-                let hl = &self.highlights;
-                let kept = end_cut(&self.text, |s| shape(s, &style, hl, window).width <= room);
-                match kept {
-                    None => shape(&self.text, &style, hl, window),
-                    // The ellipsis takes the style of the character before it.
-                    Some(head) => {
-                        let shown = format!("{}{ELLIPSIS}", &self.text[..head]);
-                        let hl: Vec<_> = hl
-                            .iter()
-                            .filter(|(r, _)| r.start < head)
-                            .map(|(r, h)| (r.start..if r.end >= head { shown.len() } else { r.end }, *h))
-                            .collect();
-                        shape(&shown, &style, &hl, window)
-                    }
-                }
-            }
-        };
-        Some(line)
+        let (shown, hl) = self.cut_to(|s, hl| shape(s, &style, hl, window).width <= room);
+        let line = shape(&shown, &style, &hl, window);
+        Some((line, line_height, style.text_align))
     }
 
     fn paint(
@@ -316,15 +365,23 @@ impl Element for LineText {
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut (),
-        line: &mut Option<ShapedLine>,
+        line: &mut Option<(ShapedLine, Pixels, gpui::TextAlign)>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(line) = line {
-            // A paint error means a glyph could not be rasterised; nothing to recover.
-            let _ = line.paint_background(bounds.origin, bounds.size.height, window, cx);
-            let _ = line.paint(bounds.origin, bounds.size.height, window, cx);
-        }
+        let Some((line, line_height, align)) = line else { return };
+        // From the top at the text's own line height, aligned as the text style says: where
+        // GPUI's text element would draw it.
+        let free = (bounds.size.width - line.width).max(px(0.));
+        let x = match align {
+            gpui::TextAlign::Left => px(0.),
+            gpui::TextAlign::Center => free / 2.,
+            gpui::TextAlign::Right => free,
+        };
+        let origin = gpui::point(bounds.origin.x + x, bounds.origin.y);
+        // A paint error means a glyph could not be rasterised; nothing to recover.
+        let _ = line.paint_background(origin, *line_height, window, cx);
+        let _ = line.paint(origin, *line_height, window, cx);
     }
 }
 
@@ -378,6 +435,31 @@ mod tests {
         assert_eq!(kept, Some(5), "`retry…` is 6 characters");
         assert_eq!(end_cut("жжжж", by_chars(3)), Some("жж".len()));
         assert_eq!(end_cut("abc", by_chars(0)), Some(0));
+    }
+
+    /// What broke GPUI's ellipsis: after a narrow cut, a wider line must still be drawn whole,
+    /// in one run of the inherited (mono) font that covers every byte, `…` included.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_cut_line_keeps_the_inherited_font_over_every_byte_at_any_width() {
+        let style = TextStyle { font_family: crate::theme::FONT_MONO.into(), ..TextStyle::default() };
+        let line = LineText::plain("~/code/acme/payments-api/fix-PAY-1423\nsecond".into());
+        for max in [8, 30, 4, 200, 12] {
+            let (shown, hl) = line.cut_to(|s, _| s.chars().count() <= max);
+            assert!(!shown.contains('\n'));
+            let runs = runs(&shown, &style, &hl);
+            assert_eq!(runs.iter().map(|r| r.len).sum::<usize>(), shown.len(), "width {max}: {shown}");
+            assert!(runs.iter().all(|r| r.font == style.font()), "width {max}: the mono font all along");
+            if max < 40 {
+                assert!(shown.ends_with(ELLIPSIS), "{shown}");
+            }
+        }
+        // A styled cut: the ellipsis takes the style of the run it ends.
+        let bold = HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), ..Default::default() };
+        let line = LineText::new("Reproducer agent".into(), vec![(0..10, bold)], Cut::End);
+        let (shown, hl) = line.cut_to(|s, _| s.chars().count() <= 6);
+        assert_eq!(shown, "Repro…");
+        assert_eq!(hl.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(), [0..shown.len()]);
     }
 
     #[test]

@@ -293,6 +293,7 @@ pub struct MenuItem {
     hint: Option<SharedString>,
     hint_tone: HintTone,
     matched: usize,
+    suffix: Option<SharedString>,
     kbd: Option<SharedString>,
     tooltip: Option<SharedString>,
     pub(crate) probe: Option<SharedString>,
@@ -319,6 +320,7 @@ impl MenuItem {
             hint: None,
             hint_tone: HintTone::Muted,
             matched: 0,
+            suffix: None,
             kbd: None,
             tooltip: None,
             probe: None,
@@ -355,6 +357,13 @@ impl MenuItem {
     /// A muted hint at the right: two or three words.
     pub fn hint(mut self, hint: impl Into<SharedString>) -> Self {
         self.hint = Some(hint.into());
+        self
+    }
+
+    /// Small muted mono text right after the label, before the hint: the model of an
+    /// agent (`Fixer opus-5.5`). The label gives way first when the row is narrow.
+    pub fn label_suffix(mut self, text: impl Into<SharedString>) -> Self {
+        self.suffix = Some(text.into());
         self
     }
 
@@ -464,11 +473,28 @@ impl RenderOnce for MenuItem {
         // Rows that lead with a tile (agents, projects) name things: the label is medium.
         let strong = self.tile.is_some();
         let matched = self.matched.min(self.label.len());
-        let label = if matched > 0 && self.label.is_char_boundary(matched) && !disabled {
-            let mark = HighlightStyle { color: Some(ACCENT_TEXT), ..HighlightStyle::default() };
-            truncate_styled_block(self.label, [(0..matched, mark)], BODY.line)
-        } else {
-            truncate_block(self.label, BODY.line)
+        let marks: Vec<_> = (matched > 0 && self.label.is_char_boundary(matched) && !disabled)
+            .then(|| (0..matched, HighlightStyle { color: Some(ACCENT_TEXT), ..HighlightStyle::default() }))
+            .into_iter()
+            .collect();
+        let label = match self.suffix {
+            // The label as wide as it is, the suffix right after it.
+            Some(suffix) => row()
+                .w_full()
+                .flex_none()
+                .gap(px(SPACE_1_5))
+                .h(px(BODY.line))
+                .child(crate::truncate::fit_styled(self.label, marks, BODY.line))
+                .child(
+                    div()
+                        .flex_none()
+                        .type_style(MONO_SM)
+                        .text_color(if disabled { TEXT_DISABLED } else { TEXT_MUTED })
+                        .whitespace_nowrap()
+                        .child(suffix),
+                ),
+            None if !marks.is_empty() => truncate_styled_block(self.label, marks, BODY.line),
+            None => truncate_block(self.label, BODY.line),
         };
         let hint_color = if disabled { TEXT_DISABLED } else { self.hint_tone.color() };
         let probe = self.probe;

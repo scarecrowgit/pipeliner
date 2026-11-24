@@ -53,13 +53,10 @@ pub fn truncate(text: impl Into<SharedString>) -> Div {
     truncate_lh(text, BODY.line)
 }
 
-/// One line of `text` that ends in `…` at whatever width its box is given.
-///
-/// GPUI 0.2.2 measures `nowrap` text once per frame and keeps that first size, which is
-/// often taken at min-content width (a few letters). Wrapping text is re-measured whenever
-/// the width changes, so the line is kept to one by `line_clamp(1)` instead of `nowrap`.
-fn one_line(text: SharedString) -> Div {
-    div().w_full().min_w_0().overflow_hidden().whitespace_normal().line_clamp(1).text_ellipsis().child(text)
+/// One line of `text` that ends in `…` at whatever width its box is given, cut at prepaint
+/// in the inherited font (see [`crate::truncate`] for why GPUI's own ellipsis is not used).
+fn one_line(text: SharedString) -> crate::truncate::LineText {
+    crate::truncate::LineText::plain(text)
 }
 
 /// [`truncate`] for a line height other than 20px, e.g. 18 for labels and 16 for captions.

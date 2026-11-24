@@ -52,11 +52,12 @@ impl Gallery {
             .child(MenuItem::new("m-6", "Delete project").icon(IconName::Trash).danger())
             .child(PopLabel::new("Matching “re” · 2 of 8"))
             .child(MenuItem::new("m-7", "Reproducer").tile(Tile::new(IconName::Agent).medium()).matched(2).subline("Agent · on this issue now").hint("running").hint_tone(HintTone::Info))
+            .child(MenuItem::new("m-7b", "Fixer").tile(Tile::new(IconName::Agent).medium()).label_suffix("opus-5.5").subline("Agent · fixes failing checks and opens a PR").hint("idle"))
             .child(MenuItem::new("m-8", "Release captain").tile(Tile::new(IconName::Orchestrator).medium()).matched(2).subline("Orchestrator").hint("idle"))
             .child(MenuItem::new("m-9", "Import from file…").icon(IconName::Upload).disabled(true).tooltip("No file picker yet").probe_name("gallery-import"));
         group(
             "Lists",
-            "NavItem, ListItem (with dot, meta, current, spawned child, hover actions), MenuItem (check, tile, sub-line, hint and its tone, matched prefix, kbd, danger, selected, disabled with a tooltip), PopLabel, PopSeparator.",
+            "NavItem, ListItem (with dot, meta, current, spawned child, hover actions), MenuItem (check, tile, sub-line, label suffix, hint and its tone, matched prefix, kbd, danger, selected, disabled with a tooltip), PopLabel, PopSeparator.",
             row().gap(px(SPACE_6)).items_start().child(nav).child(list).child(menu),
         )
     }
