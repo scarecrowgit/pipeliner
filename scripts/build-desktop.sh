@@ -4,6 +4,8 @@
 #
 #   scripts/build-desktop.sh            # build + install menu entry "Harness Next"
 #   scripts/build-desktop.sh --no-menu  # build only
+#   scripts/build-desktop.sh --no-build # install what target/release already holds (for a
+#                                       # build made from a clean checkout of a commit)
 #
 # dist/harness-next      launcher: sets LD_LIBRARY_PATH for the libs gpui dlopens (wayland,
 #                        xkbcommon, vulkan, fontconfig...) — captured from shell.nix at build
@@ -15,7 +17,19 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-nix-shell shell.nix --run 'cargo build --release --bin harness --bin harness-cli' </dev/null
+menu=yes
+build=yes
+for arg in "$@"; do
+  case "$arg" in
+    --no-menu) menu=no ;;
+    --no-build) build=no ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$build" = yes ]; then
+  nix-shell shell.nix --run 'cargo build --release --bin harness --bin harness-cli' </dev/null
+fi
 libs="$(nix-shell shell.nix --run 'printf %s "$LD_LIBRARY_PATH"' </dev/null)"
 
 mkdir -p dist
@@ -37,7 +51,7 @@ chmod 755 dist/harness-next
 stamp="$(date '+%Y-%m-%d %H:%M') $(sha256sum dist/harness-next-bin | cut -c1-12)"
 echo "$stamp" > dist/VERSION-next
 
-if [ "${1:-}" != "--no-menu" ]; then
+if [ "$menu" = yes ]; then
   apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   mkdir -p "$apps"
   cat > "$apps/harness-next.desktop" <<DESKTOP
