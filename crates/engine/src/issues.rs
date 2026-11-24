@@ -1,6 +1,5 @@
 //! [`IssueApi`] over the store and the `issues` rules. Every change is recorded in the
-//! issue's activity feed. Starting runners from triggers is not wired yet: a wake-up the
-//! triggers ask for is recorded as failed, with that reason.
+//! issue's activity feed; what the triggers and mentions wake is started by `wake`.
 
 use anyhow::{Result, anyhow, bail};
 use issues::Happening;
@@ -9,41 +8,22 @@ use model::{Actor, Autopilot, AutopilotId, AutopilotTrigger, Event, Issue, Issue
 use crate::api::{Attachment, IssueApi, IssuePatch, NewIssue};
 use crate::engine::{Engine, Inner};
 
-/// Why a wake-up asked for by a trigger did not start anything.
-const WAKE_NOT_WIRED: &str = "starting runs from issues is not wired yet";
-
 impl Inner {
     fn issue_or_fail(&self, key: &IssueKey) -> Result<Issue> {
         self.store.issue(key)?.ok_or_else(|| anyhow!("There is no issue {key}"))
     }
 
     /// Appends to the feed and publishes the entry.
-    fn activity(&self, key: &IssueKey, actor: Actor, kind: IssueEventKind) -> Result<()> {
+    pub(crate) fn activity(&self, key: &IssueKey, actor: Actor, kind: IssueEventKind) -> Result<()> {
         let event = IssueEvent { seq: 0, at: self.now(), actor, kind };
         let event = self.store.append_issue_event(key, event)?;
         self.publish(Event::IssueActivity { key: key.clone(), event });
         Ok(())
     }
 
-    fn save_issue(&self, issue: &Issue) -> Result<()> {
+    pub(crate) fn save_issue(&self, issue: &Issue) -> Result<()> {
         self.store.upsert_issue(issue)?;
         self.publish(Event::IssueChanged { issue: issue.clone() });
-        Ok(())
-    }
-
-    /// Records what the triggers would wake for `happening`: nothing can start yet, so every
-    /// intent becomes a failed wake-up, and every refusal one with its own reason.
-    fn wake(&self, issue: &Issue, happening: &Happening) -> Result<()> {
-        let catalog = self.catalog();
-        let wakes = issues::triggers::wake_intents(issue, happening, catalog.runnables());
-        for intent in wakes.intents {
-            let kind = IssueEventKind::WakeFailed { target: intent.target, name: intent.name, reason: WAKE_NOT_WIRED.into() };
-            self.activity(&issue.key, Actor::System, kind)?;
-        }
-        for refusal in wakes.refusals {
-            let kind = IssueEventKind::WakeFailed { target: refusal.target, name: refusal.name, reason: refusal.reason };
-            self.activity(&issue.key, Actor::System, kind)?;
-        }
         Ok(())
     }
 }
@@ -95,7 +75,7 @@ impl IssueApi for Engine {
         if let Some(runner) = new.runner {
             inner.activity(&key, Actor::Me, IssueEventKind::Attached { runner })?;
         }
-        inner.wake(&issue, &Happening::Created)?;
+        self.wake(&issue, &Happening::Created)?;
         Ok(issue)
     }
 
@@ -138,7 +118,7 @@ impl IssueApi for Engine {
         inner.save_issue(&issue)?;
         if let Some(to) = moved {
             inner.activity(key, Actor::Me, IssueEventKind::StatusChanged { from: before, to })?;
-            inner.wake(&before_move, &Happening::MovedTo(to))?;
+            self.wake(&before_move, &Happening::MovedTo(to))?;
         }
         Ok(issue)
     }
@@ -163,7 +143,7 @@ impl IssueApi for Engine {
         inner.activity(key, Actor::Me, kind)?;
         issue.updated = inner.now();
         inner.save_issue(&issue)?;
-        inner.wake(&issue, &Happening::Comment { text: text.to_string(), mentions })
+        self.wake(&issue, &Happening::Comment { text: text.to_string(), mentions })
     }
 
     fn attach_runner(&self, key: &IssueKey, runner: Option<RunnableRef>) -> Result<Issue> {
@@ -178,7 +158,7 @@ impl IssueApi for Engine {
         match runner {
             Some(runner) => {
                 inner.activity(key, Actor::Me, IssueEventKind::Attached { runner })?;
-                inner.wake(&issue, &Happening::Attached)?;
+                self.wake(&issue, &Happening::Attached)?;
             }
             None => inner.activity(key, Actor::Me, IssueEventKind::Detached)?,
         }
@@ -186,13 +166,14 @@ impl IssueApi for Engine {
     }
 
     fn start_issue(&self, key: &IssueKey) -> Result<()> {
-        self.inner.issue_or_fail(key)?;
-        bail!("Starting runs from issues is not wired yet")
+        let issue = self.inner.issue_or_fail(key)?;
+        let Some(runner) = issue.runner.clone() else { bail!("{key} has no runner attached under “Runs with”") };
+        self.wake_by_hand(&issue, &runner, "started by hand")
     }
 
-    fn retry_wake(&self, key: &IssueKey, _target: &RunnableRef) -> Result<()> {
-        self.inner.issue_or_fail(key)?;
-        bail!("Starting runs from issues is not wired yet")
+    fn retry_wake(&self, key: &IssueKey, target: &RunnableRef) -> Result<()> {
+        let issue = self.inner.issue_or_fail(key)?;
+        self.wake_by_hand(&issue, target, "tried again")
     }
 
     fn autopilots(&self, project: &ProjectId) -> Result<Vec<Autopilot>> {

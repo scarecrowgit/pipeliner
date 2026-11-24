@@ -5,6 +5,8 @@ mod detail;
 mod export;
 mod turn;
 
+pub(crate) use turn::mcp_view;
+
 use std::path::{Path, PathBuf};
 
 use agent::Input;

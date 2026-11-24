@@ -5,6 +5,8 @@ mod cancel;
 mod chat;
 mod other;
 mod permission;
+mod pipelines;
+mod pipelines_more;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,6 +35,7 @@ pub(crate) struct Fx {
     pub llm: Arc<ScriptedLlm>,
     pub clock: Arc<FixedClock>,
     pub engine: Engine,
+    pub options: EngineOptions,
     events: Receiver<Event>,
     /// Every event received so far.
     pub log: Mutex<Vec<Event>>,
@@ -45,25 +48,31 @@ pub(crate) fn options() -> EngineOptions {
             retry_max: Duration::from_millis(4),
             ..Default::default()
         },
+        ..Default::default()
     }
 }
 
 impl Fx {
     pub fn new() -> Self {
+        Self::with(options())
+    }
+
+    /// An engine with these options.
+    pub fn with(options: EngineOptions) -> Self {
         let dir = TempDir::new().expect("temp dir");
         let root = dir.path().canonicalize().expect("canonical temp dir");
         let paths = Paths::under(&root.join("app"));
         let llm = Arc::new(ScriptedLlm::new());
         let clock = Arc::new(FixedClock::new(NOW));
-        let engine = Engine::open_with(paths.clone(), llm.clone(), clock.clone(), options()).expect("engine");
+        let engine = Engine::open_with(paths.clone(), llm.clone(), clock.clone(), options.clone()).expect("engine");
         let events = engine.subscribe();
-        Self { dir, paths, llm, clock, engine, events, log: Mutex::new(Vec::new()) }
+        Self { dir, paths, llm, clock, engine, options, events, log: Mutex::new(Vec::new()) }
     }
 
     /// A second engine over the same directory, as after a restart, with a fresh model.
     pub fn reopen(&self) -> (Engine, Arc<ScriptedLlm>) {
         let llm = Arc::new(ScriptedLlm::new());
-        let engine = Engine::open_with(self.paths.clone(), llm.clone(), self.clock.clone(), options()).expect("engine");
+        let engine = Engine::open_with(self.paths.clone(), llm.clone(), self.clock.clone(), self.options.clone()).expect("engine");
         (engine, llm)
     }
 

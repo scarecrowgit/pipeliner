@@ -7,7 +7,6 @@ use model::{
 };
 
 use super::{Fx, git, new_session};
-use crate::NOT_WIRED;
 use crate::api::{
     CatalogApi, ChatApi, InboxApi, IssueApi, IssuePatch, NewIssue, OpsApi, RunApi, RunInput, WorkdirApi, WorkdirChoice,
 };
@@ -109,16 +108,19 @@ fn a_saved_agent_is_in_the_catalog_and_survives_a_reload() {
 }
 
 #[test]
-fn methods_that_wait_for_the_pipeline_executor_say_so() {
+fn pipeline_methods_on_missing_things_say_what_is_missing() {
     let fx = Fx::new();
     let (pipeline, run) = (PipelineId::new("p"), RunId::new("r"));
-    let not_wired = |result: anyhow::Result<()>| assert_eq!(result.expect_err("not wired").to_string(), NOT_WIRED);
-    not_wired(fx.engine.start_run(&pipeline, RunInput::default()).map(|_| ()));
-    not_wired(fx.engine.test_run(&pipeline, RunInput::default()).map(|_| ()));
-    not_wired(fx.engine.cancel_run(&run));
-    not_wired(fx.engine.resume_run(&run));
-    not_wired(fx.engine.decide_review(&ReviewId::new("v"), ReviewDecision::Skip));
-    not_wired(fx.engine.deploy_pipeline(&pipeline, "first").map(|_| ()));
+    let says = |result: anyhow::Result<()>, what: &str| {
+        let error = result.expect_err("refused").to_string();
+        assert!(error.contains(what), "{error}");
+    };
+    says(fx.engine.start_run(&pipeline, RunInput::default()).map(|_| ()), "no deployed version");
+    says(fx.engine.test_run(&pipeline, RunInput::default()).map(|_| ()), "There is no pipeline p");
+    says(fx.engine.cancel_run(&run), "There is no run r");
+    says(fx.engine.resume_run(&run), "There is no run r");
+    says(fx.engine.decide_review(&ReviewId::new("v"), ReviewDecision::Skip), "There is no review v");
+    says(fx.engine.deploy_pipeline(&pipeline, "first").map(|_| ()), "There is no pipeline p");
     // Reads of what the store holds work.
     assert!(fx.engine.latest_runs().expect("runs").is_empty());
     assert!(fx.engine.inbox(false).expect("inbox").is_empty());

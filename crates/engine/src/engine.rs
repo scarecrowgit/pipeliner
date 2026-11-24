@@ -35,11 +35,25 @@ pub(crate) fn running_marker(id: &SessionId) -> String {
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 
 /// What an engine runs with besides its paths, model client and clock.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct EngineOptions {
     /// Patience and sizes of the agent loop; tests shrink the retry pauses. The compaction
     /// threshold is taken from the settings.
     pub limits: Limits,
+    /// How pipelines run `gh`; the installed one when `None`.
+    pub gh: Option<Arc<dyn vcs::pr::Gh + Send + Sync>>,
+    /// How render actions take screenshots; headless Firefox when `None`.
+    pub renderer: Option<Arc<dyn pipeline::runners::Renderer>>,
+}
+
+impl std::fmt::Debug for EngineOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineOptions")
+            .field("limits", &self.limits)
+            .field("gh", &self.gh.as_ref().map(|_| "custom"))
+            .field("renderer", &self.renderer.as_ref().map(|_| "custom"))
+            .finish()
+    }
 }
 
 /// The engine: implements [`Api`] over the domain crates. Cheap to clone; every clone is the
@@ -63,6 +77,12 @@ pub(crate) struct Inner {
     pub slots: Slots,
     pub mcp: McpHub,
     pub limits: Limits,
+    /// Open pipeline runs and their drivers.
+    pub runs: crate::pipelines::Runs,
+    /// `gh` for pull requests.
+    pub gh: Arc<dyn vcs::pr::Gh + Send + Sync>,
+    /// Screenshots for render actions.
+    pub renderer: Arc<dyn pipeline::runners::Renderer>,
     /// Serialises read-modify-write of session headers.
     headers: Mutex<()>,
     /// Turn threads, joined on shutdown.
@@ -82,7 +102,14 @@ impl Engine {
     pub fn open_with(paths: Paths, llm: Arc<dyn LlmClient>, clock: Arc<dyn Clock>, options: EngineOptions) -> Result<Engine> {
         let store = Store::open(&paths).context("opening the store")?;
         let catalog = Catalog::load(&paths, None);
+        let renderer = options.renderer.clone().unwrap_or_else(|| {
+            Arc::new(pipeline::runners::Firefox { scratch: paths.v2_dir().join("renders") })
+        });
+        let gh = options.gh.clone().unwrap_or_else(|| Arc::new(vcs::pr::Cli));
         let inner = Inner {
+            runs: Default::default(),
+            gh,
+            renderer,
             mcp: McpHub::new(paths.clone()),
             paths,
             store,
@@ -100,6 +127,7 @@ impl Engine {
         };
         let engine = Engine { inner: Arc::new(inner) };
         engine.inner.recover()?;
+        crate::pipelines::recover(&engine.inner);
         Ok(engine)
     }
 
@@ -226,6 +254,8 @@ impl Inner {
         if self.shut_down.swap(true, Ordering::SeqCst) {
             return;
         }
+        // Runs first: their agents become interrupted instances that resume later.
+        self.runs.stop_all();
         self.live.cancel_all();
         let deadline = Instant::now() + SHUTDOWN_WAIT;
         let threads = std::mem::take(&mut *lock(&self.threads));

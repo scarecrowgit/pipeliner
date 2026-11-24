@@ -132,3 +132,124 @@ fn help_and_mistakes() {
     assert_eq!(code, 2);
     assert!(err.contains("unknown option --bogus"));
 }
+
+/// Runs git in `dir` with an isolated config.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("git");
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Issue source → coder → review → merge, in `repo`.
+fn review_graph(repo: &Path) -> engine::api::GraphDef {
+    use engine::api::*;
+    let node = |id: &str, kind: NodeKind| NodeDef { id: id.into(), name: id.to_uppercase(), pos: Default::default(), kind };
+    let route = |from: &str, port: &str, to: &str| EdgeDef { from: from.into(), port: port.into(), to: to.into(), kind: EdgeKind::Route };
+    GraphDef {
+        schema: 1,
+        id: PipelineId::new("review-flow"),
+        name: "Review flow".into(),
+        description: String::new(),
+        limits: Default::default(),
+        workdirs: vec![WorkdirDef {
+            id: "code".into(),
+            name: "Code".into(),
+            path: repo.to_path_buf(),
+            worktree: true,
+            base_branch: "main".into(),
+            ..Default::default()
+        }],
+        nodes: vec![
+            node("source", NodeKind::Source(SourceNode::default())),
+            node(
+                "coder",
+                NodeKind::Agent(AgentNode {
+                    role: "You code.".into(),
+                    model: Some(ModelRef::parse("scripted/scripted-model")),
+                    workdir: "code".into(),
+                    variants: 1,
+                    ..Default::default()
+                }),
+            ),
+            node("review", NodeKind::Review(ReviewNode { send_back_to: Some("coder".into()), skip_if_empty: false })),
+            node("merge", NodeKind::Action(ActionNode::Merge { workdir: "code".into() })),
+        ],
+        edges: vec![route("source", "out", "coder"), route("coder", "out", "review"), route("review", "approved", "merge")],
+    }
+}
+
+fn coder_writes() -> Vec<Reply> {
+    vec![
+        Reply::tool("w1", "write_file", json!({"path": "fix.txt", "content": "fixed\n"})),
+        Reply::tool("f1", "step_done", json!({"summary": "Wrote fix.txt."})),
+    ]
+}
+
+#[test]
+fn an_issue_is_filed_started_reviewed_and_shipped_from_the_command_line() {
+    use engine::api::CatalogApi;
+    let temp = Temp::new();
+    let repo = temp.0.join("app");
+    std::fs::create_dir_all(&repo).expect("repo");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "a\n").expect("write");
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "init"]);
+    let data = temp.0.join("data");
+    {
+        let engine = Engine::open(base::paths::Paths::under(&data), Arc::new(ScriptedLlm::new()), Arc::new(SystemClock)).expect("engine");
+        engine.save_pipeline(&engine::api::Place::Library, review_graph(&repo)).expect("save");
+        engine::api::OpsApi::shutdown(&engine);
+    }
+    let data = data.to_string_lossy().into_owned();
+    let d = |rest: &[&str]| -> Vec<String> { ["--data-dir", data.as_str()].iter().chain(rest).map(|s| s.to_string()).collect() };
+    let call = |rest: &[&str], replies: fn() -> Vec<Reply>| {
+        let argv = d(rest);
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        cli(&argv, "", &temp.0, replies)
+    };
+
+    let (code, out, err) = call(&["pipeline", "problems", "review-flow"], Vec::new);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = call(&["pipeline", "deploy", "review-flow", "--note", "first"], Vec::new);
+    assert_eq!((code, out.trim()), (0, "review-flow v1 is live"), "{err}");
+    let (code, out, err) = call(&["issue", "new", "Fix", "it", "--pipeline", "review-flow", "--body", "Please."], Vec::new);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.trim(), "HAR-1 Fix it");
+
+    let (code, out, err) = call(&["issue", "start", "HAR-1"], coder_writes);
+    assert_eq!(code, 0, "out: {out}\nerr: {err}");
+    assert!(out.contains("waiting for review"), "{out}");
+    let review = out.lines().find_map(|l| l.strip_prefix("review ")).and_then(|l| l.split_whitespace().next()).expect("review id").to_string();
+
+    let (code, out, _) = call(&["review", "show", &review], Vec::new);
+    assert_eq!(code, 0);
+    assert!(out.contains("fix.txt"), "{out}");
+    let (code, out, _) = call(&["review", "list"], Vec::new);
+    assert!(code == 0 && out.contains(&review), "{out}");
+
+    let (code, out, err) = call(&["review", "ship", &review], Vec::new);
+    assert_eq!(code, 0, "out: {out}\nerr: {err}");
+    assert!(out.contains("· done"), "{out}");
+    assert_eq!(git(&repo, &["show", "main:fix.txt"]), "fixed\n");
+
+    let (code, out, _) = call(&["run", "list"], Vec::new);
+    assert!(code == 0 && out.contains("done") && out.contains("HAR-1"), "{out}");
+    let (code, out, _) = call(&["issue", "show", "HAR-1"], Vec::new);
+    assert!(code == 0 && out.contains("Done"), "{out}");
+    let (code, _, err) = call(&["run", "show", "nope"], Vec::new);
+    assert_eq!(code, 1);
+    assert!(err.contains("there is no run nope"), "{err}");
+}

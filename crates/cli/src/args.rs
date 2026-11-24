@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
 
+pub use crate::args_work::{IssueCmd, PipelineCmd, ReviewCmd, RunCmd, parse_issue, parse_pipeline, parse_review, parse_run};
+
 /// Environment variable that points the CLI at another data directory, like `--data-dir`.
 pub const DATA_DIR_ENV: &str = "HARNESS_CLI_DATA_DIR";
 
@@ -22,6 +24,23 @@ Commands:
   models          lists the configured providers and their models
   import [--dry-run]
         imports chats, issues and the Inbox of the old app
+
+  issue new <title> [--body <text>] [--pipeline <id>] [--project <id>]
+        files an issue (the pipeline is attached but not started)
+  issue list [--project <id>] | issue show <key> | issue comment <key> <text>
+  issue start <key>
+        starts the attached pipeline or agent on the issue
+  run start <pipeline> <text> [--test]
+        runs the live version (--test: the draft, in throwaway worktrees, nothing pushed)
+  run list | run show <id> | run log <id> [-f]
+  run cancel <id> | run resume <id> | run answer <id> <text> [--node <id>]
+  review list | review show <id>
+  review ship <id> [variant] | review skip <id>
+  review send-back <id> <note> [--from all|over|variant:N] [--variants N]
+  pipeline list | pipeline problems <id> | pipeline deploy <id> [--note <text>]
+
+  Commands that start or continue a run follow it until it needs you or ends; the run is
+  interrupted if the CLI exits first (Ctrl-C) and `run resume` continues it.
   help            shows this text
 ";
 
@@ -42,6 +61,10 @@ pub enum Command {
     Sessions,
     Models,
     Import { dry_run: bool },
+    Issue(IssueCmd),
+    Run(RunCmd),
+    Review(ReviewCmd),
+    Pipeline(PipelineCmd),
     Help,
 }
 
@@ -79,6 +102,10 @@ pub fn parse(args: &[String]) -> Result<Args> {
             ["--dry-run"] => Command::Import { dry_run: true },
             [other, ..] => bail!("import: unknown option {other}"),
         },
+        "issue" => Command::Issue(parse_issue(options)?),
+        "run" => Command::Run(parse_run(options)?),
+        "review" => Command::Review(parse_review(options)?),
+        "pipeline" => Command::Pipeline(parse_pipeline(options)?),
         "help" | "--help" | "-h" => Command::Help,
         other => bail!("unknown command {other}; see `harness-cli help`"),
     };

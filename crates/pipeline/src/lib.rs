@@ -9,6 +9,7 @@
 //! | [`validate`] | The editor's Problems list for a graph |
 //! | [`diff`] | "Changes since v14": what differs between two graphs |
 //! | [`legacy`] | Conversion of the old app's linear pipelines into graphs |
+//! | [`runners`] | The real [`NodeRunner`]: agents, routers, commands, renders, merges, pull requests |
 
 pub mod api;
 pub mod diff;
@@ -16,6 +17,7 @@ pub mod exec;
 pub mod expr;
 pub mod fake;
 pub mod legacy;
+pub mod runners;
 pub mod validate;
 
 pub use api::{

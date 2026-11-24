@@ -14,7 +14,9 @@
 //! | `chat` | Chat sessions: commands, queries, turns, exports, slash commands |
 //! | `workdir` | Folders, worktrees and clones for sessions |
 //! | `mcp` | The MCP supervisors, started on first use |
-//! | `issues`, `catalog`, `ops`, `runs` | The other parts of the API |
+//! | `pipelines` | Pipeline runs: drivers, the node runner's services, the observer, recovery |
+//! | `runs`, `reviews` | [`api::RunApi`] and [`api::InboxApi`] over the drivers and the store |
+//! | `issues`, `catalog`, `ops` | The other parts of the API |
 
 pub mod api;
 mod bus;
@@ -27,8 +29,11 @@ mod issues;
 mod live;
 mod mcp;
 mod ops;
+mod pipelines;
+mod reviews;
 mod runs;
 mod sink;
+mod wake;
 mod workdir;
 
 #[cfg(test)]

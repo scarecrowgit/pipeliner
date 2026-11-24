@@ -78,6 +78,10 @@ fn execute(args: Args, deps: &mut Deps) -> Result<i32> {
             write!(deps.out, "{report}")?;
             Ok(if report.failed_total() > 0 { 1 } else { 0 })
         }
+        Command::Issue(cmd) => crate::work::issue(&engine, cmd, deps),
+        Command::Run(cmd) => crate::work::run(&engine, cmd, deps),
+        Command::Review(cmd) => crate::work::review(&engine, cmd, deps),
+        Command::Pipeline(cmd) => crate::work::pipeline(&engine, cmd, deps),
         Command::Help => Ok(0),
     };
     engine.shutdown();

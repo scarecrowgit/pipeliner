@@ -11,7 +11,7 @@ use model::{
 };
 
 use crate::api::{CatalogApi, LoadProblem, Template, UsedBy};
-use crate::engine::{Engine, NOT_WIRED};
+use crate::engine::Engine;
 
 const MS_PER_DAY: i64 = 86_400_000;
 
@@ -188,21 +188,74 @@ impl CatalogApi for Engine {
         self.catalog_write(|_| catalog::write::save_pipeline(&paths, place, &graph).map(|_| ()))
     }
 
-    fn pipeline_problems(&self, _graph: &GraphDef) -> Vec<Problem> {
-        vec![Problem { severity: Severity::Warning, node: None, message: format!("{NOT_WIRED}: the graph is not checked") }]
+    fn pipeline_problems(&self, graph: &GraphDef) -> Vec<Problem> {
+        let library = EngineLibrary { catalog: self.inner.catalog(), providers: self.inner.llm.providers() };
+        pipeline::validate::validate(graph, &library)
     }
 
     fn pipeline_versions(&self, id: &PipelineId) -> Result<Vec<PipelineVersion>> {
         self.inner.store.pipeline_versions(id)
     }
 
-    fn pipeline_changes(&self, _id: &PipelineId) -> Result<Vec<GraphChange>> {
-        bail!("{NOT_WIRED}")
+    fn pipeline_changes(&self, id: &PipelineId) -> Result<Vec<GraphChange>> {
+        let draft = self.pipeline(id).ok_or_else(|| anyhow!("There is no pipeline {id}"))?;
+        let live = match self.inner.store.live_pipeline_version(id)? {
+            Some(version) => crate::pipelines::parse_graph(&version.def_text)?,
+            None => GraphDef { nodes: Vec::new(), edges: Vec::new(), workdirs: Vec::new(), ..draft.clone() },
+        };
+        Ok(pipeline::diff::diff(&live, &draft))
     }
 
-    fn deploy_pipeline(&self, _id: &PipelineId, _note: &str) -> Result<PipelineVersion> {
-        bail!("{NOT_WIRED}")
+    fn deploy_pipeline(&self, id: &PipelineId, note: &str) -> Result<PipelineVersion> {
+        let draft = self.pipeline(id).ok_or_else(|| anyhow!("There is no pipeline {id}"))?;
+        let problems = self.pipeline_problems(&draft);
+        if !pipeline::validate::deployable(&problems) {
+            let errors: Vec<String> = problems
+                .iter()
+                .filter(|p| p.severity == Severity::Error)
+                .map(|p| match &p.node {
+                    Some(node) => format!("{node}: {}", p.message),
+                    None => p.message.clone(),
+                })
+                .collect();
+            bail!("{} cannot be deployed: {}", draft.name, errors.join("; "));
+        }
+        let text = crate::pipelines::graph_text(&draft)?;
+        let hash = fnv_hex(&text);
+        let version = self.inner.store.deploy_pipeline(id, &text, &hash, note.trim(), self.inner.now())?;
+        self.inner.publish(model::Event::CatalogChanged);
+        Ok(version)
     }
+}
+
+/// What validation checks against: the library, and the configured providers' models.
+struct EngineLibrary {
+    catalog: std::sync::Arc<catalog::Catalog>,
+    providers: Vec<llm::ProviderInfo>,
+}
+
+impl pipeline::validate::Library for EngineLibrary {
+    fn has_runnable(&self, reference: &RunnableRef) -> bool {
+        self.catalog.get(reference).is_some_and(|r| r.agent.is_some())
+    }
+
+    fn has_model(&self, model: &model::ModelRef) -> bool {
+        self.providers.iter().any(|p| p.id == model.provider)
+    }
+
+    fn has_pipeline(&self, id: &PipelineId) -> bool {
+        self.catalog.pipeline(id).is_some()
+    }
+}
+
+/// A stable hash of a definition text, as hex.
+fn fnv_hex(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Days in a period, for limits scaled to it.
