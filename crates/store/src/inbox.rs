@@ -11,7 +11,8 @@ const INBOX_COLUMNS: &str =
     "id, kind, target, title, summary, outcome, source, issue, session, run, links, created, read, archived";
 
 /// The SQL twin of `InboxItem::needs_person`.
-const NEEDS_PERSON: &str = "archived = 0 AND (kind <> 'report' OR read = 0)";
+/// [`model::InboxItem::needs_person`] in SQL.
+const NEEDS_PERSON: &str = "archived = 0 AND (kind <> 'report' OR outcome IN ('needs_review', 'blocked'))";
 
 /// The kind's name and the id it points at.
 fn split_kind(kind: &InboxKind) -> (&'static str, Option<&str>) {

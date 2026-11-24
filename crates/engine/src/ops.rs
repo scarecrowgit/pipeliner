@@ -41,6 +41,57 @@ fn ask_text(display: &ToolDisplay, tool: &str) -> String {
 }
 
 impl Engine {
+    /// Everything that waits for a person's decision, oldest first: the one rule behind
+    /// Home's "Waiting for you" tile, its "Needs you" list and the Inbox badge (which counts
+    /// the entries that target the Inbox).
+    ///
+    /// - a tool call waiting for permission, in a chat;
+    /// - a chat of the person's whose agent asked something (sessions pipeline nodes or
+    ///   sub-agents run are covered by their Inbox items);
+    /// - every Inbox item that [`InboxItem::needs_person`](model::InboxItem::needs_person):
+    ///   open reviews, agents' questions in runs, budget stops and failed runs not yet
+    ///   archived, and reports whose outcome asks for a decision. Reading an item changes
+    ///   none of this.
+    pub(crate) fn waiting_for_person(&self) -> Result<Vec<Need>> {
+        let inner = &self.inner;
+        let mut out = Vec::new();
+        for request in inner.asks.all() {
+            let source = inner.store.session(&request.session)?.map(|s| s.title).unwrap_or_default();
+            out.push(Need {
+                kind: NeedKind::Permission,
+                title: format!("{} {}", request.agent, ask_text(&request.display, &request.tool)),
+                source,
+                since: request.at,
+                target: Target::Session(request.session.clone()),
+            });
+        }
+        let waiting = inner.store.sessions(&SessionFilter {
+            state: Some(SessionState::Waiting),
+            archived: Some(false),
+            started_by: Some(store::StartedBy::Me),
+            ..Default::default()
+        })?;
+        for session in waiting.into_iter().filter(|s| !inner.live.is_running(&s.id)) {
+            out.push(Need {
+                kind: NeedKind::Question,
+                title: format!("{} asks you something", inner.runnable_name(&session.runnable, "The agent")),
+                source: session.title.clone(),
+                since: session.updated,
+                target: Target::Session(session.id),
+            });
+        }
+        for item in inner.store.inbox(false)?.into_iter().filter(|i| i.needs_person()) {
+            let kind = match item.kind {
+                InboxKind::Review { .. } | InboxKind::Report => NeedKind::Review,
+                InboxKind::Question { .. } => NeedKind::Question,
+                InboxKind::Failure => NeedKind::Failure,
+            };
+            out.push(Need { kind, title: item.title, source: item.source, since: item.created, target: Target::Inbox(item.id) });
+        }
+        out.sort_by_key(|n| n.since);
+        Ok(out)
+    }
+
     /// Stores the settings and tells everyone: waiting turns see a new slot count at once.
     fn save_settings(&self, settings: Settings) -> Result<()> {
         if settings.slots == 0 {
@@ -70,9 +121,7 @@ impl OpsApi for Engine {
         let now = inner.now();
         let from = period_start(now, period);
         let settings = inner.store.settings()?;
-        let pending = inner.asks.all();
-        let inbox = inner.store.inbox(false)?;
-        let waiting_items: Vec<i64> = inbox.iter().filter(|i| i.needs_person()).map(|i| i.created).collect();
+        let needs = self.waiting_for_person()?;
         let runs: u32 = inner.store.runs_by_runnable(from)?.iter().map(|(_, n)| n).sum();
         let sessions = inner.store.sessions(&SessionFilter { parent: store::ParentFilter::TopLevel, ..Default::default() })?;
         let recent: Vec<_> = sessions.iter().filter(|s| s.updated >= from && s.message_count > 0).collect();
@@ -85,8 +134,8 @@ impl OpsApi for Engine {
         Ok(HomeStats {
             working_now: inner.live.running().len() as u32,
             slots: settings.slots,
-            waiting: (pending.len() + waiting_items.len()) as u32,
-            oldest_waiting: pending.iter().map(|r| r.at).chain(waiting_items).min(),
+            waiting: needs.len() as u32,
+            oldest_waiting: needs.iter().map(|n| n.since).min(),
             runs,
             finished_percent: if total == 0 { 0 } else { base::fmt::percent(done as f64, total as f64) },
             spend_usd: inner.store.spend_between(from, now + 1)?.cost_usd,
@@ -96,43 +145,7 @@ impl OpsApi for Engine {
     }
 
     fn needs_you(&self) -> Result<Vec<Need>> {
-        let inner = &self.inner;
-        let mut out = Vec::new();
-        for request in inner.asks.all() {
-            let source = inner.store.session(&request.session)?.map(|s| s.title).unwrap_or_default();
-            out.push(Need {
-                kind: NeedKind::Permission,
-                title: format!("{} {}", request.agent, ask_text(&request.display, &request.tool)),
-                source,
-                since: request.at,
-                target: Target::Session(request.session.clone()),
-            });
-        }
-        let waiting = inner.store.sessions(&SessionFilter {
-            state: Some(SessionState::Waiting),
-            archived: Some(false),
-            ..Default::default()
-        })?;
-        for session in waiting.into_iter().filter(|s| !inner.live.is_running(&s.id)) {
-            out.push(Need {
-                kind: NeedKind::Question,
-                title: format!("{} asks you something", inner.runnable_name(&session.runnable, "The agent")),
-                source: session.title.clone(),
-                since: session.updated,
-                target: Target::Session(session.id),
-            });
-        }
-        for item in inner.store.inbox(false)?.into_iter().filter(|i| i.needs_person()) {
-            let kind = match item.kind {
-                InboxKind::Review { .. } => NeedKind::Review,
-                InboxKind::Question { .. } => NeedKind::Question,
-                InboxKind::Failure => NeedKind::Failure,
-                InboxKind::Report => continue,
-            };
-            out.push(Need { kind, title: item.title, source: item.source, since: item.created, target: Target::Inbox(item.id) });
-        }
-        out.sort_by_key(|n| n.since);
-        Ok(out)
+        self.waiting_for_person()
     }
 
     fn working_now(&self) -> Result<Vec<Working>> {

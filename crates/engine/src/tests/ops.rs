@@ -389,3 +389,62 @@ fn project_counts_schedules_and_spend_of_spawned_sessions() {
     fx.engine.save_autopilot(off).unwrap();
     assert_eq!(fx.engine.next_scheduled_runs().unwrap(), vec![(daily.target.clone(), NOW + 10 * MIN)]);
 }
+
+// ---------------------------------------------------------------- what waits for a person
+
+fn inbox_item(id: &str, kind: InboxKind, outcome: Option<Outcome>, created: i64) -> model::InboxItem {
+    model::InboxItem {
+        id: model::InboxId::new(id),
+        kind,
+        title: id.into(),
+        summary: String::new(),
+        outcome,
+        source: "Old app".into(),
+        issue: None,
+        session: None,
+        run: None,
+        links: Vec::new(),
+        created,
+        read: false,
+        archived: false,
+    }
+}
+
+#[test]
+fn the_waiting_tile_the_needs_list_and_the_inbox_agree_and_reading_changes_nothing() {
+    use crate::api::{InboxApi, NeedKind, Period, Target};
+    let fx = Fx::new();
+    let store = &fx.engine.inner.store;
+    let items = [
+        // Imported pull-request reports: one asks for a review, one only tells.
+        inbox_item("pr-review", InboxKind::Report, Some(Outcome::NeedsReview), NOW - 5 * DAY),
+        inbox_item("pr-merged", InboxKind::Report, Some(Outcome::Done), NOW - 4 * DAY),
+        inbox_item("review:v1", InboxKind::Review { review: model::ReviewId::new("v1") }, Some(Outcome::NeedsReview), NOW - HOUR),
+        inbox_item("ask:r1", InboxKind::Question { request: model::RequestId::new("q") }, Some(Outcome::Blocked), NOW - 2 * HOUR),
+        inbox_item("failed:r2", InboxKind::Failure, Some(Outcome::Failed), NOW - 3 * HOUR),
+    ];
+    for item in &items {
+        store.upsert_inbox_item(item).unwrap();
+    }
+    let check = |expected: usize| {
+        let needs = fx.engine.needs_you().unwrap();
+        let stats = fx.engine.home_stats(Period::Today).unwrap();
+        let badge = fx.engine.inbox(false).unwrap().iter().filter(|i| i.needs_person()).count();
+        assert_eq!(needs.len(), expected, "{needs:#?}");
+        assert_eq!(stats.waiting as usize, expected);
+        assert_eq!(badge, needs.iter().filter(|n| matches!(n.target, Target::Inbox(_))).count());
+        assert_eq!(stats.oldest_waiting, needs.first().map(|n| n.since));
+        needs
+    };
+    let needs = check(4);
+    assert_eq!(needs[0].target, Target::Inbox(model::InboxId::new("pr-review")), "the oldest first, opening its item");
+    assert_eq!(needs[0].kind, NeedKind::Review);
+    assert!(!needs.iter().any(|n| n.target == Target::Inbox(model::InboxId::new("pr-merged"))));
+
+    for item in &items {
+        fx.engine.set_inbox_read(&item.id, true).unwrap();
+    }
+    check(4);
+    fx.engine.archive_inbox(&model::InboxId::new("failed:r2"), true).unwrap();
+    check(3);
+}

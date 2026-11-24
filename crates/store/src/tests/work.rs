@@ -254,24 +254,26 @@ fn the_waiting_count_matches_the_model() {
     let mut expected = 0;
     let mut n = 0;
     for kind in kinds {
-        for read in [false, true] {
-            for archived in [false, true] {
-                let mut it = item(&format!("i{n}"), kind.clone(), n);
-                it.read = read;
-                it.archived = archived;
-                expected += u32::from(it.needs_person());
-                store.upsert_inbox_item(&it).unwrap();
-                n += 1;
+        for outcome in [Some(Outcome::NeedsReview), Some(Outcome::Done), None] {
+            for read in [false, true] {
+                for archived in [false, true] {
+                    let mut it = item(&format!("i{n}"), kind.clone(), n);
+                    (it.read, it.archived, it.outcome) = (read, archived, outcome);
+                    expected += u32::from(it.needs_person());
+                    store.upsert_inbox_item(&it).unwrap();
+                    n += 1;
+                }
             }
         }
     }
-    assert_eq!(expected, 7);
+    // Reviews, questions and failures whatever their outcome; reports that need review.
+    assert_eq!(expected, 3 * 6 + 2);
     assert_eq!(store.inbox_needs_person().unwrap(), expected);
-    // Reading a report takes it off the count; reading a question does not.
-    store.set_inbox_read(&InboxId::new("i4"), true).unwrap();
-    assert_eq!(store.inbox_needs_person().unwrap(), expected - 1);
-    store.set_inbox_read(&InboxId::new("i8"), true).unwrap();
-    assert_eq!(store.inbox_needs_person().unwrap(), expected - 1);
+    // Reading changes nothing: waiting is about a decision.
+    for id in ["i12", "i14", "i24"] {
+        store.set_inbox_read(&InboxId::new(id), true).unwrap();
+    }
+    assert_eq!(store.inbox_needs_person().unwrap(), expected);
 }
 
 #[test]

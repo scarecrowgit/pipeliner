@@ -62,12 +62,15 @@ pub struct InboxItem {
 }
 
 impl InboxItem {
-    /// Counts toward "N waiting": a person has to do something.
+    /// Waits for a person's decision, and so counts toward "N waiting" everywhere (Home's
+    /// tile and list, the Inbox badge): a review, a question, a failure or budget stop not yet
+    /// acknowledged (archived), or a report whose outcome asks for one ("needs review",
+    /// "blocked"). Reading an item does not change it; unread is separate.
     pub fn needs_person(&self) -> bool {
         !self.archived
             && match self.kind {
                 InboxKind::Review { .. } | InboxKind::Question { .. } | InboxKind::Failure => true,
-                InboxKind::Report => !self.read,
+                InboxKind::Report => matches!(self.outcome, Some(Outcome::NeedsReview | Outcome::Blocked)),
             }
     }
 }
