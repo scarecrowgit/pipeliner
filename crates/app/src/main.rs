@@ -35,8 +35,10 @@ fn parse_args() -> Result<Args> {
     Ok(Args { fixture })
 }
 
-/// The backend the window runs over, and the fixture to start when there is one.
-fn backend(args: &Args) -> Result<(Arc<dyn Api>, Option<Arc<FixtureApi>>)> {
+/// The backend the window runs over, and the fixture whose scripts to start when there is one.
+type Backend = (Arc<dyn Api>, Option<Arc<FixtureApi>>);
+
+fn backend(args: &Args) -> Result<Backend> {
     match &args.fixture {
         Some(name) => {
             let api = FixtureApi::scenario(name)
