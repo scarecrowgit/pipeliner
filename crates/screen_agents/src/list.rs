@@ -157,15 +157,13 @@ impl AgentsView {
             .children(tabs)
             .child(grow())
             .child(
-                // The mockup's field is 240 wide with small text; the kit's field draws body
-                // text, so it is as wide as its placeholder needs, and gives way to the tabs in
-                // a narrow window.
+                // The mockup's small field; it gives way to the tabs in a narrow window.
                 div()
                     .flex_shrink()
                     .min_w(px(SEARCH_MIN_W))
                     .w(px(SEARCH_W))
                     .type_style(LABEL)
-                    .child(text_field(SEARCH, &self.search).small().icon(IconName::Search).kbd("F"))
+                    .child(text_field(SEARCH, &self.search).compact().icon(IconName::Search).kbd("F"))
                     .probe(SEARCH),
             )
     }

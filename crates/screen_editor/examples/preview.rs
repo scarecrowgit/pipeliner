@@ -1,7 +1,10 @@
 //! The pipeline editor over the fixture world, in a window, under a stand-in for the shell's
 //! header (crumbs, the view's badges and actions).
 //!
-//! `cargo run -p screen_editor --example preview [-- --fixture pipeline-editor]`
+//! `cargo run -p screen_editor --example preview [-- --fixture pipeline-editor] [--log-lines]`
+//!
+//! `--log-lines` writes a few lines to the log of the run on show (`run-test-42`) shortly
+//! after start, for checking the Log tab: the fixture's test runs have no log of their own.
 
 use std::sync::Arc;
 
@@ -15,8 +18,11 @@ use ui::prelude::*;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut fixture = "pipeline-editor".to_string();
+    let mut log_lines = false;
     while let Some(arg) = args.next() {
-        if arg == "--fixture"
+        if arg == "--log-lines" {
+            log_lines = true;
+        } else if arg == "--fixture"
             && let Some(name) = args.next()
         {
             fixture = name;
@@ -25,7 +31,10 @@ fn main() {
     ui::run_app("Pipeline editor", 1440., 1060., move |window, cx| {
         ui_rich::bind_keys(cx);
         let api = Arc::new(FixtureApi::scenario(&fixture).unwrap_or_default());
-        Hub::new_fixture(api, cx);
+        Hub::new_fixture(api.clone(), cx);
+        if log_lines {
+            write_log(api, cx);
+        }
         let (pipeline, node) = match fixtures::start_route(&fixture) {
             Some((Route::Editor { pipeline, node }, _)) => (pipeline, node),
             _ => (PipelineId::new("pay-triage"), None),
@@ -33,6 +42,38 @@ fn main() {
         hub::navigate(Route::Editor { pipeline: pipeline.clone(), node: node.clone() }, cx);
         cx.new(|cx| Stage::new(pipeline, node, window, cx))
     });
+}
+
+/// Sample lines in the log of the run on show, once the editor is up.
+fn write_log(api: Arc<FixtureApi>, cx: &mut gpui::App) {
+    use hub::api::{Event, RunLogLine};
+    use hub::model::{LogLevel, NodeId, RunId};
+    const LINES: [&str; 8] = [
+        "worktree ready · fix/PAY-1423",
+        "read src/charges/retry.ts",
+        "grep idempotencyKey",
+        "bash bun test src/charges",
+        "1 test failed: retry charges twice",
+        "edit src/charges/retry.ts",
+        "bash bun test src/charges",
+        "all 14 tests passed",
+    ];
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(std::time::Duration::from_millis(400)).await;
+        let now = base::time::now_ms();
+        for (ix, text) in LINES.iter().enumerate() {
+            let line = RunLogLine {
+                seq: ix as u64 + 1,
+                at: now,
+                node: Some(NodeId::new("fixer")),
+                variant: 0,
+                level: if text.starts_with("bash") || text.starts_with("read") || text.starts_with("grep") { LogLevel::Tool } else { LogLevel::Info },
+                text: (*text).to_string(),
+            };
+            api.emit(Event::RunLog { run: RunId::new("run-test-42"), line });
+        }
+    })
+    .detach();
 }
 
 /// The shell's part around the view: a header bar over the content, in an inset frame.

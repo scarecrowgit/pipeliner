@@ -5,7 +5,9 @@
 //!
 //! The text of a line wraps and can be selected and copied. Its view is made when the row is
 //! first drawn and kept by the line's number while the row is drawn; views of rows long out
-//! of sight are dropped, so a long log costs what is on screen.
+//! of sight are dropped, so a long log costs what is on screen. All line views share one
+//! selection ([`SelectionGroup`], keyed by line number): a drag over several lines selects
+//! them all and a copy gives them one per line, rows out of sight included.
 //!
 //! Probes: `test-run-log` (the list), `log-earlier`, `log-only-node`; debug selectors
 //! `log-text-<n>` on the text of the n-th row as listed.
@@ -13,13 +15,13 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, App, Context, Entity, IntoElement, ListAlignment, ListState, Task, Window, div, list, prelude::*, px,
+    AnyElement, App, Context, Entity, IntoElement, ListAlignment, ListState, SharedString, Task, Window, div, list, prelude::*, px,
 };
 use hub::RunLogEvent;
 use hub::model::{LogLevel, NodeId, RunLogLine};
 use ui::dev::Probe;
 use ui::prelude::*;
-use ui_rich::markdown::Markdown;
+use ui_rich::markdown::{Markdown, SelectionGroup};
 
 use super::EditorView;
 use crate::Selection;
@@ -52,6 +54,10 @@ pub(super) struct LogState {
     /// Text views by line number, and the frame each was last drawn in.
     texts: HashMap<u64, (Entity<Markdown>, u64)>,
     frame: u64,
+    /// One selection across the lines' views.
+    group: SelectionGroup,
+    /// The rows the group was last given texts for: first and last line number and count.
+    group_rows: Option<(u64, u64, usize)>,
 }
 
 impl Default for LogState {
@@ -64,6 +70,8 @@ impl Default for LogState {
             only_node: false,
             texts: HashMap::new(),
             frame: 0,
+            group: SelectionGroup::new(),
+            group_rows: None,
         }
     }
 }
@@ -211,7 +219,9 @@ impl EditorView {
             view.update(cx, |view, cx| view.set_text(line.text.clone(), cx));
             return view;
         }
-        let view = cx.new(|cx| Markdown::verbatim(line.text.clone(), cx).type_style(style).color(color));
+        let group = &self.test.log.group;
+        let key = usize::try_from(line.seq).unwrap_or(usize::MAX);
+        let view = cx.new(|cx| Markdown::verbatim(line.text.clone(), cx).type_style(style).color(color).group(group, key));
         self.test.log.texts.insert(line.seq, (view.clone(), frame));
         view
     }
@@ -277,7 +287,16 @@ impl EditorView {
                 .probe("test-run-log")
                 .into_any_element();
         }
-        let now: Vec<u64> = self.log_lines(cx).iter().map(|line| line.seq).collect();
+        let lines = self.log_lines(cx);
+        let now: Vec<u64> = lines.iter().map(|line| line.seq).collect();
+        // The group copies rows that have no view from these texts.
+        let shape = now.first().zip(now.last()).map(|(a, b)| (*a, *b, now.len()));
+        if shape != self.test.log.group_rows {
+            let texts: Vec<(usize, SharedString)> =
+                lines.iter().map(|l| (usize::try_from(l.seq).unwrap_or(usize::MAX), SharedString::from(l.text.clone()))).collect();
+            self.test.log.group.set_texts(texts);
+            self.test.log.group_rows = shape;
+        }
         let count = now.len();
         self.test.log.sync(now);
         self.test.log.forget_texts(cx);

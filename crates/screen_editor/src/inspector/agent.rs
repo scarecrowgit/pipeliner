@@ -17,9 +17,6 @@ use super::grants::Owner;
 use super::{InspectorView, ops};
 use crate::Selection;
 
-/// The longest path in a file tag: what fits the panel in mono 11px.
-const TAG_CHARS: usize = 44;
-
 impl InspectorView {
     /// The library agent behind `reference`, if the catalog has it.
     fn library_def(&self, reference: Option<&RunnableRef>, cx: &gpui::App) -> Option<AgentDef> {
@@ -208,8 +205,8 @@ impl InspectorView {
                 _ => None,
             })
             .flat_map(|path| path.split(", ").map(str::to_string).collect::<Vec<_>>())
-            // The tag does not shrink: a long path is cut to what fits the panel.
-            .map(|path| Tag::new(base::fmt::truncate_chars(&path, TAG_CHARS)).mono().into_any_element())
+            // A long path loses its middle to fit the panel.
+            .map(|path| Tag::new(path).mono().shrinks_in_middle().into_any_element())
             .collect();
         let add_in = Button::new("insp-files-in-add", "Add file")
             .ghost()

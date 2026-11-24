@@ -21,7 +21,7 @@ fn resize(cx: &mut VisualTestContext, width: f32) {
     cx.run_until_parked();
 }
 
-fn bounds(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
+pub(super) fn bounds(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
     cx.run_until_parked();
     cx.debug_bounds(leak(selector)).unwrap_or_else(|| panic!("`{selector}` was not laid out"))
 }

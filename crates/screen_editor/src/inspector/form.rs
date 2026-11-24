@@ -249,7 +249,7 @@ pub(crate) fn removable_tag(
     let id: SharedString = id.into();
     let text: SharedString = text.into();
     let (bg, fg) = match tone {
-        TagTone::Neutral => (SURFACE_HOVER, TEXT_SECONDARY),
+        TagTone::Neutral => (TAG_FILL, TEXT_SECONDARY),
         TagTone::Spawn => (SPAWN_SOFT, SPAWN_TEXT),
         TagTone::Accent => (ACCENT_SOFT, ACCENT_TEXT),
     };

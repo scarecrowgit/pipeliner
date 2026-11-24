@@ -619,6 +619,6 @@ fn ticks(total_ms: u64) -> Vec<Tick> {
     let step = TICK_STEPS.iter().copied().find(|step| secs / step <= MAX_TICKS).unwrap_or(secs.max(1));
     time_ticks(total_ms, step * 1000)
         .into_iter()
-        .map(|(at, ms)| Tick::new(at, SharedString::from(base::fmt::duration(ms / 1000))))
+        .map(|(at, ms)| Tick::new(at, SharedString::from(base::fmt::duration_clock(ms / 1000))))
         .collect()
 }

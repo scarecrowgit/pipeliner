@@ -136,7 +136,20 @@ async fn a_log_line_can_be_copied_and_a_long_one_wraps(cx: &mut TestAppContext) 
     let Some(text) = cx.debug_bounds("log-text-2") else { panic!("the long line was not laid out") };
     assert!(text.right() <= editor.right() - gpui::px(ui::theme::PANEL_WIDTH), "{text:?}");
     assert!(text.size.height > gpui::px(ui::theme::LABEL.line), "{text:?}");
-    assert_eq!(super::narrow::drag_and_copy(cx, "log-text-2"), Some(long));
+    assert_eq!(super::narrow::drag_and_copy(cx, "log-text-2"), Some(long.clone()));
+    // A drag from the first line into the third selects across all three; a copy gives them
+    // one per line.
+    let (first, third) = (super::narrow::bounds(cx, "log-text-0"), super::narrow::bounds(cx, "log-text-2"));
+    let from = gpui::point(first.left() + gpui::px(1.), first.top() + gpui::px(4.));
+    let to = gpui::point(third.left() + gpui::px(40.), third.top() + gpui::px(4.));
+    super::narrow::drag(cx, from, to);
+    cx.simulate_keystrokes("ctrl-c");
+    cx.run_until_parked();
+    let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
+    let lines: Vec<&str> = copied.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{copied:?}");
+    assert_eq!(&lines[..2], &["worktree ready", "read src/refunds.ts"], "{copied:?}");
+    assert!(long.starts_with(lines[2]) && !lines[2].is_empty(), "{copied:?}");
 }
 
 #[gpui::test]
