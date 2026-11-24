@@ -450,3 +450,154 @@ fn no_approval_reaches_past_the_depth_ceiling() {
     fx.run(Input::Item("Dig".into()));
     assert_eq!(result_of(&fx.transcript(), "p1"), ("Bottom.".to_string(), false));
 }
+
+#[test]
+fn a_sub_agent_gets_no_more_than_its_parent_has_left() {
+    let mut fx = spawner();
+    fx.spec.model = ModelRef::new("scripted", "claude-sonnet-5");
+    // No cap of its own for sub-agents: only the parent's budget limits them.
+    fx.spec.budget_usd = Some(0.006);
+    let usage = Usage { input: 1_000, output: 200, ..Default::default() };
+    fx.llm.push(Reply::tool("p1", "spawn_agent", json!({"task": "Spend"})).with_usage(usage));
+    // The parent has 0.002 left; the child's first call costs 0.004.
+    fx.llm.push(Reply::tool("c1", "todo_write", json!({"items": []})).with_usage(usage));
+    fx.llm.push(Reply::text("Never said.").with_usage(usage));
+    let (outcome, _) = fx.run(say("Go"));
+
+    assert_eq!(result_of(&fx.transcript(), "p1"), ("[The sub-agent spent its budget before it finished.]".to_string(), true));
+    assert_eq!(outcome.stop, StopCause::Budget);
+    assert_eq!((fx.llm.call_count(), fx.llm.remaining()), (2, 1), "the child went on spending");
+
+    // With nothing left there is no sub-agent at all: the call that asks for one spent the rest.
+    let mut fx = spawner();
+    fx.spec.model = ModelRef::new("scripted", "claude-sonnet-5");
+    fx.spec.budget_usd = Some(0.004);
+    fx.llm.push(Reply::tool("p1", "spawn_agent", json!({"task": "Spend"})).with_usage(usage));
+    let (outcome, _) = fx.run(say("Go"));
+    assert_eq!(
+        result_of(&fx.transcript(), "p1"),
+        ("The budget is spent; this sub-agent was not created.".to_string(), true)
+    );
+    assert!(fx.host.children(fx.session()).is_empty());
+    assert_eq!(outcome.stop, StopCause::Budget);
+}
+
+#[test]
+fn a_budget_above_is_checked_before_every_model_call_below() {
+    let mut fx = spawner();
+    fx.spec.budget_usd = Some(1.0);
+    fx.spec.spawn.budget_usd = Some(0.5);
+    fx.llm.push(Reply::tool("p1", "spawn_agent", json!({"task": "Work"})));
+    fx.llm.push(Reply::tool("c1", "todo_write", json!({"items": []})));
+    fx.llm.push(Reply::text("Never said."));
+    let host = &fx.host;
+    let root = fx.session().clone();
+    let mut sink = |session: &SessionId, event: AgentEvent| {
+        // While the child works, the rest of the tree spends the root's budget. The child's
+        // own half dollar is untouched.
+        if *session == child(1) && matches!(event, AgentEvent::ToolFinished { .. }) {
+            host.add_spend(&root, 2.0);
+        }
+    };
+    let outcome = fx.run_into(&AllowAll, say("Go"), &mut sink);
+
+    assert_eq!(result_of(&fx.transcript(), "p1"), ("[The sub-agent spent its budget before it finished.]".to_string(), true));
+    assert_eq!(outcome.stop, StopCause::Budget);
+    assert_eq!((fx.llm.call_count(), fx.llm.remaining()), (2, 1), "the child spent past the root's budget");
+}
+
+#[test]
+fn a_tree_has_one_count_of_live_sub_agents_for_all_its_sessions() {
+    let mut fx = spawner();
+    // Policies that would allow anything: every sub-agent inherits them.
+    fx.spec.spawn.per_run = 100;
+    fx.spec.spawn.alive_at_once = 100;
+    fx.llm.push(Reply::tool("p1", "spawn_agent", json!({"task": "Fan out"})));
+    let mut fan = Reply::new();
+    for n in 0..16 {
+        fan = fan.and_tool(format!("c{n}"), "spawn_agent", json!({"task": format!("Leaf {n}")}));
+    }
+    fx.llm.push(fan);
+    // With their parent the sixteen would be seventeen alive: the last one is refused.
+    for _ in 0..15 {
+        fx.llm.push(Reply::text("Leaf done."));
+    }
+    fx.llm.push(Reply::text("Fanned out."));
+    fx.llm.push(Reply::text("Done."));
+    let (outcome, _) = fx.run(say("Go"));
+
+    assert_eq!(outcome.stop, StopCause::Finished);
+    let fanned = fx.host.transcript(&child(1));
+    assert_eq!(result_of(&fanned, "c14"), ("Leaf done.".to_string(), false));
+    let (refused, is_error) = result_of(&fanned, "c15");
+    assert!(is_error && refused.starts_with("16 sub-agents of this run are working right now"), "{refused}");
+    assert_eq!(fx.host.children(&child(1)).len(), 15);
+    assert_paired(&fanned);
+    assert_eq!(fx.llm.remaining(), 0);
+}
+
+#[test]
+fn a_tree_stops_creating_sub_agents_at_its_ceiling() {
+    let mut fx = spawner();
+    fx.spec.spawn.per_run = 100;
+    fx.spec.spawn.alive_at_once = 100;
+    for round in 0..4 {
+        let mut fan = Reply::new();
+        for n in 0..16 {
+            fan = fan.and_tool(format!("r{round}c{n}"), "spawn_agent", json!({"task": "Leaf"}));
+        }
+        fx.llm.push(fan);
+        for _ in 0..16 {
+            fx.llm.push(Reply::text("Leaf done."));
+        }
+    }
+    fx.llm.push(Reply::tool("last", "spawn_agent", json!({"task": "One too many"})));
+    fx.llm.push(Reply::text("Done."));
+    let (outcome, _) = fx.run(say("Go"));
+
+    assert_eq!(outcome.stop, StopCause::Finished);
+    assert_eq!(fx.host.children(fx.session()).len(), 64);
+    let (refused, is_error) = result_of(&fx.transcript(), "last");
+    assert!(is_error && refused.starts_with("This run and its sub-agents have created 64 sub-agents in all"), "{refused}");
+    assert_paired(&fx.transcript());
+}
+
+#[test]
+fn what_a_crashed_sub_agent_spent_still_counts_for_its_parent() {
+    let mut fx = spawner();
+    fx.spec.model = ModelRef::new("scripted", "claude-sonnet-5");
+    let usage = Usage { input: 1_000, output: 200, ..Default::default() };
+    let llm = FnLlm(move |request: &ChatRequest, _: &CancelToken, on_event: &mut dyn FnMut(StreamEvent)| {
+        let call = |name: &str, input: Value| StreamEvent::ToolUse { id: "t".into(), name: name.into(), input, error: None };
+        match (request.system.starts_with("You are a sub-agent"), request.messages.len()) {
+            (true, 1) => {
+                on_event(StreamEvent::Usage(usage));
+                on_event(call("todo_write", json!({"items": []})));
+                on_event(StreamEvent::Stop(model::StopReason::ToolUse));
+            }
+            (true, _) => panic!("the model client fell over"),
+            (false, 1) => {
+                on_event(call("spawn_agent", json!({"task": "Work"})));
+                on_event(StreamEvent::Stop(model::StopReason::ToolUse));
+            }
+            (false, _) => {
+                on_event(StreamEvent::TextDelta("It crashed.".into()));
+                on_event(StreamEvent::Stop(model::StopReason::EndTurn));
+            }
+        }
+        Ok(())
+    });
+    let mut log = EventLog::new();
+    let outcome = run(&fx.spec, &fx.env, &fx.deps(&llm, &AllowAll), say("Go"), &mut log, &fx.cancel);
+
+    assert_eq!(outcome.stop, StopCause::Finished);
+    assert_eq!(
+        result_of(&fx.transcript(), "t"),
+        ("[The sub-agent failed: the sub-agent crashed (the model client fell over)]".to_string(), true)
+    );
+    // The child's call is in the ledger; the parent's own calls reported no usage.
+    assert!((outcome.totals.cost_usd - 0.004).abs() < 1e-12, "{}", outcome.totals.cost_usd);
+    assert!(log.of(fx.session()).iter().any(|e| {
+        matches!(e, AgentEvent::SubagentFinished { ok: false, cost_usd, .. } if (cost_usd - 0.004).abs() < 1e-12)
+    }));
+}

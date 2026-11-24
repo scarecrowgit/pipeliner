@@ -143,6 +143,10 @@ impl PermissionGate for RuleGate<'_> {
             return None;
         }
         let decision = (self.ask)(request, cancel)?;
+        // An answer that crossed the cancel is nobody's answer: it allows nothing and adds no rule.
+        if cancel.is_cancelled() {
+            return None;
+        }
         if let PermissionDecision::AllowAlways { rule } = &decision {
             self.rules.add(rule.clone());
         }

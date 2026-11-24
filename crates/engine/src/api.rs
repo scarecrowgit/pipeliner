@@ -17,7 +17,10 @@ use anyhow::Result;
 pub use catalog::{LoadProblem, Place, Template};
 pub use llm::ProviderInfo;
 pub use model::*;
-pub use store::{FacetCounts, IndexStats, MessageSnippet, SearchResult, SessionFilter, SessionHit, SessionQuery, StartedBy};
+pub use store::{
+    FacetCounts, IndexStats, MessageSnippet, ParentFilter, SearchResult, SessionFilter, SessionHit, SessionQuery,
+    StartedBy,
+};
 pub use vcs::{FolderInfo, RepoFacts};
 
 /// Everything the app can do. Implemented by the engine, and by a fixture backend for previews.

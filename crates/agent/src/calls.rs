@@ -210,6 +210,7 @@ impl Session<'_> {
                     session: self.env.session.clone(),
                     agent: self.spec.name.clone(),
                     tool: name.to_string(),
+                    call_id: Some(call.id.clone()),
                     class,
                     display,
                     policy: policy_label(name, RuleDecision::Ask),
@@ -348,16 +349,19 @@ impl Session<'_> {
 
     /// Adds changed files to the session's list: line counts of one path add up.
     fn record_files(&mut self, changed: &[FileChange]) -> Result<()> {
+        let mut files = self.files.clone();
         for change in changed {
-            match self.files.iter_mut().find(|known| known.path == change.path) {
+            match files.iter_mut().find(|known| known.path == change.path) {
                 Some(known) => {
                     known.added += change.added;
                     known.removed += change.removed;
                 }
-                None => self.files.push(change.clone()),
+                None => files.push(change.clone()),
             }
         }
-        self.deps.host.set_files(&self.env.session, &self.files)?;
+        // The store first: what the run reports is what the next run will read.
+        self.deps.host.set_files(&self.env.session, &files)?;
+        self.files = files;
         self.emit(AgentEvent::FilesChanged { files: self.files.clone() });
         Ok(())
     }

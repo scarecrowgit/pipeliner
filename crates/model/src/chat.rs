@@ -482,6 +482,10 @@ pub struct PermissionRequest {
     /// Display name of who asks: "Build".
     pub agent: String,
     pub tool: String,
+    /// The tool call that waits for the answer, so the transcript can show the question on
+    /// its row. `None` when the question is not about a call the transcript shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     pub class: ToolClass,
     pub display: ToolDisplay,
     /// Why it asks, in policy words: "bash = ask".

@@ -5,7 +5,7 @@
 //! are stored in one message right after, so at any moment the stored conversation is either
 //! valid or one "interrupted" result short of it, which the next run supplies.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -28,6 +28,7 @@ use crate::sink::Emit;
 use crate::spec::{AgentDeps, AgentEnv, AgentOutcome, AgentSpec, Finish, Input, Limits, StopCause, Totals, UserInput};
 use crate::stream::{Call, Collector, Live, Reply};
 use crate::toolbox::Toolbox;
+use crate::tree::{Cap, Lineage, Tree};
 
 /// Times a reply cut off at the output limit is asked to continue within one run.
 const MAX_CONTINUES: u32 = 2;
@@ -77,6 +78,12 @@ pub(crate) struct Session<'a> {
     /// The question of an `ask_user` call of the current step.
     pub question: Option<String>,
     prs: Vec<String>,
+    /// The counters shared with every other run of the tree.
+    pub tree: &'a Tree,
+    /// The budgets this run works under: those above it, then its own.
+    pub caps: Vec<Cap>,
+    /// A model call the ledger did not take. The run fails with it once the reply is stored.
+    ledger_failure: Option<anyhow::Error>,
 }
 
 /// Runs the loop with a sink that sub-agents' threads can share. See [`crate::run`].
@@ -87,9 +94,10 @@ pub(crate) fn run_shared(
     input: Input,
     sink: &dyn Emit,
     cancel: &CancelToken,
+    lineage: Lineage<'_>,
 ) -> AgentOutcome {
     let started = deps.clock.now_ms();
-    let mut session = match Session::open(spec, env, deps, sink, cancel) {
+    let mut session = match Session::open(spec, env, deps, sink, cancel, lineage) {
         Ok(session) => session,
         Err(error) => {
             let error = format!("{error:#}");
@@ -114,8 +122,11 @@ impl<'a> Session<'a> {
         deps: &'a AgentDeps<'a>,
         sink: &'a dyn Emit,
         cancel: &'a CancelToken,
+        lineage: Lineage<'a>,
     ) -> Result<Self> {
         let host = deps.host;
+        let mut caps = lineage.caps.to_vec();
+        caps.extend(spec.budget_usd.map(|usd| Cap { session: env.session.clone(), usd }));
         let messages = host.messages(&env.session)?;
         let offered_skills = skill::offered(&spec.skills, deps.skills);
         let mut toolbox = Toolbox::build(spec, env, deps, &offered_skills);
@@ -150,6 +161,9 @@ impl<'a> Session<'a> {
             payload: None,
             question: None,
             prs: Vec::new(),
+            tree: lineage.tree,
+            caps,
+            ledger_failure: None,
         })
     }
 
@@ -174,7 +188,9 @@ impl<'a> Session<'a> {
             Input::Item(text) => self.append_user(UserInput::text(text))?,
             Input::Continue => {}
             Input::Compact => {
-                return Ok(match self.compact(true)? {
+                let compaction = self.compact(true)?;
+                self.ledger_checked()?;
+                return Ok(match compaction {
                     Compaction::Cancelled => StopCause::Cancelled,
                     Compaction::Done => StopCause::Finished,
                     Compaction::Nothing => {
@@ -199,9 +215,7 @@ impl<'a> Session<'a> {
             if self.cancel.is_cancelled() {
                 return Ok(StopCause::Cancelled);
             }
-            for queued in self.deps.host.take_queued(&self.env.session) {
-                self.append_user(queued)?;
-            }
+            self.store_queued()?;
             if self.steps >= self.spec.step_limit() {
                 let text = format!(
                     "Stopped after {}. Send a message to let it continue.",
@@ -210,17 +224,11 @@ impl<'a> Session<'a> {
                 self.emit(AgentEvent::Notice { text });
                 return Ok(StopCause::StepLimit);
             }
-            if let Some(budget) = self.spec.budget_usd {
-                let spent = self.deps.host.spent(&self.env.session)?;
-                if spent >= budget {
-                    let text = format!(
-                        "Stopped: the budget of {} is spent ({}).",
-                        base::fmt::cost(budget),
-                        base::fmt::cost(spent)
-                    );
-                    self.emit(AgentEvent::Notice { text });
-                    return Ok(StopCause::Budget);
-                }
+            if let Some((budget, spent)) = self.spent_budget()? {
+                let text =
+                    format!("Stopped: the budget of {} is spent ({}).", base::fmt::cost(budget), base::fmt::cost(spent));
+                self.emit(AgentEvent::Notice { text });
+                return Ok(StopCause::Budget);
             }
             if self.compact_at_threshold() {
                 return Ok(StopCause::Cancelled);
@@ -238,6 +246,11 @@ impl<'a> Session<'a> {
                 let model = Some(self.spec.model.clone());
                 self.commit(message, reply.usage.unwrap_or_default(), reply.cost_usd, model)?;
             }
+            // The reply is stored: now a model call the ledger refused may end the run.
+            if self.ledger_failure.is_some() {
+                self.answer_interrupted(&reply.calls)?;
+                self.ledger_checked()?;
+            }
             if cancelled {
                 self.answer_interrupted(&reply.calls)?;
                 return Ok(StopCause::Cancelled);
@@ -253,11 +266,7 @@ impl<'a> Session<'a> {
                     )?;
                     continue;
                 }
-                let queued = self.deps.host.take_queued(&self.env.session);
-                if !queued.is_empty() {
-                    for user in queued {
-                        self.append_user(user)?;
-                    }
+                if self.store_queued()? {
                     continue;
                 }
                 if let Finish::Tool(tool) = &self.spec.finish
@@ -283,6 +292,50 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Stores the messages a person sent while the agent was busy. Returns whether there were
+    /// any. When the store fails, those not stored go back to the front of the queue.
+    fn store_queued(&mut self) -> Result<bool> {
+        let mut queued: VecDeque<UserInput> = self.deps.host.take_queued(&self.env.session).into();
+        let any = !queued.is_empty();
+        while let Some(input) = queued.pop_front() {
+            if let Err(error) = self.append_user(input.clone()) {
+                queued.push_front(input);
+                self.deps.host.requeue(&self.env.session, queued.into());
+                return Err(error);
+            }
+        }
+        Ok(any)
+    }
+
+    /// The first budget this run works under that is spent, with what was spent of it.
+    fn spent_budget(&self) -> Result<Option<(f64, f64)>> {
+        for cap in &self.caps {
+            let spent = self.deps.host.spent(&cap.session)?;
+            if spent >= cap.usd {
+                return Ok(Some((cap.usd, spent)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// What is left under the tightest budget this run works under; `None` without a budget.
+    pub(crate) fn remaining_budget(&self) -> Result<Option<f64>> {
+        let mut left: Option<f64> = None;
+        for cap in &self.caps {
+            let here = cap.usd - self.deps.host.spent(&cap.session)?;
+            left = Some(left.map_or(here, |least| least.min(here)));
+        }
+        Ok(left)
+    }
+
+    /// Fails with the model call the ledger did not take, if there was one.
+    fn ledger_checked(&mut self) -> Result<()> {
+        match self.ledger_failure.take() {
+            Some(error) => Err(error.context("A model call could not be added to the spend ledger")),
+            None => Ok(()),
+        }
+    }
+
     /// Compacts when the last request filled more of the context window than the limits allow.
     /// Returns whether the run was cancelled meanwhile.
     ///
@@ -300,8 +353,6 @@ impl<'a> Session<'a> {
             Ok(Compaction::Done | Compaction::Nothing) => false,
             Err(error) => {
                 self.threshold_compaction_failed = true;
-                // Closes the `CompactionStarted` a watcher has seen: nothing was replaced.
-                self.emit(AgentEvent::Compacted { summarised: 0, context_tokens: self.context_tokens });
                 self.emit(AgentEvent::Notice {
                     text: format!("Compaction was skipped: {error:#}"),
                 });
@@ -452,7 +503,7 @@ impl<'a> Session<'a> {
                 || (self.cancel.is_cancelled() && (result.is_err() || collector.stop().is_none()));
             let mut reply = collector.finish();
             if let Some(usage) = reply.usage {
-                reply.cost_usd = self.account(usage, live)?;
+                reply.cost_usd = self.account(usage, live);
             }
             let error = match result {
                 _ if cancelled => return Ok(Called::Cancelled(reply)),
@@ -480,12 +531,15 @@ impl<'a> Session<'a> {
     }
 
     /// Adds a model call to the totals and the ledger and reports it. Returns its cost.
-    fn account(&mut self, usage: Usage, live: bool) -> Result<f64> {
+    ///
+    /// A ledger that does not take the entry is remembered, not returned: the reply this call
+    /// produced is stored before the run fails with it.
+    fn account(&mut self, usage: Usage, live: bool) -> f64 {
         let model = &self.spec.model;
         let cost_usd = pricing::price(model).map_or(0.0, |price| pricing::cost(price, &usage));
         self.totals.usage.add(usage);
         self.totals.cost_usd += cost_usd;
-        self.deps.host.record_usage(&UsageEntry {
+        let recorded = self.deps.host.record_usage(&UsageEntry {
             at: self.now(),
             session: Some(self.env.session.clone()),
             run: self.env.run.clone(),
@@ -497,7 +551,10 @@ impl<'a> Session<'a> {
             usage,
             cost_usd,
             imported: false,
-        })?;
+        });
+        if let Err(error) = recorded {
+            self.ledger_failure.get_or_insert(error);
+        }
         if live {
             self.context_tokens = usage.context_tokens() + usage.output;
         }
@@ -507,7 +564,7 @@ impl<'a> Session<'a> {
             context_tokens: if live { usage.context_tokens() } else { self.context_tokens },
             context_window: pricing::context_window(model),
         });
-        Ok(cost_usd)
+        cost_usd
     }
 
     /// Reports pull request links not seen before in this run.

@@ -40,12 +40,14 @@ pub mod mcp;
 pub mod memory;
 pub mod notes;
 mod prompt;
+mod recap;
 mod session_tools;
 pub mod sink;
 pub mod spec;
 mod stream;
 mod subagents;
 mod toolbox;
+mod tree;
 mod turn;
 
 #[cfg(test)]
@@ -82,5 +84,6 @@ pub fn run(
     cancel: &CancelToken,
 ) -> AgentOutcome {
     let shared = sink::SharedSink::new(sink);
-    turn::run_shared(spec, env, deps, input, &shared, cancel)
+    let tree = tree::Tree::default();
+    turn::run_shared(spec, env, deps, input, &shared, cancel, tree::Lineage { tree: &tree, caps: &[] })
 }

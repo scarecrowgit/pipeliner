@@ -6,7 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use mcp::McpTool;
-use model::{ChatMode, Skill, StoredMessage, ToolClass, ToolDisplay, ToolSpec};
+use model::{ChatMode, Skill, StoredMessage, ToolAccess, ToolClass, ToolDisplay, ToolSpec};
 use serde_json::Value;
 use tools::{Tool, ToolContext, ToolRegistry};
 
@@ -44,8 +44,11 @@ impl Toolbox {
         let mut local = ToolRegistry::new();
         if env.workdir.is_some() {
             local = tools::builtin(spec.tools.access);
+            // An extra tool is held to the access level like a built-in of its class.
             for tool in deps.tools.names().filter_map(|name| deps.tools.get(name)) {
-                local.register(tool.clone());
+                if access_covers(spec.tools.access, tool.class()) {
+                    local.register(tool.clone());
+                }
             }
             let remove: Vec<String> = local
                 .names()
@@ -184,6 +187,17 @@ impl Toolbox {
             Some(Found::Session(kind)) => (ToolClass::Internal, session_display(kind, name, input)),
             None => (ToolClass::Internal, text_display(name, &pretty(input))),
         }
+    }
+}
+
+/// Whether an access level offers local tools of a class: reading always, running commands
+/// from `ReadAndRun` on, writing and reaching outside only with `Full`. (MCP tools are not
+/// local: each needs a grant by name.)
+fn access_covers(access: ToolAccess, class: ToolClass) -> bool {
+    match class {
+        ToolClass::Read | ToolClass::Internal => true,
+        ToolClass::Execute => matches!(access, ToolAccess::ReadAndRun | ToolAccess::Full),
+        ToolClass::Write | ToolClass::External => access == ToolAccess::Full,
     }
 }
 

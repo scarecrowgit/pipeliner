@@ -253,6 +253,7 @@ fn a_result_that_cannot_be_booked_is_still_stored_before_the_run_fails() {
     assert_eq!(outcome.stop, StopCause::Failed { error: "the file list is not writable".into() });
     assert_eq!(fx.read("a.txt"), "one\n");
     let transcript = fx.transcript();
+    assert!(outcome.files.is_empty(), "the run reports a file list the store does not hold");
     assert_eq!(transcript.len(), 3, "both calls are answered: the conversation can go on");
     assert!(!result_of(&transcript, "t1").1 && !result_of(&transcript, "t2").1);
     assert_paired(&transcript);
@@ -498,4 +499,69 @@ fn pull_request_links_are_reported_once() {
         })
         .collect();
     assert_eq!(found, ["https://github.com/acme/pay/pull/7"]);
+}
+
+#[test]
+fn a_reply_the_ledger_did_not_take_is_stored_before_the_run_fails() {
+    let fx = Fixture::new();
+    fx.host.fail_ledger(true);
+    let usage = Usage { input: 10, output: 5, ..Default::default() };
+    fx.llm.push(Reply::text("Reading.").and_tool("t1", "list_dir", json!({})).with_usage(usage));
+    let (outcome, _) = fx.run(say("Hi"));
+
+    assert_eq!(
+        outcome.stop,
+        StopCause::Failed {
+            error: "A model call could not be added to the spend ledger: the ledger is not writable".into()
+        }
+    );
+    // The reply was paid for and streamed to the person: it is kept, and its call is answered.
+    assert_eq!(outcome.text, "Reading.");
+    assert_eq!(outcome.totals.usage, usage);
+    let transcript = fx.transcript();
+    assert_eq!(
+        transcript,
+        vec![
+            Message::user("Hi"),
+            assistant(vec![text("Reading."), tool_use("t1", "list_dir", json!({}))]),
+            user(vec![error("t1", crate::history::INTERRUPTED)]),
+        ]
+    );
+    assert_paired(&transcript);
+}
+
+#[test]
+fn queued_messages_that_cannot_be_stored_stay_queued_in_their_order() {
+    let fx = Fixture::new();
+    let host = &fx.host;
+    let session = fx.session().clone();
+    let mut sink = |_: &SessionId, event: AgentEvent| {
+        // Two messages arrive, and the store breaks before the loop has kept them.
+        if matches!(event, AgentEvent::MessageCommitted { .. }) {
+            host.queue(&session, UserInput::text("First"));
+            host.queue(&session, UserInput::text("Second"));
+            host.fail_appends(true);
+        }
+    };
+    let outcome = fx.run_into(&AllowAll, say("Hi"), &mut sink);
+
+    assert_eq!(outcome.stop, StopCause::Failed { error: "the store is not writable".into() });
+    assert_eq!(fx.host.queued(fx.session()), [UserInput::text("First"), UserInput::text("Second")]);
+
+    // Once the store works again they arrive, before what was sent since.
+    fx.host.queue(fx.session(), UserInput::text("Third"));
+    fx.host.fail_appends(false);
+    fx.llm.push(Reply::text("All three read."));
+    let (outcome, _) = fx.run(Input::Continue);
+    assert_eq!(outcome.stop, StopCause::Finished);
+    assert_eq!(
+        fx.requests()[0].messages,
+        vec![user(vec![text("Hi"), text("First"), text("Second"), text("Third")])]
+    );
+
+    // What is put back goes ahead of what was queued meanwhile.
+    fx.host.queue(fx.session(), UserInput::text("C"));
+    fx.host.requeue(fx.session(), vec![UserInput::text("A"), UserInput::text("B")]);
+    let texts: Vec<String> = fx.host.take_queued(fx.session()).into_iter().map(|input| input.text).collect();
+    assert_eq!(texts, ["A", "B", "C"]);
 }

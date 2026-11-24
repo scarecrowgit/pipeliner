@@ -121,9 +121,15 @@ const HANDBACK: &str = "Work only on the task you are given. When you are done, 
                         did, what you found and anything your creator must know: your last message is all they will see.";
 
 /// The spec of a sub-agent of `parent`: the template's role, model and tools (the general
-/// one takes the parent's), the parent's forced skills, limits and spawn policy, and a reply
-/// as the way to finish.
-pub(crate) fn child_spec(parent: &AgentSpec, template: Option<&SubagentTemplate>, name: &str, session: &SessionId) -> AgentSpec {
+/// one takes the parent's), the parent's forced skills, limits and spawn policy, `budget_usd`
+/// as what it may spend, and a reply as the way to finish.
+pub(crate) fn child_spec(
+    parent: &AgentSpec,
+    template: Option<&SubagentTemplate>,
+    name: &str,
+    session: &SessionId,
+    budget_usd: Option<f64>,
+) -> AgentSpec {
     let mut skills = template.map(|t| t.skills.clone()).unwrap_or_else(|| parent.skills.clone());
     for forced in &parent.skills.forced {
         if !skills.forced.contains(forced) {
@@ -147,7 +153,7 @@ pub(crate) fn child_spec(parent: &AgentSpec, template: Option<&SubagentTemplate>
         skills,
         spawn: parent.spawn.clone(),
         templates: parent.templates.clone(),
-        budget_usd: parent.spawn.budget_usd,
+        budget_usd,
         max_steps: template.map_or(0, |t| t.max_steps),
         finish: Finish::Reply,
         limits: parent.limits.clone(),

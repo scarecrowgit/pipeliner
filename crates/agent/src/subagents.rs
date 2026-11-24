@@ -15,6 +15,7 @@ use crate::session_tools::text_display;
 use crate::sink::Emit;
 use crate::spec::{AgentDeps, AgentEnv, AgentOutcome, AgentSpec, Input, StopCause, Totals};
 use crate::stream::Call;
+use crate::tree::{Cap, Full, Lineage, MAX_ALIVE, MAX_CREATED, Slot, child_budget};
 use crate::turn::{Session, run_shared};
 
 /// Stack of a sub-agent's thread: the loop is shallow, but tools and JSON are not ours.
@@ -26,20 +27,24 @@ const STACK_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const DEPTH_CEILING: u32 = 8;
 
 /// A sub-agent that passed every check and has a session.
-struct Plan {
+struct Plan<'t> {
     name: String,
     task: String,
     spec: AgentSpec,
     env: AgentEnv,
+    /// The budgets above the sub-agent: its parent's.
+    caps: Vec<Cap>,
+    /// Its place in the tree, held until its result is taken.
+    slot: Slot<'t>,
 }
 
-impl Session<'_> {
+impl<'a> Session<'a> {
     /// Runs a group of `spawn_agent` calls at the same time and returns one result per call,
     /// in the calls' order. Calls the spawn policy refuses, or a person does, get an error
     /// result and start nothing.
     pub(crate) fn spawn_batch(&mut self, calls: &[Call]) -> Vec<ToolOutput> {
         let mut alive = 0;
-        let plans: Vec<Result<Plan, Refused>> = calls.iter().map(|call| self.plan(call, &mut alive)).collect();
+        let plans: Vec<Result<Plan<'a>, Refused>> = calls.iter().map(|call| self.plan(call, &mut alive)).collect();
 
         let (deps, sink, cancel, env) = (self.deps, self.sink, self.cancel, self.env);
         let parent = &env.session;
@@ -57,9 +62,12 @@ impl Session<'_> {
                 .collect();
             started
                 .into_iter()
-                .map(|started| {
+                .enumerate()
+                .map(|(at, started)| {
                     Some(match started? {
-                        Ok(handle) => handle.join().unwrap_or_else(|panic| crashed(&panic_text(&*panic))),
+                        Ok(handle) => {
+                            handle.join().unwrap_or_else(|panic| crashed(plan_of(&plans, at), deps, &panic_text(&*panic)))
+                        }
                         Err(outcome) => outcome,
                     })
                 })
@@ -88,7 +96,7 @@ impl Session<'_> {
     }
 
     /// Checks one call against the spawn policy and creates the child's session.
-    fn plan(&mut self, call: &Call, alive: &mut u32) -> Result<Plan, Refused> {
+    fn plan(&mut self, call: &Call, alive: &mut u32) -> Result<Plan<'a>, Refused> {
         let refuse = |message: String| Box::new(ToolOutput::error(SPAWN_AGENT, message));
         if self.cancel.is_cancelled() {
             return Err(Box::new(interrupted_output(SPAWN_AGENT)));
@@ -145,6 +153,7 @@ impl Session<'_> {
                 session: self.env.session.clone(),
                 agent: spec.name.clone(),
                 tool: SPAWN_AGENT.to_string(),
+                call_id: Some(call.id.clone()),
                 class: ToolClass::Internal,
                 display: text_display(&format!("Create sub-agent “{name}” at depth {depth}"), &task),
                 policy: format!("{SPAWN_AGENT} deeper than {} = ask", policy.max_depth),
@@ -154,6 +163,27 @@ impl Session<'_> {
             self.ask(SPAWN_AGENT, request)?;
         }
 
+        // What the child may spend: never more than is left above it.
+        let remaining = self
+            .remaining_budget()
+            .map_err(|error| refuse(format!("The budget could not be read, so no sub-agent was created: {error:#}")))?;
+        if remaining.is_some_and(|left| left <= 0.0) {
+            return Err(refuse("The budget is spent; this sub-agent was not created.".to_string()));
+        }
+        let budget = child_budget(remaining, policy.budget_usd);
+        let slot = self.tree.reserve().map_err(|full| {
+            refuse(match full {
+                Full::Created => format!(
+                    "This run and its sub-agents have created {MAX_CREATED} sub-agents in all, which is the most a \
+                     run may; this one was not created. Do the rest yourself."
+                ),
+                Full::Alive => format!(
+                    "{MAX_ALIVE} sub-agents of this run are working right now, which is the most at one time; this \
+                     one was not started. Create it again once some have answered, or do the task yourself."
+                ),
+            })
+        })?;
+
         let template_model = template.and_then(|t| t.model.clone()).filter(|m| !m.is_empty());
         let child = ChildSession {
             name: name.clone(),
@@ -162,24 +192,35 @@ impl Session<'_> {
             depth,
             created_by: spec.runnable.clone(),
         };
-        let session = self
-            .deps
-            .host
-            .create_child(&self.env.session, &child)
-            .map_err(|error| refuse(format!("The sub-agent's session could not be created: {error:#}")))?;
+        let session = match self.deps.host.create_child(&self.env.session, &child) {
+            Ok(session) => session,
+            Err(error) => {
+                slot.cancel();
+                return Err(refuse(format!("The sub-agent's session could not be created: {error:#}")));
+            }
+        };
         self.spawned += 1;
         *self.spawned_by_kind.entry(kind.to_string()).or_insert(0) += 1;
         *alive += 1;
         self.emit(AgentEvent::SubagentStarted { session: session.clone(), name: name.clone(), task: task.clone(), depth });
         let env = AgentEnv { session: session.clone(), depth, created_by: Some(spec.runnable.clone()), ..self.env.clone() };
-        Ok(Plan { spec: spawn::child_spec(spec, template, &name, &session), env, name, task })
+        let spec = spawn::child_spec(spec, template, &name, &session, budget);
+        Ok(Plan { spec, env, name, task, caps: self.caps.clone(), slot })
     }
 }
 
 /// Runs one sub-agent to its end and tells the parent's watchers how it went.
-fn run_child(plan: &Plan, deps: &AgentDeps<'_>, sink: &dyn Emit, cancel: &CancelToken, parent: &SessionId) -> AgentOutcome {
-    let run = || run_shared(&plan.spec, &plan.env, deps, Input::Item(plan.task.clone()), sink, cancel);
-    let outcome = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| crashed(&panic_text(&*panic)));
+fn run_child(
+    plan: &Plan<'_>,
+    deps: &AgentDeps<'_>,
+    sink: &dyn Emit,
+    cancel: &CancelToken,
+    parent: &SessionId,
+) -> AgentOutcome {
+    let lineage = Lineage { tree: plan.slot.tree(), caps: &plan.caps };
+    let run = || run_shared(&plan.spec, &plan.env, deps, Input::Item(plan.task.clone()), sink, cancel, lineage);
+    let outcome =
+        catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| crashed(Some(plan), deps, &panic_text(&*panic)));
     sink.emit(
         parent,
         AgentEvent::SubagentFinished {
@@ -194,12 +235,20 @@ fn run_child(plan: &Plan, deps: &AgentDeps<'_>, sink: &dyn Emit, cancel: &Cancel
     outcome
 }
 
-fn crashed(message: &str) -> AgentOutcome {
+/// The plan a started thread belongs to.
+fn plan_of<'p, 't>(plans: &'p [Result<Plan<'t>, Refused>], at: usize) -> Option<&'p Plan<'t>> {
+    plans.get(at).and_then(|plan| plan.as_ref().ok())
+}
+
+/// The outcome of a sub-agent whose run panicked. Its totals died with it, but what it spent
+/// is in the ledger, and the parent's totals must still include it.
+fn crashed(plan: Option<&Plan<'_>>, deps: &AgentDeps<'_>, message: &str) -> AgentOutcome {
+    let cost_usd = plan.and_then(|plan| deps.host.spent(&plan.env.session).ok()).unwrap_or(0.0);
     AgentOutcome {
         stop: StopCause::Failed { error: format!("the sub-agent crashed ({message})") },
         text: String::new(),
         payload: None,
-        totals: Totals::default(),
+        totals: Totals { cost_usd, ..Totals::default() },
         files: Vec::new(),
     }
 }

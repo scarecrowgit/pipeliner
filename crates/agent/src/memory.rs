@@ -33,6 +33,7 @@ struct State {
     reports: Vec<(SessionId, Report)>,
     fail_appends: bool,
     fail_files: bool,
+    fail_ledger: bool,
 }
 
 impl State {
@@ -132,6 +133,16 @@ impl MemoryHost {
         lock(&self.state).fail_appends = fail;
     }
 
+    /// The messages waiting in a session's queue, oldest first.
+    pub fn queued(&self, session: &SessionId) -> Vec<UserInput> {
+        lock(&self.state).sessions.get(session).map(|s| s.queued.clone()).unwrap_or_default()
+    }
+
+    /// Makes every later [`Host::record_usage`] fail, while messages can still be stored.
+    pub fn fail_ledger(&self, fail: bool) {
+        lock(&self.state).fail_ledger = fail;
+    }
+
     /// Makes every later [`Host::set_files`] fail, while messages can still be stored.
     pub fn fail_files(&self, fail: bool) {
         lock(&self.state).fail_files = fail;
@@ -201,7 +212,11 @@ impl Host for MemoryHost {
     }
 
     fn record_usage(&self, entry: &UsageEntry) -> Result<()> {
-        lock(&self.state).ledger.push(entry.clone());
+        let mut state = lock(&self.state);
+        if state.fail_ledger {
+            bail!("the ledger is not writable");
+        }
+        state.ledger.push(entry.clone());
         Ok(())
     }
 
@@ -240,5 +255,11 @@ impl Host for MemoryHost {
 
     fn take_queued(&self, session: &SessionId) -> Vec<UserInput> {
         lock(&self.state).sessions.get_mut(session).map(|s| std::mem::take(&mut s.queued)).unwrap_or_default()
+    }
+
+    fn requeue(&self, session: &SessionId, inputs: Vec<UserInput>) {
+        let mut state = lock(&self.state);
+        let queued = &mut state.sessions.entry(session.clone()).or_default().queued;
+        queued.splice(0..0, inputs);
     }
 }

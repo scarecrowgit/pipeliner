@@ -3,10 +3,12 @@
 
 use llm::Reply;
 use model::{ChatMode, PermissionDecision, PermissionRule, RuleDecision, RuleScope, ToolDisplay};
+use std::sync::Arc;
 use serde_json::json;
 
 use super::*;
-use crate::{RuleStore, StopCause};
+use crate::history::INTERRUPTED;
+use crate::{RuleStore, StopCause, SubagentTemplate};
 
 fn touch(id: &str, file: &str) -> Reply {
     Reply::tool(id, "bash", json!({"command": format!("touch {file}")}))
@@ -253,4 +255,102 @@ fn mcp_tools_need_a_grant_and_ask_unless_their_server_approves_them() {
     fx.run_gated(&asker.gate(|_| Some(PermissionDecision::AllowOnce)), say("Again"));
     assert!(result_of(&fx.transcript(), "t3").1);
     assert_eq!(lock(&fx.mcp.as_ref().expect("mcp").calls).len(), 2);
+}
+
+#[test]
+fn always_allow_that_crosses_the_cancel_adds_no_rule() {
+    let fx = Fixture::new();
+    fx.llm.push(touch("t1", "./a.txt"));
+    let rules = MemoryRules::default();
+    let asker = Asker::new(&rules);
+    let cancel = fx.cancel.clone();
+    // The person clicks "Always allow" in the moment the run is stopped.
+    let gate = asker.gate(move |request| {
+        cancel.cancel();
+        request.always_rule.clone().map(|rule| PermissionDecision::AllowAlways { rule })
+    });
+    let (outcome, _) = fx.run_gated(&gate, say("Touch a file"));
+
+    assert_eq!(outcome.stop, StopCause::Cancelled);
+    assert_eq!(asker.asked(), 1);
+    assert!(rules.rules().is_empty(), "a rule was saved for a question nobody was still asking");
+    assert!(!fx.work().join("a.txt").exists());
+    assert_eq!(fx.transcript()[2], user(vec![error("t1", INTERRUPTED)]));
+}
+
+/// An extra tool of a given class, as the engine registers next to the built-ins.
+struct Extra(&'static str, ToolClass);
+
+impl Tool for Extra {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec { name: self.0.into(), description: "An extra tool".into(), input_schema: json!({"type": "object"}) }
+    }
+
+    fn class(&self) -> ToolClass {
+        self.1
+    }
+
+    fn subject(&self, _ctx: &ToolContext<'_>, _input: &Value) -> String {
+        String::new()
+    }
+
+    fn preview(&self, _ctx: &ToolContext<'_>, _input: &Value) -> ToolDisplay {
+        ToolDisplay::Text { title: self.0.into(), body: String::new() }
+    }
+
+    fn run(&self, _ctx: &ToolContext<'_>, _input: &Value) -> ToolOutput {
+        ToolOutput { content: "ran".into(), is_error: false, display: self.preview(_ctx, _input), files: Vec::new() }
+    }
+}
+
+fn with_extras(mut fx: Fixture) -> Fixture {
+    for (name, class) in [
+        ("deploy", ToolClass::Write),
+        ("fetch", ToolClass::External),
+        ("peek", ToolClass::Read),
+        ("runner", ToolClass::Execute),
+    ] {
+        fx.extra.register(Arc::new(Extra(name, class)));
+    }
+    fx
+}
+
+fn extras_offered(request: &ChatRequest) -> Vec<&str> {
+    tool_names(request).into_iter().filter(|name| ["deploy", "fetch", "peek", "runner"].contains(name)).collect()
+}
+
+#[test]
+fn extra_tools_are_held_to_the_access_level_like_the_built_ins_of_their_class() {
+    let cases: [(ToolAccess, &[&str]); 3] = [
+        (ToolAccess::ReadOnly, &["peek"]),
+        (ToolAccess::ReadAndRun, &["peek", "runner"]),
+        (ToolAccess::Full, &["deploy", "fetch", "peek", "runner"]),
+    ];
+    for (access, expected) in cases {
+        let mut fx = with_extras(Fixture::new());
+        fx.spec.tools.access = access;
+        fx.llm.push(Reply::text("ok"));
+        fx.run(say("Hi"));
+        assert_eq!(extras_offered(&fx.requests()[0]), expected, "{access:?}");
+    }
+
+    // A read-only kind of sub-agent under a parent with full access gets the read tool only,
+    // and calling another one anyway reaches nothing.
+    let mut fx = with_extras(Fixture::new());
+    fx.spec.spawn.enabled = true;
+    fx.spec.templates = vec![SubagentTemplate {
+        name: "Reviewer".into(),
+        tools: ToolGrants { access: ToolAccess::ReadOnly, ..Default::default() },
+        ..Default::default()
+    }];
+    fx.llm.push(Reply::tool("p1", "spawn_agent", json!({"agent": "Reviewer", "task": "Review"})));
+    fx.llm.push(Reply::tool("c1", "deploy", json!({})));
+    fx.llm.push(Reply::text("Reviewed."));
+    fx.llm.push(Reply::text("Done."));
+    fx.run(say("Review"));
+    let requests = fx.requests();
+    assert_eq!(extras_offered(&requests[0]), ["deploy", "fetch", "peek", "runner"]);
+    assert_eq!(extras_offered(&requests[1]), ["peek"]);
+    let (content, is_error) = result_of(&fx.host.transcript(&SessionId::new("s1.1")), "c1");
+    assert!(is_error && content.starts_with("There is no tool `deploy`."), "{content}");
 }

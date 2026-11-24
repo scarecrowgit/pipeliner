@@ -80,6 +80,12 @@ pub trait Host: Send + Sync {
     /// Takes the messages a person sent while the agent was busy, oldest first. The loop
     /// calls this before every model call and when the model ends its turn.
     fn take_queued(&self, session: &SessionId) -> Vec<UserInput>;
+
+    /// Puts back messages [`Host::take_queued`] handed out that could not be stored: in their
+    /// order, ahead of anything queued since. The loop calls it only when the store failed
+    /// under it, right before the run fails. The default drops them; a host whose queue must
+    /// survive a failing store implements it.
+    fn requeue(&self, _session: &SessionId, _inputs: Vec<UserInput>) {}
 }
 
 /// The host as the model client's source of image bytes.

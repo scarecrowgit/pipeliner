@@ -43,7 +43,9 @@ pub struct AgentSpec {
     pub spawn: SpawnPolicy,
     /// The kinds of sub-agent it may create by name, besides the general-purpose one.
     pub templates: Vec<SubagentTemplate>,
-    /// Stops the run once the session and its sub-agents have spent this much.
+    /// Stops the run once the session and its sub-agents have spent this much. Every
+    /// sub-agent below checks it too, before each of its model calls, and is given no more
+    /// than what is left of it.
     pub budget_usd: Option<f64>,
     /// Model calls per run; 0 means [`DEFAULT_MAX_STEPS`].
     pub max_steps: u32,
@@ -201,7 +203,8 @@ pub struct AgentDeps<'a> {
     pub skills: &'a Catalog,
     pub clock: &'a dyn Clock,
     /// Tools offered next to the built-ins when there is a workdir; they pass the same grants,
-    /// mode filter and permission gate.
+    /// mode filter and permission gate. The access level applies to them by class: a tool
+    /// that runs commands needs `ReadAndRun`, one that writes or reaches outside needs `Full`.
     pub tools: ToolRegistry,
 }
 
