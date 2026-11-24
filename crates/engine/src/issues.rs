@@ -140,18 +140,20 @@ impl IssueApi for Engine {
         let catalog = inner.catalog();
         // The agents of the latest run come first: a name they share with the library is theirs.
         let agents = self.run_agents_of(key)?;
-        let mentions = issues::mentions::targets(&issues::mentions::find_mentions_with(text, &agents, catalog.runnables()));
+        let found = issues::mentions::find_mentions_with(text, &agents.mentionable(), catalog.runnables());
+        let mentions = issues::mentions::targets(&found);
         let kind = IssueEventKind::Comment { text: text.to_string(), images: images.clone(), mentions: mentions.clone() };
         inner.activity(key, Actor::Me, kind)?;
         issue.updated = inner.now();
         inner.save_issue(&issue)?;
         // Only a person's comment wakes anyone; agents answer through `wake::reply`, which
         // never comes here.
-        self.wake_with(&issue, &Happening::Comment { text: text.to_string(), mentions }, &images)
+        let mentioned = crate::wake::Mentioned { agents, names: found.into_iter().map(|m| (m.target, m.name)).collect() };
+        self.wake_with(&issue, &Happening::Comment { text: text.to_string(), mentions }, &images, &mentioned)
     }
 
     fn issue_agents(&self, key: &IssueKey) -> Result<Vec<RunAgent>> {
-        self.run_agents_of(key)
+        Ok(self.run_agents_of(key)?.agents)
     }
 
     fn delete_comment(&self, key: &IssueKey, seq: u64) -> Result<()> {

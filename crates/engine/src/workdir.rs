@@ -209,6 +209,28 @@ pub(crate) fn restore_worktree(repo: &Path, dir: &Path, branch: &str) -> Result<
     Ok(())
 }
 
+/// Checks that `dir` is still a worktree of `repo` with `branch` checked out; fails with what
+/// it is instead.
+pub(crate) fn check_worktree(repo: &Path, dir: &Path, branch: &str) -> Result<()> {
+    let common = |at: &Path| {
+        git(at, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .ok()
+            .map(|out| PathBuf::from(out.trim()))
+            .map(|p| p.canonicalize().unwrap_or(p))
+    };
+    let Some(own) = common(dir) else {
+        bail!("{} is no longer the worktree of `{branch}`: it is not a git checkout; move it away to have it put back", dir.display());
+    };
+    if common(repo) != Some(own) {
+        bail!("{} is no longer the worktree of `{branch}`: it belongs to another repository", dir.display());
+    }
+    let head = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+    if head.trim() != branch {
+        bail!("{} has `{}` checked out instead of `{branch}`; check `{branch}` out there again", dir.display(), head.trim());
+    }
+    Ok(())
+}
+
 /// Runs git in `dir` without a terminal to prompt on; fails with its error output.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = std::process::Command::new("git")

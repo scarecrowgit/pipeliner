@@ -182,7 +182,10 @@ fn a_run_stopped_at_its_budget_files_an_inbox_item_resolved_by_a_raise() {
     assert_eq!(fx.engine.run_waiting(&run.id).unwrap(), Some(RunWait::Budget));
     assert_eq!(fx.engine.waiting_runs().unwrap(), vec![(run.id.clone(), RunWait::Budget)]);
     eventually("the wait published", || waits(&fx, &run.id).contains(&Some(RunWait::Budget)));
-    let item = fx.engine.inbox(false).unwrap().into_iter().find(|i| i.run.as_ref() == Some(&run.id)).expect("budget item");
+    // The item is filed just after the wait is published.
+    let budget_item = || fx.engine.inbox(false).unwrap().into_iter().find(|i| i.run.as_ref() == Some(&run.id));
+    eventually("the budget item filed", || budget_item().is_some());
+    let item = budget_item().expect("budget item");
     assert_eq!((item.kind.clone(), item.outcome), (InboxKind::Failure, Some(Outcome::Blocked)));
     assert!(item.title.starts_with("Out of budget: $0.02 of $0.01"), "{}", item.title);
     let ids: Vec<RunId> = fx.engine.runs_for_pipeline(&g.id, 5).unwrap().into_iter().map(|r: Run| r.id).collect();

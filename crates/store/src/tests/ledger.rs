@@ -41,6 +41,19 @@ fn totals_cover_half_open_ranges() {
 }
 
 #[test]
+fn a_sessions_spend_outside_runs_leaves_its_run_steps_out() {
+    let store = store();
+    let session = SessionId::new("s1");
+    let step = UsageEntry { session: Some(session.clone()), run: Some(RunId::new("r1")), node: Some(NodeId::new("n")), ..entry(1, "agent:a", 1.0) };
+    let answer = UsageEntry { session: Some(session.clone()), ..entry(2, "agent:a", 0.25) };
+    store.record_usage(&step).unwrap();
+    store.record_usage(&answer).unwrap();
+    assert!(close(store.spend_for_session(&session).unwrap().cost_usd, 1.25));
+    assert!(close(store.spend_for_session_outside_runs(&session).unwrap().cost_usd, 0.25));
+    assert!(close(store.spend_for_run(&RunId::new("r1")).unwrap().cost_usd, 1.0));
+}
+
+#[test]
 fn day_buckets_follow_local_midnight() {
     let store = store();
     // Local midnight of 23 November 2026 at UTC+3 is 21:00 UTC on the 22nd.

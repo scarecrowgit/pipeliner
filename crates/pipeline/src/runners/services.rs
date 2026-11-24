@@ -40,6 +40,11 @@ pub trait AgentSessions: Send + Sync {
     fn spent(&self, session: &SessionId) -> f64;
     /// Whether the session holds a conversation to continue.
     fn has_conversation(&self, session: &SessionId) -> bool;
+    /// What the session spent outside any run: turns it took after its step, such as answers
+    /// to comments that mentioned it. A step's own budget leaves them out.
+    fn spent_outside_runs(&self, _session: &SessionId) -> f64 {
+        0.0
+    }
     /// Runs the agent loop until it stops, after taking an agent slot (the wait for one ends
     /// with a cancelled outcome when `cancel` fires). Every event is handed to `on_event`
     /// with the session it belongs to.

@@ -111,6 +111,15 @@ impl Store {
         self.write(|tx| set_marker_in(tx, key, value))
     }
 
+    /// Every marker whose key starts with `prefix`, with its value, in key order.
+    pub fn markers_with_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare_cached("SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key")?;
+            let rows = stmt.query_map([prefix], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
     /// Removes a marker. Returns whether it was set.
     pub fn remove_marker(&self, key: &str) -> Result<bool> {
         self.write(|tx| Ok(tx.execute("DELETE FROM meta WHERE key = ?1", [key])? > 0))

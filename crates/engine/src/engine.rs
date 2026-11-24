@@ -97,9 +97,14 @@ pub(crate) struct Inner {
     pub secrets: Vec<String>,
     /// Serialises "is a run open on this issue?" and starting one.
     pub issue_starts: Mutex<()>,
+    /// Serialises checking and putting back the worktrees of woken node sessions.
+    pub worktree_restores: Mutex<()>,
     /// Tests: snapshot writes fail.
     #[cfg(test)]
     pub fail_snapshots: AtomicBool,
+    /// Tests: pipeline steps panic once they hold their session.
+    #[cfg(test)]
+    pub panic_in_steps: AtomicBool,
     /// Serialises read-modify-write of session headers.
     headers: Mutex<()>,
     /// Turn threads, joined on shutdown.
@@ -133,8 +138,11 @@ impl Engine {
             runs: Default::default(),
             secrets: options.secrets.clone(),
             issue_starts: Mutex::new(()),
+            worktree_restores: Mutex::new(()),
             #[cfg(test)]
             fail_snapshots: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_in_steps: AtomicBool::new(false),
             gh,
             renderer,
             mcp: McpHub::new(paths.clone()),
@@ -159,6 +167,7 @@ impl Engine {
         let engine = Engine { inner: Arc::new(inner) };
         engine.inner.keep_queues()?;
         engine.inner.recover()?;
+        engine.inner.settle_owed_replies();
         crate::pipelines::recover(&engine.inner);
         if options.background {
             crate::scheduler::start(&engine.inner)?;

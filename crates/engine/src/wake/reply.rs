@@ -1,15 +1,25 @@
 //! Answers in the issue's thread: a session woken by a comment owes the issue a reply, posted
 //! as that agent's comment when the turn that took the comment in ends. Such a comment wakes
 //! nobody, whatever it says: it never goes through the mention rules.
+//!
+//! Each owed reply has a tag that travels with its message through the session's queue
+//! ([`crate::live::Live::send_tagged`]); a turn answers exactly the tags it took in, so two
+//! comments with the same text stay two answers. What is owed is kept in the store too: after
+//! a crash or a quit in the middle of the turn, the thread says the agent was interrupted
+//! instead of going silent.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use agent::{AgentOutcome, StopCause};
 use model::{Actor, IssueEventKind, IssueKey, SessionId};
+use serde_json::json;
 
 use crate::bus::lock;
 use crate::engine::Inner;
+
+/// Prefix of the store markers that keep owed replies over a restart.
+const OWED: &str = "owed-reply:";
 
 /// A reply a session owes an issue.
 #[derive(Clone, Debug, PartialEq)]
@@ -17,45 +27,23 @@ pub(crate) struct PendingReply {
     pub issue: IssueKey,
     /// The agent as the comment names it, with its session.
     pub actor: Actor,
-    /// The message the comment became: while it still waits in the session's queue, the turn
-    /// that ends did not see it.
-    pub said: String,
 }
 
-/// Replies owed, by session.
+/// Replies owed, by tag.
 #[derive(Default)]
 pub(crate) struct Replies {
-    owed: Mutex<HashMap<SessionId, Vec<PendingReply>>>,
+    owed: Mutex<HashMap<String, PendingReply>>,
 }
 
-impl Replies {
-    pub fn expect(&self, session: &SessionId, reply: PendingReply) {
-        lock(&self.owed).entry(session.clone()).or_default().push(reply);
-    }
+/// A new tag for an owed reply, unique across restarts.
+pub(crate) fn new_tag() -> String {
+    base::id::new_id()
+}
 
-    /// Drops the reply owed for `said`: its message never reached the session.
-    pub fn forget(&self, session: &SessionId, said: &str) {
-        let mut owed = lock(&self.owed);
-        if let Some(list) = owed.get_mut(session) {
-            if let Some(at) = list.iter().position(|r| r.said == said) {
-                list.remove(at);
-            }
-            if list.is_empty() {
-                owed.remove(session);
-            }
-        }
-    }
-
-    /// Takes the replies whose message is no longer queued for `session`.
-    fn due(&self, session: &SessionId, queued: &[String]) -> Vec<PendingReply> {
-        let mut owed = lock(&self.owed);
-        let Some(list) = owed.get_mut(session) else { return Vec::new() };
-        let (due, wait): (Vec<_>, Vec<_>) = list.drain(..).partition(|r| !queued.contains(&r.said));
-        *list = wait;
-        if list.is_empty() {
-            owed.remove(session);
-        }
-        due
+fn actor_name(actor: &Actor) -> String {
+    match actor {
+        Actor::Runnable { name, .. } => name.clone(),
+        _ => "The agent".to_string(),
     }
 }
 
@@ -76,23 +64,71 @@ pub(crate) fn reply_text(outcome: &AgentOutcome, name: &str) -> String {
 }
 
 impl Inner {
-    /// Posts what `outcome` says on every issue whose comment this turn of `session` took in.
+    /// Notes that the message tagged `tag` owes `reply.issue` an answer, here and in the store.
+    pub(crate) fn owe_reply(&self, tag: &str, session: &SessionId, reply: PendingReply) {
+        let kept = json!({ "session": session, "issue": reply.issue, "actor": reply.actor });
+        if let Err(error) = self.store.set_marker(&format!("{OWED}{tag}"), &kept.to_string()) {
+            self.notice_error(&format!("Could not keep the answer {} owes {}: {error:#}", actor_name(&reply.actor), reply.issue));
+        }
+        lock(&self.replies.owed).insert(tag.to_string(), reply);
+    }
+
+    /// Forgets an owed reply whose message never reached its session.
+    pub(crate) fn forget_reply(&self, tag: &str) {
+        lock(&self.replies.owed).remove(tag);
+        let _ = self.store.remove_marker(&format!("{OWED}{tag}"));
+    }
+
+    /// Posts what `outcome` says on every issue whose comment the turn of `session` that just
+    /// ended took in.
+    ///
+    /// Comments on one issue that the same turn took in together get one answer: the turn saw
+    /// them all and answered once.
     pub(crate) fn post_replies(&self, session: &SessionId, outcome: &AgentOutcome) {
-        let queued: Vec<String> = self.live.queued(session).into_iter().map(|m| m.text).collect();
-        for reply in self.replies.due(session, &queued) {
-            let name = match &reply.actor {
-                Actor::Runnable { name, .. } => name.clone(),
-                _ => "the agent".to_string(),
-            };
-            let kind = IssueEventKind::Comment { text: reply_text(outcome, &name), images: Vec::new(), mentions: Vec::new() };
-            if let Err(error) = self.activity(&reply.issue, reply.actor.clone(), kind) {
-                self.notice_error(&format!("Could not post {name}'s answer on {}: {error:#}", reply.issue));
+        let mut answered: Vec<(IssueKey, Actor)> = Vec::new();
+        for tag in self.live.take_consumed(session) {
+            let Some(reply) = lock(&self.replies.owed).remove(&tag) else { continue };
+            let _ = self.store.remove_marker(&format!("{OWED}{tag}"));
+            if answered.iter().any(|(issue, actor)| issue == &reply.issue && actor == &reply.actor) {
                 continue;
             }
-            if let Ok(Some(mut issue)) = self.store.issue(&reply.issue) {
-                issue.updated = self.now();
-                let _ = self.save_issue(&issue);
+            answered.push((reply.issue.clone(), reply.actor.clone()));
+            let name = actor_name(&reply.actor);
+            let kind = IssueEventKind::Comment { text: reply_text(outcome, &name), images: Vec::new(), mentions: Vec::new() };
+            self.post_on_issue(&reply.issue, reply.actor, kind);
+        }
+    }
+
+    fn post_on_issue(&self, issue: &IssueKey, actor: Actor, kind: IssueEventKind) {
+        let name = actor_name(&actor);
+        if let Err(error) = self.activity(issue, actor, kind) {
+            self.notice_error(&format!("Could not post {name}'s answer on {issue}: {error:#}"));
+            return;
+        }
+        if let Ok(Some(mut stored)) = self.store.issue(issue) {
+            stored.updated = self.now();
+            let _ = self.save_issue(&stored);
+        }
+    }
+
+    /// After a restart: every answer still owed came from a turn that did not finish. Each
+    /// thread gets a line saying so, and nothing stays owed.
+    pub(crate) fn settle_owed_replies(&self) {
+        let Ok(owed) = self.store.markers_with_prefix(OWED) else { return };
+        for (key, value) in owed {
+            let kept: Option<(IssueKey, Actor)> = serde_json::from_str::<serde_json::Value>(&value).ok().and_then(|v| {
+                let issue = serde_json::from_value(v.get("issue")?.clone()).ok()?;
+                let actor = serde_json::from_value(v.get("actor")?.clone()).ok()?;
+                Some((issue, actor))
+            });
+            if let Some((issue, actor)) = kept
+                && self.store.issue(&issue).ok().flatten().is_some()
+            {
+                let name = actor_name(&actor);
+                let text = format!("{name} was interrupted before answering, when the app closed. Mention {name} again to go on.");
+                self.post_on_issue(&issue, actor, IssueEventKind::Note { text });
             }
+            let _ = self.store.remove_marker(&key);
         }
     }
 }

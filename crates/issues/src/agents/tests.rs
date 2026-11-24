@@ -5,7 +5,7 @@ use model::{
     RunnableRef, SessionId, SpanKind,
 };
 
-use super::{run_agents, wake_context, wake_message};
+use super::{RunAgents, run_agents, run_agents_shipped, wake_context, wake_message};
 use crate::mentions::{find_mentions_with, targets};
 use crate::testing::{issue, run, runnable};
 use crate::triggers::{Happening, WakeMode, wake_intents_with};
@@ -124,7 +124,8 @@ fn a_mentioned_run_agent_continues_its_session_and_the_runner_waits() {
     let pipeline = runnable(RunnableKind::Pipeline, "mockup-gpui-build");
     let session = mockup(&agents).reference.clone();
     let comment = Happening::Comment { text: "@Mockup fix it".into(), mentions: vec![session.clone()] };
-    let wakes = wake_intents_with(&i, &comment, &[pipeline], &agents);
+    let all = |agents: &[RunAgent]| RunAgents { agents: agents.to_vec(), shared: Vec::new() };
+    let wakes = wake_intents_with(&i, &comment, &[pipeline], &all(&agents));
     assert_eq!(wakes.intents.len(), 1, "the comment is for Mockup, not for the pipeline: {wakes:#?}");
     let intent = &wakes.intents[0];
     assert_eq!((intent.mode, intent.name.as_str()), (WakeMode::Session, "Mockup"));
@@ -132,11 +133,11 @@ fn a_mentioned_run_agent_continues_its_session_and_the_runner_waits() {
 
     let mut busy = agents.clone();
     busy[0].busy = true;
-    let wakes = wake_intents_with(&i, &comment, &[], &busy);
+    let wakes = wake_intents_with(&i, &comment, &[], &all(&busy));
     assert!(wakes.intents.is_empty());
     assert!(wakes.refusals[0].reason.contains("running right now"), "{wakes:#?}");
 
-    let wakes = wake_intents_with(&i, &comment, &[], &[]);
+    let wakes = wake_intents_with(&i, &comment, &[], &RunAgents::default());
     assert!(wakes.refusals[0].reason.contains("no longer an agent"), "{wakes:#?}");
 }
 
@@ -157,4 +158,55 @@ fn the_woken_agent_is_told_which_step_failed_and_why() {
     assert!(wake_context(&i, &done, mockup(&agents)).contains("Run 2 is done."));
     let message = wake_message(&i, &r, mockup(&agents), "  @Mockup the merge failed  ");
     assert!(message.ends_with("## New comment\n\n@Mockup the merge failed"), "{message}");
+}
+
+#[test]
+fn a_new_attempt_without_a_session_yet_still_answers_with_the_last_one() {
+    let mut r = har8();
+    r.state = RunState::Running;
+    let mut again = record("mockup", "Mockup", NodeStatus::Pending, SpanKind::Agent, None);
+    again.attempt = 2;
+    r.nodes.push(again);
+    let agents = run_agents(&r, Some(&graph()), &[]);
+    assert_eq!(mockup(&agents).session.as_str(), "s-mockup", "the previous attempt's session: {agents:#?}");
+    assert!(!mockup(&agents).busy);
+    r.nodes.last_mut().unwrap().status = NodeStatus::Running;
+    assert!(mockup(&run_agents(&r, Some(&graph()), &[])).busy, "the new attempt runs now");
+}
+
+fn variants() -> model::Run {
+    let mut r = har8();
+    r.nodes.retain(|n| n.node.as_str() != "mockup");
+    for (variant, session) in [(1, "s-a"), (2, "s-b")] {
+        let mut v = record("mockup", "Mockup", NodeStatus::Done, SpanKind::Agent, Some(session));
+        v.variant = variant;
+        r.nodes.push(v);
+    }
+    r
+}
+
+#[test]
+fn variants_are_named_apart_and_their_runnable_name_is_never_a_guess() {
+    let designer = runnable(RunnableKind::Agent, "Designer");
+    let found = run_agents_shipped(&variants(), Some(&graph()), std::slice::from_ref(&designer), &[]);
+    let names: Vec<&str> = found.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["Mockup A", "Mockup B"]);
+    assert!(found.agents.iter().all(|a| a.runnable_name.is_none()));
+    assert_eq!(found.shared[0].reason(), "Designer worked as Mockup A and Mockup B in run 2; mention one of them by that name");
+
+    let comment_on = |text: &str, found: &RunAgents| {
+        let mentions = targets(&find_mentions_with(text, &found.mentionable(), std::slice::from_ref(&designer)));
+        let happening = Happening::Comment { text: text.into(), mentions };
+        wake_intents_with(&issue(IssueStatus::InProgress), &happening, std::slice::from_ref(&designer), found)
+    };
+    let wakes = comment_on("@Designer fix it", &found);
+    assert!(wakes.intents.is_empty(), "neither the library's Designer nor a variant: {wakes:#?}");
+    assert_eq!(wakes.refusals[0].name, "Designer");
+    let wakes = comment_on("@Mockup B fix it", &found);
+    assert_eq!(wakes.intents[0].target, RunnableRef::session(&SessionId::new("s-b")));
+
+    let shipped = run_agents_shipped(&variants(), Some(&graph()), std::slice::from_ref(&designer), &[SessionId::new("s-b")]);
+    assert!(shipped.shared.is_empty());
+    let wakes = comment_on("@Designer fix it", &shipped);
+    assert_eq!(wakes.intents[0].target, RunnableRef::session(&SessionId::new("s-b")), "the shipped variant answers to it");
 }

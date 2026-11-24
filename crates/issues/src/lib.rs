@@ -20,5 +20,5 @@ pub use board::{Board, Chip, Column, ListColumn, RunLookup, RunsWith, SortDir};
 pub use card::CardState;
 pub use mentions::{Completion, CompletionItem, Mention};
 pub use status::{Effect, RunResult};
-pub use agents::{run_agents, wake_message};
+pub use agents::{RunAgents, SharedName, run_agents, run_agents_shipped, wake_message};
 pub use triggers::{Happening, WakeIntent, WakeMode, WakeRefusal, Wakes};

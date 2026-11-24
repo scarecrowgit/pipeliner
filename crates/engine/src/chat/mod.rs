@@ -5,7 +5,7 @@ mod detail;
 mod export;
 mod turn;
 
-pub(crate) use turn::mcp_view;
+pub(crate) use turn::{mcp_view, spawn as spawn_turn};
 
 /// Marker holding a chat's spending cap, set when an autopilot with a budget starts it.
 pub(crate) fn budget_marker(id: &model::SessionId) -> String {
@@ -45,6 +45,50 @@ impl Inner {
 }
 
 impl Engine {
+    /// [`ChatApi::send`] with a tag the turn that takes the message in hands back (see
+    /// [`crate::live::Live::send_tagged`]).
+    pub(crate) fn send_tagged(&self, id: &SessionId, message: UserMessage, tag: Option<String>) -> Result<()> {
+        let inner = &self.inner;
+        let mut session = inner.session(id)?;
+        if session.parent.is_some() {
+            bail!("A sub-agent's session takes no messages");
+        }
+        if message.text.trim().is_empty() && message.images.is_empty() {
+            bail!("The message is empty");
+        }
+        let message = match commands::expand(&session, message) {
+            commands::Expanded::Message(message) => message,
+            commands::Expanded::Compact => return self.compact(id),
+        };
+        if session.model.is_empty() {
+            let model = inner.default_model();
+            if model.is_empty() {
+                bail!("No model is configured: add a provider to config.toml or pick a model for this chat");
+            }
+            session = inner.update_session(id, |s| s.model = model)?.ok_or_else(|| anyhow!("There is no chat {id}"))?;
+        }
+        if session.title == NEW_TITLE && !message.text.trim().is_empty() {
+            let title = base::fmt::truncate_chars(base::fmt::first_line(message.text.trim()), TITLE_MAX);
+            inner.update_session(id, |s| s.title = title)?;
+        }
+        match inner.live.send_tagged(id, message, tag) {
+            Sent::Start { cancel, first } => {
+                if let Err(error) = turn::spawn(inner, id.clone(), Input::User(crate::host::to_input(first.clone())), cancel) {
+                    inner.live.requeue(id, vec![first]);
+                    inner.live.take_consumed(id);
+                    inner.live.release(id, false);
+                    return Err(error);
+                }
+            }
+            Sent::Queued => {
+                if let Some(session) = inner.store.session(id)? {
+                    inner.publish(Event::SessionChanged { session });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Starts a turn without a new message (retry, compact).
     fn start_bare(&self, id: &SessionId, input: Input) -> Result<()> {
         let session = self.inner.session(id)?;
@@ -131,44 +175,7 @@ impl ChatApi for Engine {
     }
 
     fn send(&self, id: &SessionId, message: UserMessage) -> Result<()> {
-        let inner = &self.inner;
-        let mut session = inner.session(id)?;
-        if session.parent.is_some() {
-            bail!("A sub-agent's session takes no messages");
-        }
-        if message.text.trim().is_empty() && message.images.is_empty() {
-            bail!("The message is empty");
-        }
-        let message = match commands::expand(&session, message) {
-            commands::Expanded::Message(message) => message,
-            commands::Expanded::Compact => return self.compact(id),
-        };
-        if session.model.is_empty() {
-            let model = inner.default_model();
-            if model.is_empty() {
-                bail!("No model is configured: add a provider to config.toml or pick a model for this chat");
-            }
-            session = inner.update_session(id, |s| s.model = model)?.ok_or_else(|| anyhow!("There is no chat {id}"))?;
-        }
-        if session.title == NEW_TITLE && !message.text.trim().is_empty() {
-            let title = base::fmt::truncate_chars(base::fmt::first_line(message.text.trim()), TITLE_MAX);
-            inner.update_session(id, |s| s.title = title)?;
-        }
-        match inner.live.send(id, message) {
-            Sent::Start { cancel, first } => {
-                if let Err(error) = turn::spawn(inner, id.clone(), Input::User(crate::host::to_input(first.clone())), cancel) {
-                    inner.live.requeue(id, vec![first]);
-                    inner.live.release(id, false);
-                    return Err(error);
-                }
-            }
-            Sent::Queued => {
-                if let Some(session) = inner.store.session(id)? {
-                    inner.publish(Event::SessionChanged { session });
-                }
-            }
-        }
-        Ok(())
+        self.send_tagged(id, message, None)
     }
 
     fn interrupt(&self, id: &SessionId) {

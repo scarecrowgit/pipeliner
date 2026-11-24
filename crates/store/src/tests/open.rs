@@ -74,6 +74,18 @@ fn markers_set_replace_and_remove() {
 }
 
 #[test]
+fn markers_are_listed_by_prefix() {
+    let store = store();
+    store.set_marker("owed-reply:b", "2").unwrap();
+    store.set_marker("owed-reply:a", "1").unwrap();
+    store.set_marker("owed-replies", "x").unwrap();
+    store.set_marker("running:a", "1").unwrap();
+    let listed = store.markers_with_prefix("owed-reply:").unwrap();
+    assert_eq!(listed, [("owed-reply:a".to_string(), "1".to_string()), ("owed-reply:b".to_string(), "2".to_string())]);
+    assert!(store.markers_with_prefix("%").unwrap().is_empty(), "the prefix is not a pattern");
+}
+
+#[test]
 fn projects_round_trip() {
     let store = store();
     let harness = Project {

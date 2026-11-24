@@ -21,7 +21,36 @@ struct LiveSession {
     running: bool,
     cancel: Option<CancelToken>,
     /// Messages sent while the agent was busy, oldest first.
-    queued: Vec<UserMessage>,
+    queued: Vec<Queued>,
+    /// Tags of the messages the turn in progress took in, in the order it took them.
+    consumed: Vec<String>,
+}
+
+/// A queued message and the tag it was sent with, if any: a tag says which turn took the
+/// message in, whatever its text (an issue's comment owes its issue the answer of that turn).
+#[derive(Clone)]
+struct Queued {
+    message: UserMessage,
+    tag: Option<String>,
+}
+
+impl Queued {
+    fn plain(message: UserMessage) -> Self {
+        Self { message, tag: None }
+    }
+}
+
+impl LiveSession {
+    /// Takes the oldest queued message as the turn's, noting its tag.
+    fn take_first(&mut self) -> UserMessage {
+        let first = self.queued.remove(0);
+        self.consumed.extend(first.tag);
+        first.message
+    }
+
+    fn messages(&self) -> Vec<UserMessage> {
+        self.queued.iter().map(|q| q.message.clone()).collect()
+    }
 }
 
 /// What [`Live::send`] did with a message.
@@ -54,32 +83,45 @@ impl Live {
     pub fn restore(&self, id: &SessionId, messages: Vec<UserMessage>) {
         let mut sessions = lock(&self.sessions);
         let live = sessions.entry(id.clone()).or_default();
-        let newer = std::mem::replace(&mut live.queued, messages);
+        let newer = std::mem::replace(&mut live.queued, messages.into_iter().map(Queued::plain).collect());
         live.queued.extend(newer);
     }
 
-    fn save(&self, id: &SessionId, queued: &[UserMessage]) {
+    fn save(&self, id: &SessionId, live: &LiveSession) {
         if let Some(saver) = self.saver.get() {
-            saver(id, queued);
+            saver(id, &live.messages());
         }
     }
 
     /// Queues `message`, or claims the session for a new turn when nothing runs. A session
     /// with older queued messages starts with the oldest; the rest stay queued for the loop.
-    pub fn send(&self, id: &SessionId, message: UserMessage) -> Sent {
+    /// A `tag` comes back from [`Live::take_consumed`] once a turn took the message in.
+    pub fn send_tagged(&self, id: &SessionId, message: UserMessage, tag: Option<String>) -> Sent {
         let mut sessions = lock(&self.sessions);
         let live = sessions.entry(id.clone()).or_default();
-        live.queued.push(message);
+        live.queued.push(Queued { message, tag });
         if live.running {
-            self.save(id, &live.queued);
+            self.save(id, live);
             return Sent::Queued;
         }
         let cancel = CancelToken::new();
         live.running = true;
         live.cancel = Some(cancel.clone());
-        let first = live.queued.remove(0);
-        self.save(id, &live.queued);
+        let first = live.take_first();
+        self.save(id, live);
         Sent::Start { cancel, first }
+    }
+
+    /// [`Live::send_tagged`] without a tag.
+    #[cfg(test)]
+    pub fn send(&self, id: &SessionId, message: UserMessage) -> Sent {
+        self.send_tagged(id, message, None)
+    }
+
+    /// The tags of the messages the turn that just ended took in; the next turn starts with
+    /// none.
+    pub fn take_consumed(&self, id: &SessionId) -> Vec<String> {
+        lock(&self.sessions).get_mut(id).map(|live| std::mem::take(&mut live.consumed)).unwrap_or_default()
     }
 
     /// Claims the session for a turn that starts without a new message (retry, compact).
@@ -103,8 +145,8 @@ impl Live {
         if live.queued.is_empty() {
             return None;
         }
-        let next = live.queued.remove(0);
-        self.save(id, &live.queued);
+        let next = live.take_first();
+        self.save(id, live);
         Some(next)
     }
 
@@ -114,8 +156,8 @@ impl Live {
         let mut sessions = lock(&self.sessions);
         let live = sessions.get_mut(id)?;
         if deliver && !live.queued.is_empty() {
-            let next = live.queued.remove(0);
-            self.save(id, &live.queued);
+            let next = live.take_first();
+            self.save(id, live);
             return Some(next);
         }
         live.running = false;
@@ -129,23 +171,29 @@ impl Live {
         let Some(live) = sessions.get_mut(id) else { return Vec::new() };
         let taken = std::mem::take(&mut live.queued);
         if !taken.is_empty() {
-            self.save(id, &[]);
+            self.save(id, live);
         }
         taken
+            .into_iter()
+            .map(|q| {
+                live.consumed.extend(q.tag);
+                q.message
+            })
+            .collect()
     }
 
     /// Puts messages back at the front of the queue (the loop could not store them).
     pub fn requeue(&self, id: &SessionId, messages: Vec<UserMessage>) {
         let mut sessions = lock(&self.sessions);
         let live = sessions.entry(id.clone()).or_default();
-        let rest = std::mem::replace(&mut live.queued, messages);
+        let rest = std::mem::replace(&mut live.queued, messages.into_iter().map(Queued::plain).collect());
         live.queued.extend(rest);
-        self.save(id, &live.queued);
+        self.save(id, live);
     }
 
     /// A copy of the queue.
     pub fn queued(&self, id: &SessionId) -> Vec<UserMessage> {
-        lock(&self.sessions).get(id).map(|live| live.queued.clone()).unwrap_or_default()
+        lock(&self.sessions).get(id).map(LiveSession::messages).unwrap_or_default()
     }
 
     /// Cancels the running turn, if there is one. Returns whether there was.

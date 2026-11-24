@@ -72,6 +72,8 @@ fn a_closed_run_lets_go_of_its_driver_and_is_restored_on_demand() {
     fx.llm.push(Reply::text("slow").with_delay(Duration::from_secs(20)));
     let cancelled = fx.engine.start_run(&g.id, input()).unwrap();
     wait_run(&fx.engine, &cancelled.id, "working", |r| r.nodes.iter().any(|n| n.session.is_some()));
+    // The slow reply is in the cancelled step's hands, not left for the resumed one.
+    eventually("the slow reply taken", || fx.llm.remaining() == 0);
     fx.engine.cancel_run(&cancelled.id).unwrap();
     wait_run(&fx.engine, &cancelled.id, "cancelled", |r| r.state == RunState::Cancelled);
     eventually("let go", || !fx.engine.inner.runs.is_driven(&cancelled.id));

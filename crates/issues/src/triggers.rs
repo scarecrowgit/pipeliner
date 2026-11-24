@@ -2,6 +2,8 @@
 
 use model::{Issue, IssueStatus, RunAgent, Runnable, RunnableRef};
 
+use crate::agents::RunAgents;
+
 #[cfg(test)]
 mod tests;
 
@@ -77,7 +79,7 @@ struct Candidate<'a> {
 /// - A paused or archived runnable (or one that no longer exists) is not woken; it appears in
 ///   `refusals` instead, once.
 pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]) -> Wakes {
-    wake_intents_with(issue, happening, runnables, &[])
+    wake_intents_with(issue, happening, runnables, &RunAgents::default())
 }
 
 /// [`wake_intents`] on an issue whose latest run had `agents`.
@@ -86,7 +88,7 @@ pub fn wake_intents(issue: &Issue, happening: &Happening, runnables: &[Runnable]
 /// node is running right now, or that is no longer an agent of the latest run, is refused. A
 /// comment that mentions a run's agent is meant for that agent: it does not also reach the
 /// attached runner through `on_comment` (a mention of the runner still does).
-pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runnable], agents: &[RunAgent]) -> Wakes {
+pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runnable], agents: &RunAgents) -> Wakes {
     let attached = issue.runner.as_ref();
     let triggers = &issue.triggers;
     let mut candidates: Vec<Candidate> = Vec::new();
@@ -110,7 +112,7 @@ pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runn
         }
         Happening::MovedTo(_) => {}
         Happening::Comment { text, mentions } => {
-            let to_run_agent = mentions.iter().any(|m| m.session_id().is_some());
+            let to_run_agent = mentions.iter().any(|m| m.session_id().is_some() || agents.shared(m).is_some());
             if let Some(target) = attached {
                 let mentioned = triggers.on_mention && mentions.contains(target);
                 if mentioned || (triggers.on_comment && !to_run_agent) {
@@ -119,7 +121,7 @@ pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runn
                 }
             }
             for target in mentions {
-                if target.session_id().is_some() {
+                if target.session_id().is_some() || agents.shared(target).is_some() {
                     candidates.push(Candidate { target, mode: WakeMode::Session, cause: "", input: text.clone() });
                 } else if Some(target) != attached {
                     candidates.push(Candidate {
@@ -140,8 +142,12 @@ pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runn
             continue;
         }
         seen.push(c.target);
+        if let Some(shared) = agents.shared(c.target) {
+            wakes.refusals.push(WakeRefusal { target: c.target.clone(), name: shared.name.clone(), reason: shared.reason() });
+            continue;
+        }
         if c.mode == WakeMode::Session {
-            match agents.iter().find(|a| &a.reference == c.target) {
+            match agents.agents.iter().find(|a| &a.reference == c.target) {
                 Some(agent) if agent.busy => wakes.refusals.push(WakeRefusal {
                     target: c.target.clone(),
                     name: agent.name.clone(),
@@ -156,7 +162,7 @@ pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runn
                 }),
                 None => wakes.refusals.push(WakeRefusal {
                     target: c.target.clone(),
-                    name: "The agent".to_string(),
+                    name: AGENT_GONE.to_string(),
                     reason: "it is no longer an agent of this issue's latest run".to_string(),
                 }),
             }
@@ -181,6 +187,10 @@ pub fn wake_intents_with(issue: &Issue, happening: &Happening, runnables: &[Runn
     }
     wakes
 }
+
+/// The name of a refused run's agent the rules no longer know: the caller names it from the
+/// comment's mention when it can.
+pub const AGENT_GONE: &str = "The agent";
 
 /// "@mention · continues its work from run 2 in its worktree".
 pub fn session_cause(agent: &RunAgent) -> String {

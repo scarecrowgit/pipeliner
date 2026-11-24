@@ -118,8 +118,9 @@ fn run_once(inner: &Arc<Inner>, id: &SessionId, input: Input, cancel: &CancelTok
     let catalog = inner.catalog_for(folder.as_deref());
     // A pipeline node's session keeps the node's definition and its policy: nobody watches a
     // permission dialog for it, so what its access level grants is allowed, as in its run.
+    // When the node's definition cannot be found any more, the session goes on as a chat.
     let node = match &session.origin {
-        SessionOrigin::Run { run, node, .. } => Some(crate::wake::node::node_turn(inner, &session, run, node, &catalog)?),
+        SessionOrigin::Run { run, node, .. } => crate::wake::node::node_turn(inner, &session, run, node, &catalog).ok(),
         _ => None,
     };
     let rules = StoreRules(inner);

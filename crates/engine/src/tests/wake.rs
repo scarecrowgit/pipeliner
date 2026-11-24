@@ -19,19 +19,19 @@ use crate::api::{CatalogApi, ChatApi, InboxApi, IssueApi, NewIssue, OpsApi, RunA
 
 const PATIENCE: Duration = Duration::from_secs(30);
 
-struct Har8 {
-    fx: Fx,
-    mockups: PathBuf,
-    issue: IssueKey,
-    run: Run,
+pub(super) struct Har8 {
+    pub fx: Fx,
+    pub mockups: PathBuf,
+    pub issue: IssueKey,
+    pub run: Run,
 }
 
 impl Har8 {
-    fn designer(&self) -> &NodeInstance {
+    pub fn designer(&self) -> &NodeInstance {
         self.run.nodes.iter().find(|n| n.node.as_str() == "designer").expect("the designer ran")
     }
 
-    fn session(&self) -> SessionId {
+    pub fn session(&self) -> SessionId {
         self.designer().session.clone().expect("the designer had a session")
     }
 }
@@ -39,7 +39,7 @@ impl Har8 {
 /// The self-editing pipeline on an issue: triage says a mockup is needed, the designer
 /// changes it, the person ships it, and the merge fails because the main checkout of the
 /// mockups has a change the merge would overwrite.
-fn har8() -> Har8 {
+pub(super) fn har8() -> Har8 {
     let (fx, _gh) = pipeline_fx();
     let code = fx.repo("pipeliner", &[("src/lib.rs", "pub fn retry() {}\n")]);
     let mockups = fx.repo("mockups", &[("screens-v2/home.html", "<p>old home</p>\n")]);
@@ -78,7 +78,7 @@ fn har8() -> Har8 {
 }
 
 /// Waits for the feed to hold an entry that `found` accepts.
-fn wait_feed(fx: &Fx, key: &IssueKey, what: &str, found: impl Fn(&IssueEvent) -> bool) -> IssueEvent {
+pub(super) fn wait_feed(fx: &Fx, key: &IssueKey, what: &str, found: impl Fn(&IssueEvent) -> bool) -> IssueEvent {
     let deadline = Instant::now() + PATIENCE;
     loop {
         let events = fx.engine.issue_events(key).expect("feed");
@@ -90,7 +90,7 @@ fn wait_feed(fx: &Fx, key: &IssueKey, what: &str, found: impl Fn(&IssueEvent) ->
     }
 }
 
-fn agent_comment(event: &IssueEvent) -> Option<(&str, &str, Option<&SessionId>)> {
+pub(super) fn agent_comment(event: &IssueEvent) -> Option<(&str, &str, Option<&SessionId>)> {
     match (&event.actor, &event.kind) {
         (Actor::Runnable { name, session, .. }, IssueEventKind::Comment { text, .. }) => Some((name.as_str(), text.as_str(), session.as_ref())),
         _ => None,

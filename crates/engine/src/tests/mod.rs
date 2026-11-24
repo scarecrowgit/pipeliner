@@ -12,6 +12,7 @@ mod pipelines;
 mod pipelines_fixes;
 mod pipelines_more;
 mod wake;
+mod wake_more;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

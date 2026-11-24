@@ -181,6 +181,12 @@ impl Store {
         self.read(|conn| total_where(conn, "session = ?1", [session.as_str()]))
     }
 
+    /// What one session spent outside any run: the turns it took after its pipeline step, such
+    /// as answers to comments that mentioned it.
+    pub fn spend_for_session_outside_runs(&self, session: &SessionId) -> Result<SpendTotal> {
+        self.read(|conn| total_where(conn, "session = ?1 AND run IS NULL", [session.as_str()]))
+    }
+
     /// Everything one run spent.
     pub fn spend_for_run(&self, run: &RunId) -> Result<SpendTotal> {
         self.read(|conn| total_where(conn, "run = ?1", [run.as_str()]))

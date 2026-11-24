@@ -91,6 +91,10 @@ impl AgentSessions for Sessions {
         self.0.upgrade().and_then(|inner| inner.spent_below(session).ok()).unwrap_or(0.0)
     }
 
+    fn spent_outside_runs(&self, session: &SessionId) -> f64 {
+        self.0.upgrade().and_then(|inner| inner.store.spend_for_session_outside_runs(session).ok()).map_or(0.0, |t| t.cost_usd)
+    }
+
     fn has_conversation(&self, session: &SessionId) -> bool {
         self.0.upgrade().and_then(|inner| inner.store.model_messages(session).ok()).is_some_and(|m| !m.is_empty())
     }
@@ -106,15 +110,18 @@ impl AgentSessions for Sessions {
         let Some(inner) = self.0.upgrade() else { return cancelled() };
         // One turn at a time: the session may be answering a comment on its issue, or an
         // earlier job of a cancelled run may still be stopping. The step waits its turn.
-        while inner.live.claim(&env.session).is_none() {
+        let token = loop {
+            if let Some(token) = inner.live.claim(&env.session) {
+                break token;
+            }
             if cancel.is_cancelled() {
                 return cancelled();
             }
             std::thread::sleep(CLAIM_POLL);
-        }
+        };
+        let claim = StepClaim { inner: inner.clone(), session: env.session.clone(), token: Some(token) };
         let outcome = self.run_claimed(&inner, spec, env, input, on_event, cancel);
-        // Messages sent meanwhile stay queued for the session's next turn.
-        inner.live.release(&env.session, false);
+        claim.finish(&outcome);
         outcome
     }
 
@@ -127,6 +134,48 @@ impl AgentSessions for Sessions {
     }
 }
 
+/// A step's hold on its session in the live registry. Dropped without [`StepClaim::finish`]
+/// (the step panicked), it still lets go, so later steps and mentions are not locked out.
+struct StepClaim {
+    inner: Arc<Inner>,
+    session: SessionId,
+    /// The registry's token for the claim; `None` once finished.
+    token: Option<CancelToken>,
+}
+
+impl StepClaim {
+    /// Lets go after the step: comments the step took in mid-run get its outcome as their
+    /// answer, and a message still queued starts a turn of its own.
+    fn finish(mut self, outcome: &AgentOutcome) {
+        let Some(token) = self.token.take() else { return };
+        let (inner, id) = (&self.inner, &self.session);
+        inner.post_replies(id, outcome);
+        if let Some(next) = inner.live.release(id, true) {
+            let input = Input::User(crate::host::to_input(next.clone()));
+            if let Err(error) = crate::chat::spawn_turn(inner, id.clone(), input, token) {
+                inner.live.requeue(id, vec![next]);
+                let crashed = failed_outcome(format!("{error:#}"));
+                inner.post_replies(id, &crashed);
+                inner.live.release(id, false);
+            }
+        }
+    }
+}
+
+impl Drop for StepClaim {
+    fn drop(&mut self) {
+        if self.token.take().is_some() {
+            let crashed = failed_outcome("the step stopped unexpectedly".to_string());
+            self.inner.post_replies(&self.session, &crashed);
+            self.inner.live.release(&self.session, false);
+        }
+    }
+}
+
+fn failed_outcome(error: String) -> AgentOutcome {
+    AgentOutcome { stop: StopCause::Failed { error }, ..cancelled() }
+}
+
 impl Sessions {
     fn run_claimed(
         &self,
@@ -137,6 +186,10 @@ impl Sessions {
         on_event: &mut (dyn FnMut(&SessionId, &AgentEvent) + Send),
         cancel: &CancelToken,
     ) -> AgentOutcome {
+        #[cfg(test)]
+        if inner.panic_in_steps.load(std::sync::atomic::Ordering::SeqCst) {
+            panic!("a step crashed (test)");
+        }
         let capacity = || inner.store.settings().map_or(1, |s| s.slots);
         let Some(slot) = inner.slots.acquire(capacity, cancel) else { return cancelled() };
         let mut spec = spec.clone();

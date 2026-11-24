@@ -172,7 +172,9 @@ fn run_inner(ctx: &Ctx, node: &AgentNode) -> Result<JobResult> {
     }
     let spent = sessions.spent(&session);
     let left = job.budget_left_usd.map(|left| spent + left.max(0.0));
-    spec.budget_usd = match (left, def.budget_usd) {
+    // The agent's own cap counts the step's spend only, not answers given in between.
+    let own = def.budget_usd.map(|cap| cap + sessions.spent_outside_runs(&session));
+    spec.budget_usd = match (left, own) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
