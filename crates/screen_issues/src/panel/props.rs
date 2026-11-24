@@ -220,7 +220,9 @@ fn owner_trigger(owner: &str, window: &mut Window, cx: &mut Context<IssuePanel>)
     let el = row()
         .id(OWNER)
         .debug_selector(|| OWNER.into())
-        .flex_none()
+        // As wide as the name, narrower (the name cut) when the row has no room.
+        .flex_initial()
+        .min_w_0()
         .gap(px(SPACE_2))
         .h(px(CONTROL_HEIGHT_SM))
         .px(px(SPACE_1_5))
@@ -228,7 +230,7 @@ fn owner_trigger(owner: &str, window: &mut Window, cx: &mut Context<IssuePanel>)
         .rounded(px(RADIUS_MD))
         .cursor_pointer()
         .child(Avatar::new(pickers::initials(owner)))
-        .child(div().flex_none().text_color(if owner.is_empty() { TEXT_MUTED } else { TEXT }).child(name));
+        .child(truncate(name).text_color(if owner.is_empty() { TEXT_MUTED } else { TEXT }));
     motion::hover_fade(el, OWNER, Look::bg(TRANSPARENT), Look::bg(SURFACE_RAISED), window, cx)
 }
 
@@ -274,7 +276,8 @@ fn runner_card(
                 .on_click(cx.listener(|this, _, window, cx| this.open_runner_picker(window, cx)))
                 .popover_anchor(RUNNER)
                 .probe(RUNNER),
-        );
+        )
+        .debug_selector(|| "issue-runner-head".into());
     let latest = this.latest_run(cx);
     let mut card = col()
         .flex_none()
@@ -322,7 +325,7 @@ fn triggers_row(triggers: StartTriggers, inline: bool, cx: &mut Context<IssuePan
                 .probe(name),
         );
     }
-    let top = col().flex_none().mt(px(SPACE_2_5));
+    let top = col().flex_none().mt(px(SPACE_2_5)).debug_selector(|| "issue-runner-triggers".into());
     if inline { top.child(out) } else { top.gap(px(SPACE_1_5)).child(label()).child(out) }
 }
 
@@ -340,6 +343,7 @@ fn actions_row(runner: &RunnableRef, kind: RunnableKind, latest: Option<&Run>, c
         .flex_none()
         .gap(px(SPACE_1))
         .mt(px(SPACE_2_5))
+        .debug_selector(|| "issue-runner-actions".into())
         .child(
             Button::new("issue-open-runner", label)
                 .small()

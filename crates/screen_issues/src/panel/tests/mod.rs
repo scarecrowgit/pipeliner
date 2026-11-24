@@ -5,6 +5,7 @@ mod activity;
 mod comment;
 mod props;
 mod run;
+mod texts;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

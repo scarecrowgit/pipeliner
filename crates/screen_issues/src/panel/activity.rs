@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, Entity, HighlightStyle, Hsla, IntoElement, SharedString, StyledText, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, HighlightStyle, Hsla, IntoElement, SharedString, StyledText, Window, div, prelude::*, px,
 };
 use hub::api::{Actor, Issue, IssueEvent, IssueEventKind, RunId, RunnableRef, Target};
 use hub::{LoadState, Route};
@@ -65,21 +65,25 @@ fn is_person_comment(event: &IssueEvent) -> bool {
 }
 
 /// The Activity section.
-pub(super) fn feed(this: &IssuePanel, issue: &Arc<Issue>, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
+pub(super) fn feed(this: &mut IssuePanel, issue: &Arc<Issue>, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
     let cw = this.content_width();
-    let model = this.issues.read(cx);
-    let Some(feed) = model.activity(&this.issue) else {
-        return section().child(section_head("Activity", None)).child(muted("Loading activity…", cw)).into_any_element();
+    let loaded: Result<Vec<IssueEvent>, Option<SharedString>> = match this.issues.read(cx).activity(&this.issue) {
+        None => Err(None),
+        Some(feed) => match (feed.value(), feed.state()) {
+            (Some(events), _) => Ok(events.as_ref().clone()),
+            (None, LoadState::Failed(why)) => Err(Some(why.clone())),
+            (None, _) => Err(None),
+        },
     };
-    let events: Vec<IssueEvent> = match (feed.value(), feed.state()) {
-        (Some(events), _) => events.as_ref().clone(),
-        (None, LoadState::Failed(why)) => {
+    let events = match loaded {
+        Ok(events) => events,
+        Err(Some(why)) => {
             return section()
                 .child(section_head("Activity", None))
                 .child(muted(format!("Could not load the activity · {why}"), cw))
                 .into_any_element();
         }
-        (None, _) => {
+        Err(None) => {
             return section().child(section_head("Activity", None)).child(muted("Loading activity…", cw)).into_any_element();
         }
     };
@@ -156,7 +160,7 @@ fn byline(name: SharedString, color: Hsla, rest: String, width: f32) -> impl Int
 }
 
 /// What an event says, for rows that are not comments.
-fn sentence(this: &IssuePanel, issue: &Issue, event: &IssueEvent, cx: &Context<IssuePanel>) -> String {
+fn sentence(this: &IssuePanel, issue: &Issue, event: &IssueEvent, cx: &App) -> String {
     let name_of = |r: &RunnableRef| this.catalog.read(cx).runnable(r).map_or_else(|| r.id().to_string(), |r| r.name.clone());
     match &event.kind {
         IssueEventKind::Created => match &issue.filed_by {
@@ -190,7 +194,7 @@ fn woken_text(name: &str, number: u32, cause: &str) -> String {
 
 #[expect(clippy::too_many_arguments, reason = "one entry needs the feed's clock and the panel's context")]
 fn render_entry(
-    this: &IssuePanel,
+    this: &mut IssuePanel,
     issue: &Arc<Issue>,
     entry: &Entry<'_>,
     woken_by: Option<String>,
@@ -218,6 +222,15 @@ fn render_entry(
         Actor::System => small_tile(None, false).into_any_element(),
     };
     let mut text = col().flex_none().w(px(row_w)).child(byline(name, color, rest, row_w));
+    // What a row that is not a comment says, selectable.
+    let said = |this: &mut IssuePanel, cx: &mut Context<IssuePanel>| {
+        let words = sentence(this, issue, event, cx);
+        let view = this.texts.view(format!("event-{}", event.seq), words, BODY, TEXT_SECONDARY, cx);
+        div().flex_none().w(px(row_w)).child(view).debug_selector({
+            let name = format!("{probe}-text");
+            move || name
+        })
+    };
     match &event.kind {
         IssueEventKind::Comment { images, .. } => {
             if let Some(body) = this.bodies.get(&event.seq) {
@@ -229,7 +242,7 @@ fn render_entry(
             }
         }
         IssueEventKind::Woken { run, .. } => {
-            text = text.child(div().w(px(row_w)).text_color(TEXT_SECONDARY).child(sentence(this, issue, event, cx)));
+            text = text.child(said(this, cx));
             if let Some(run) = run.clone() {
                 text = text.child(row().mt(px(SPACE_0_5)).child(open_run_link(format!("{probe}-open"), run)));
             }
@@ -243,7 +256,7 @@ fn render_entry(
                 .into_any_element();
         }
         IssueEventKind::PrOpened { url } => {
-            text = text.child(div().w(px(row_w)).text_color(TEXT_SECONDARY).child(sentence(this, issue, event, cx)));
+            text = text.child(said(this, cx));
             let url = url.clone();
             text = text.child(
                 row().mt(px(SPACE_0_5)).child(
@@ -252,7 +265,7 @@ fn render_entry(
             );
         }
         _ => {
-            text = text.child(div().w(px(row_w)).text_color(TEXT_SECONDARY).child(sentence(this, issue, event, cx)));
+            text = text.child(said(this, cx));
         }
     }
     row()
@@ -283,7 +296,7 @@ fn open_run_link(name: String, run: RunId) -> impl IntoElement {
 
 /// A comment by a person: a card with the avatar, the time, the body, its images and the
 /// wake-ups it caused; one's own shows Delete while hovered.
-fn comment_card(this: &IssuePanel, entry: &Entry<'_>, when: &str, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
+fn comment_card(this: &mut IssuePanel, entry: &Entry<'_>, when: &str, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
     let event = entry.event;
     let ix = entry.ix;
     let key = SharedString::from(format!("issue-activity-{ix}"));
@@ -334,7 +347,7 @@ fn comment_card(this: &IssuePanel, entry: &Entry<'_>, when: &str, window: &mut W
     for (inner_ix, inner) in &entry.inner {
         let el = match &inner.kind {
             IssueEventKind::WakeFailed { .. } => fail_box(this, *inner_ix, inner, body_width, cx).into_any_element(),
-            _ => woke_box(*inner_ix, inner, body_width).into_any_element(),
+            _ => woke_box(this, *inner_ix, inner, body_width, cx).into_any_element(),
         };
         card = card.child(div().flex_none().mt(px(SPACE_2)).ml(px(INDENT)).child(el));
     }
@@ -347,10 +360,11 @@ fn body_block(body: &Entity<Markdown>, width: f32) -> impl IntoElement {
 }
 
 /// "Fixer woken · run 2 on this issue · comment passed as input  Open run".
-fn woke_box(ix: usize, event: &IssueEvent, width: f32) -> impl IntoElement {
+fn woke_box(this: &mut IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &mut Context<IssuePanel>) -> impl IntoElement {
     let IssueEventKind::Woken { name, number, cause, run, .. } = &event.kind else { return div().into_any_element() };
     let probe = format!("issue-activity-{ix}");
     let text_width = width - 2. * SPACE_2 - 12. - 2. * SPACE_2 - BOX_ACTION;
+    let text = this.texts.view(format!("event-{}", event.seq), woken_text(name, *number, cause), LABEL, TEXT_SECONDARY, cx);
     row()
         .flex_none()
         .w(px(width))
@@ -362,22 +376,18 @@ fn woke_box(ix: usize, event: &IssueEvent, width: f32) -> impl IntoElement {
         .bg(SURFACE_RAISED)
         .type_style(LABEL)
         .child(div().flex_none().pt(px(3.)).child(icon(IconName::Zap, 12., TEXT_SECONDARY)))
-        .child(div().flex_none().w(px(text_width)).text_color(TEXT_SECONDARY).child(woken_text(name, *number, cause)))
+        .child(div().flex_none().w(px(text_width)).child(text))
         .when_some(run.clone(), |d, run| d.child(grow()).child(open_run_link(format!("{probe}-open"), run)))
         .named(probe)
         .into_any_element()
 }
 
-/// "Codex not woken · runtime laptop offline since 14:02 · reconnect it or retry  Retry now".
-fn fail_box(this: &IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &mut Context<IssuePanel>) -> AnyElement {
+/// "Codex not woken" in red, the reason under it (selectable), and Retry now.
+fn fail_box(this: &mut IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &mut Context<IssuePanel>) -> AnyElement {
     let IssueEventKind::WakeFailed { target, name, reason } = &event.kind else { return div().into_any_element() };
     let probe = format!("issue-activity-{ix}");
     let text_width = width - 2. * SPACE_2 - 12. - 2. * SPACE_2 - BOX_ACTION;
-    let head = format!("{name} not woken");
-    let text = format!("{head} · {reason}");
-    let danger = HighlightStyle { color: Some(DANGER), ..HighlightStyle::default() };
-    let rest = HighlightStyle { color: Some(TEXT_SECONDARY), ..HighlightStyle::default() };
-    let split = head.len();
+    let reason = this.texts.view(format!("event-{}", event.seq), reason.clone(), LABEL, TEXT_SECONDARY, cx);
     let target = target.clone();
     let key = this.issue.clone();
     let retry = SharedString::from(format!("issue-retry-wake-{ix}"));
@@ -392,7 +402,16 @@ fn fail_box(this: &IssuePanel, ix: usize, event: &IssueEvent, width: f32, cx: &m
         .bg(DANGER_SOFT)
         .type_style(LABEL)
         .child(div().flex_none().pt(px(3.)).child(icon(IconName::X, 12., DANGER)))
-        .child(div().flex_none().w(px(text_width)).child(StyledText::new(text.clone()).with_highlights([(0..split, danger), (split..text.len(), rest)])))
+        .child(
+            col()
+                .flex_none()
+                .w(px(text_width))
+                .child(div().text_color(DANGER).child(format!("{name} not woken")))
+                .child(div().w_full().child(reason).debug_selector({
+                    let name = format!("{probe}-text");
+                    move || name
+                })),
+        )
         .child(grow())
         .child(
             Button::new(retry.clone(), "Retry now")

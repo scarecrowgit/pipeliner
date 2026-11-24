@@ -199,3 +199,26 @@ fn list_headers_sort_the_rows(cx: &mut TestAppContext) {
     sorted.reverse();
     assert_eq!(down, sorted);
 }
+
+#[gpui::test]
+fn a_long_error_title_and_name_keep_the_card_small(cx: &mut TestAppContext) {
+    let path: String = "/home/user/Pictures/designs/pipeliner-mockups/".repeat(5);
+    let error = format!(
+        "Merge mockup failed: `main` is checked out in {path} with changes the merge would overwrite; nothing was \
+         merged (`git reset --keep --quiet 937a0a362fc0fea6262662a4c74670004693c29e` failed (exit 128): fatal: \
+         Cannot do a keep reset in the middle of a merge.)"
+    );
+    let (_api, _view, cx) = open_with(cx, None, move |world| {
+        if let Some(run) = world.runs.iter_mut().find(|run| run.id == RunId::new("run-1427")) {
+            run.state = RunState::Failed;
+            run.error = Some(error);
+        }
+        if let Some(issue) = world.issues.iter_mut().find(|issue| issue.key == key("PAY-1427")) {
+            issue.title = "x".repeat(300);
+            issue.filed_by = Some(hub::api::RunnableRef::agent(&"log-digger-".repeat(12)));
+        }
+    });
+    let Some(card) = cx.debug_bounds("issue-card-PAY-1427") else { panic!("the card was not laid out") };
+    assert!(f32::from(card.size.width) <= crate::board::card::CARD_WIDTH + 0.5, "{card:?}");
+    assert!(f32::from(card.size.height) < 280., "title and run line are capped: {card:?}");
+}

@@ -149,7 +149,7 @@ impl IssuesView {
             .child(truncate(if issue.owner.is_empty() { "No owner".to_string() } else { issue.owner.clone() }));
         let tr = TableRow::new(SharedString::from(probe.clone()))
             .selected(self.cursor.as_ref() == Some(&key))
-            .cell(div().type_style(MONO).text_color(TEXT_MUTED).child(key.to_string()).probe(probe))
+            .cell(truncate_lh(key.to_string(), MONO.line).type_style(MONO).text_color(TEXT_MUTED).probe(probe))
             .strong(issue.title.clone())
             .cell(
                 row()

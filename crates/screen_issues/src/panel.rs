@@ -18,6 +18,7 @@ mod memory;
 mod pickers;
 mod props;
 mod run;
+mod texts;
 
 #[cfg(test)]
 mod tests;
@@ -109,6 +110,11 @@ pub struct IssuePanel {
     /// Runs whose steps are shown the other way from the default (the latest unfolded, the
     /// earlier ones folded).
     toggled: HashSet<RunId>,
+    /// Steps (run, index) whose summary is shown the other way from the default (a failed
+    /// step's unfolded, any other's folded).
+    steps_toggled: HashSet<(RunId, usize)>,
+    /// Errors, questions, step summaries and feed sentences, selectable.
+    texts: texts::Texts,
     input: comment::InputState,
     scroll: ScrollHandle,
     focus: FocusHandle,
@@ -185,6 +191,8 @@ impl IssuePanel {
             fallback: Fallback::Unasked,
             history: History::default(),
             toggled: HashSet::new(),
+            steps_toggled: HashSet::new(),
+            texts: texts::Texts::default(),
             input: comment::InputState::default(),
             scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -272,6 +280,14 @@ impl IssuePanel {
     pub(crate) fn toggle_run(&mut self, id: &RunId, cx: &mut Context<Self>) {
         if !self.toggled.remove(id) {
             self.toggled.insert(id.clone());
+        }
+        cx.notify();
+    }
+
+    /// Unfolds or folds the whole summary of step `ix` of a run.
+    pub(crate) fn toggle_step(&mut self, step: &(RunId, usize), cx: &mut Context<Self>) {
+        if !self.steps_toggled.remove(step) {
+            self.steps_toggled.insert(step.clone());
         }
         cx.notify();
     }
@@ -393,12 +409,14 @@ impl IssuePanel {
         // A definite width all the way down: text measured inside a shrink-to-fit or row
         // container wraps at the wrong width in this GPUI.
         let mut sections = col().flex_none().w(px(self.width.get()));
+        self.texts.begin();
         sections = sections.child(props::title_section(self, issue, window, cx));
         sections = sections.child(props::props_section(self, issue, window, cx));
         if let Some(run) = run::section(self, issue, window, cx) {
             sections = sections.child(run);
         }
         sections = sections.child(activity::feed(self, issue, window, cx));
+        self.texts.end();
         div()
             .id("issue-panel-scroll")
             .flex()
@@ -426,11 +444,12 @@ impl Render for IssuePanel {
         let width = self.width.clone();
         // Measures the frame; a new width is drawn again at once, so text wraps to it.
         let measure = canvas(
-            move |bounds, window, _| {
+            move |bounds, window, cx| {
                 let w = f32::from(bounds.size.width);
                 if w > 0. && (w - width.get()).abs() > 0.5 {
                     width.set(w);
-                    window.refresh();
+                    // A refresh asked for while the window draws is ignored: ask after it.
+                    window.defer(cx, |window, _| window.refresh());
                 }
             },
             |_, _, _, _| {},

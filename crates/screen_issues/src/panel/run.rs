@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, Context, Hsla, IntoElement, SharedString, Window, div, prelude::*, px};
-use hub::api::{InboxKind, Issue, NodeInstance, NodeStatus, Run, RunState, RunWait, SpanKind};
+use gpui::{AnyElement, App, Context, HighlightStyle, Hsla, IntoElement, SharedString, Window, div, prelude::*, px};
+use hub::api::{InboxKind, Issue, NodeInstance, NodeStatus, Run, RunId, RunState, RunWait, SpanKind};
 use hub::{InboxFocus, Route};
 use ui::dev::Probe;
 use ui::motion::Look;
@@ -117,15 +117,24 @@ fn path(run: &Run) -> String {
     out.join(" › ")
 }
 
-/// The run in the runner card: its path, its state in one line and its progress.
+/// The run in the runner card: its path, its state in one line and its progress. Both lines
+/// end in an ellipsis inside the card; the full error of a failed run, or the question of a
+/// waiting one, is selectable in the run section below.
 pub(super) fn summary(run: &Run, wait: Option<RunWait>) -> impl IntoElement {
     let l = line(run, wait);
     let mut out = col().flex_none().w_full();
     let path = path(run);
     if !path.is_empty() {
-        out = out.child(truncate_block(path, MONO_SM.line).mt(px(SPACE_2)).type_style(MONO_SM).text_color(TEXT_SECONDARY));
+        out = out.child(
+            truncate_block(path, MONO_SM.line)
+                .mt(px(SPACE_2))
+                .type_style(MONO_SM)
+                .text_color(TEXT_SECONDARY)
+                .debug_selector(|| "issue-run-path".into()),
+        );
     }
     let percent = l.percent;
+    let (text, highlights) = status_text(&l);
     out = out.child(
         row()
             .flex_none()
@@ -133,15 +142,28 @@ pub(super) fn summary(run: &Run, wait: Option<RunWait>) -> impl IntoElement {
             .mt(px(SPACE_1_5))
             .type_style(LABEL)
             .child(StatusDot::new(l.status).small())
-            .child(div().flex_none().text_color(l.color).child(if l.spawned.is_some() { format!("{} ·", l.text) } else { l.text }))
-            .when_some(l.spawned, |d, name| d.child(div().flex_none().text_color(SPAWN_TEXT).child(format!("{name} spawned"))))
-            .when_some(percent, |d, p| d.child(grow()).child(div().flex_none().type_style(MONO).text_color(TEXT_MUTED).child(format!("{p}%"))))
+            .child(truncate_styled(text, highlights, LABEL.line).debug_selector(|| "issue-run-line-text".into()))
+            .when_some(percent, |d, p| d.child(div().flex_none().type_style(MONO).text_color(TEXT_MUTED).child(format!("{p}%"))))
+            .debug_selector(|| "issue-run-line".into())
             .probe_value("issue-run-line", run_state_label(run.state)),
     );
     if let Some(p) = percent {
         out = out.child(div().mt(px(SPACE_1_5)).child(Progress::new(p as f32 / 100.).tone(ProgressTone::Info)));
     }
     out
+}
+
+/// The status line's words in their colours: the state, then the spawned agent in violet.
+fn status_text(l: &Line) -> (String, Vec<(std::ops::Range<usize>, HighlightStyle)>) {
+    let tone = |color| HighlightStyle { color: Some(color), ..HighlightStyle::default() };
+    match &l.spawned {
+        None => (l.text.clone(), vec![(0..l.text.len(), tone(l.color))]),
+        Some(name) => {
+            let head = format!("{} ·", l.text);
+            let text = format!("{head} {name} spawned");
+            (text.clone(), vec![(0..head.len(), tone(l.color)), (head.len()..text.len(), tone(SPAWN_TEXT))])
+        }
+    }
 }
 
 /// A run's state in words.
@@ -175,7 +197,7 @@ fn facts(run: &Run, now: i64) -> SharedString {
 }
 
 /// The run section: present when the issue has a run.
-pub(super) fn section(this: &IssuePanel, issue: &Arc<Issue>, window: &mut Window, cx: &mut Context<IssuePanel>) -> Option<AnyElement> {
+pub(super) fn section(this: &mut IssuePanel, issue: &Arc<Issue>, window: &mut Window, cx: &mut Context<IssuePanel>) -> Option<AnyElement> {
     let latest = this.latest_run(cx)?;
     let now = base::time::now_ms();
     let earlier = this.earlier_runs(Some(&latest.id));
@@ -186,7 +208,7 @@ pub(super) fn section(this: &IssuePanel, issue: &Arc<Issue>, window: &mut Window
     let open = !this.toggled.contains(&latest.id);
     block = block.child(steps_toggle(&latest, open, cx));
     if open {
-        block = block.child(steps(&latest, now, window, cx));
+        block = block.child(steps(this, &latest, now, window, cx));
     }
     sec = sec.child(block.named(format!("issue-run-{}", latest.id)));
     if !earlier.is_empty() {
@@ -199,7 +221,7 @@ pub(super) fn section(this: &IssuePanel, issue: &Arc<Issue>, window: &mut Window
 }
 
 /// What the run waits for: a review in the Inbox, an agent's question, a resume.
-fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<IssuePanel>) -> Vec<AnyElement> {
+fn callouts(this: &mut IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<IssuePanel>) -> Vec<AnyElement> {
     let mut out = Vec::new();
     let cw = this.content_width();
     let text_w = callout_text(cw);
@@ -243,6 +265,7 @@ fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<I
         let item = question_item.clone();
         let route = Route::Inbox { item: item.map(InboxFocus::Item) };
         let name = SharedString::from(format!("issue-run-question-{ix}"));
+        let text = this.texts.view(format!("question-{}-{ix}", run.id), question, LABEL, TEXT, cx);
         out.push(
             callout(IconName::Alert, WARNING, WARNING_SOFT, cw)
                 .child(
@@ -250,7 +273,10 @@ fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<I
                         .w(px(text_w))
                         .gap(px(SPACE_1))
                         .child(div().type_style(LABEL_STRONG).text_color(WARNING).child(format!("{} asks", node.name)))
-                        .child(div().w(px(text_w)).text_color(TEXT).child(question))
+                        .child(div().w(px(text_w)).child(text).debug_selector({
+                            let name = format!("{name}-text");
+                            move || name
+                        }))
                         .children(field)
                         .child(
                             Link::new(SharedString::from(format!("issue-run-answer-{ix}")), "Open in Inbox")
@@ -286,13 +312,14 @@ fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<I
             _ => "Run failed".to_string(),
         };
         let id = run.id.clone();
+        let text = this.texts.view(format!("failure-{}", run.id), text, LABEL, TEXT, cx);
         out.push(
             callout(IconName::X, DANGER, DANGER_SOFT, cw)
                 .child(
                     col()
                         .w(px(text_w))
                         .gap(px(SPACE_1_5))
-                        .child(div().w(px(text_w)).text_color(TEXT).child(text))
+                        .child(div().w(px(text_w)).child(text).debug_selector(|| "issue-run-failure-text".into()))
                         .child(
                             row().child(
                                 Button::new("issue-resume", "Resume")
@@ -414,8 +441,19 @@ fn steps_toggle(run: &Arc<Run>, open: bool, cx: &mut Context<IssuePanel>) -> imp
         .probe(name)
 }
 
-/// The steps of a run, in creation order.
-fn steps(run: &Arc<Run>, now: i64, _window: &mut Window, _cx: &mut Context<IssuePanel>) -> impl IntoElement {
+/// Space before a step's unfolded summary: the dot and the gap after it, px.
+const STEP_INDENT: f32 = 6. + SPACE_2;
+
+/// A step's summary is unfolded under its row: a failed step's by default, any other's after
+/// a click on the row.
+fn step_unfolded(this: &IssuePanel, run: &RunId, ix: usize, node: &NodeInstance) -> bool {
+    let toggled = this.steps_toggled.contains(&(run.clone(), ix));
+    (node.status == NodeStatus::Failed) != toggled
+}
+
+/// The steps of a run, in creation order: one line each, the summary cut to fit; a click on
+/// the line unfolds the whole summary under it, selectable.
+fn steps(this: &mut IssuePanel, run: &Arc<Run>, now: i64, _window: &mut Window, cx: &mut Context<IssuePanel>) -> impl IntoElement {
     let mut list = col().flex_none().w_full();
     for (ix, node) in run.nodes.iter().enumerate() {
         let status = match node.status {
@@ -431,6 +469,23 @@ fn steps(run: &Arc<Run>, now: i64, _window: &mut Window, _cx: &mut Context<Issue
         let letter = node.letter();
         let time = elapsed(node.started, node.finished, now).unwrap_or_default();
         let session = node.session.clone();
+        let has_summary = !node.summary.trim().is_empty();
+        let unfolded = has_summary && step_unfolded(this, &run.id, ix, node);
+        // The name keeps its width until the row is too narrow; the summary takes the rest.
+        let mut main = row()
+            .id(("issue-step-main", ix))
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .gap(px(SPACE_2))
+            .child(StatusDot::new(status).small())
+            .child(truncate_lh(node.name.clone(), LABEL.line).flex_initial().text_color(if spawned { SPAWN_TEXT } else { TEXT }))
+            .when(!letter.is_empty(), |d| d.child(Tag::new(letter).mono()))
+            .child(truncate_lh(node.summary.clone(), LABEL.line).text_color(TEXT_MUTED));
+        if has_summary {
+            let key = (run.id.clone(), ix);
+            main = main.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.toggle_step(&key, cx)));
+        }
         let mut r = row()
             .id(("issue-step", ix))
             .flex_none()
@@ -438,12 +493,20 @@ fn steps(run: &Arc<Run>, now: i64, _window: &mut Window, _cx: &mut Context<Issue
             .h(px(28.))
             .gap(px(SPACE_2))
             .type_style(LABEL)
-            .child(StatusDot::new(status).small())
-            .child(div().flex_none().text_color(if spawned { SPAWN_TEXT } else { TEXT }).child(node.name.clone()))
-            .when(!letter.is_empty(), |d| d.child(Tag::new(letter).mono()))
-            .child(truncate_lh(node.summary.clone(), LABEL.line).text_color(TEXT_MUTED))
+            .child(main)
             .child(div().flex_none().type_style(MONO_SM).text_color(TEXT_MUTED).child(time))
-            .child(div().flex_none().w(px(44.)).type_style(MONO_SM).text_color(TEXT_MUTED).child(base::fmt::cost(node.cost_usd)));
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(44.))
+                    .type_style(MONO_SM)
+                    .text_color(TEXT_MUTED)
+                    .child(base::fmt::cost(node.cost_usd))
+                    .debug_selector({
+                        let name = format!("{name}-cost");
+                        move || name
+                    }),
+            );
         r = match session {
             Some(session) => r.child(
                 IconButton::new(SharedString::from(format!("{name}-session")), IconName::Chat)
@@ -454,13 +517,20 @@ fn steps(run: &Arc<Run>, now: i64, _window: &mut Window, _cx: &mut Context<Issue
             ),
             None => r.child(div().flex_none().size(px(CONTROL_HEIGHT_SM))),
         };
-        list = list.child(r.named(name));
+        list = list.child(r.named(name.clone()));
+        if unfolded {
+            let color = if node.status == NodeStatus::Failed { DANGER } else { TEXT_SECONDARY };
+            let text = this.texts.view(format!("step-{}-{ix}", run.id), node.summary.clone(), LABEL, color, cx);
+            list = list.child(
+                div().flex_none().w_full().pl(px(STEP_INDENT)).pb(px(SPACE_1_5)).child(text).named(format!("{name}-summary")),
+            );
+        }
     }
     list
 }
 
 /// An earlier run: one line that unfolds its steps.
-fn earlier_run(this: &IssuePanel, run: &Arc<Run>, now: i64, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
+fn earlier_run(this: &mut IssuePanel, run: &Arc<Run>, now: i64, window: &mut Window, cx: &mut Context<IssuePanel>) -> AnyElement {
     let open = this.toggled.contains(&run.id);
     let id = run.id.clone();
     let name = SharedString::from(format!("issue-run-{}", run.id));
@@ -481,14 +551,13 @@ fn earlier_run(this: &IssuePanel, run: &Arc<Run>, now: i64, window: &mut Window,
         .cursor_pointer()
         .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., TEXT_MUTED))
         .child(StatusDot::new(l.status).small())
-        .child(div().flex_none().text_color(TEXT).child(format!("Run {} on this issue", run.number)))
-        .child(grow())
+        .child(truncate_lh(format!("Run {} on this issue", run.number), LABEL.line).text_color(TEXT))
         .child(div().flex_none().text_color(TEXT_MUTED).child(facts(run, now)))
         .on_click(cx.listener(move |this, _, _, cx| this.toggle_run(&id, cx)));
     let head = ui::motion::hover_fade(head, name.clone(), Look::bg(TRANSPARENT), Look::bg(SURFACE_RAISED), window, cx);
     let mut out = col().flex_none().w_full().child(head.probe(name));
     if open {
-        out = out.child(div().pl(px(SPACE_5)).child(steps(run, now, window, cx)));
+        out = out.child(div().pl(px(SPACE_5)).child(steps(this, run, now, window, cx)));
     }
     out.into_any_element()
 }

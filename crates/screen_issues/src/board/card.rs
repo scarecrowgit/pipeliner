@@ -16,6 +16,10 @@ use super::IssuesView;
 
 /// The card width of a board column.
 pub(crate) const CARD_WIDTH: f32 = 256.;
+/// Most lines the run line of a card takes: a long error is cut, the panel has all of it.
+const STRIP_LINES: usize = 3;
+/// Most characters of the name in "by Agent" before it is cut.
+const FILED_BY_CHARS: usize = 28;
 
 /// How the run line of a card is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +131,15 @@ pub(crate) fn strip(issue: &Issue, run: Option<&Run>) -> Option<Strip> {
     })
 }
 
+/// The strip's words wrapped beside the dot, at most [`STRIP_LINES`] lines. Plain words end
+/// in an ellipsis when cut; words with the spawned agents in violet are only cut (GPUI's
+/// ellipsis drops the runs after the first).
+fn strip_block(strip: &Strip) -> gpui::Div {
+    let block = div().flex_1().min_w_0().text_color(strip.tone.color()).line_clamp(STRIP_LINES);
+    let block = if strip.spawned.is_none() { block.text_ellipsis() } else { block };
+    block.child(strip_text(strip))
+}
+
 /// The strip's words, the spawned agents in violet after a middle dot, wrapping as one text.
 fn strip_text(strip: &Strip) -> StyledText {
     match &strip.spawned {
@@ -236,12 +249,18 @@ impl IssuesView {
             .type_style(BODY_STRONG)
             .line_clamp(3)
             .child(issue.title.clone());
-        let filed_by = issue.filed_by.as_ref().map(|by| format!("by {}", self.runner_name(by, cx)));
+        let filed_by = issue
+            .filed_by
+            .as_ref()
+            .map(|by| format!("by {}", base::fmt::truncate_chars(&self.runner_name(by, cx), FILED_BY_CHARS)));
         let tags = row()
             .mt(px(SPACE_2))
             .gap(px(SPACE_1_5))
             .child(Tag::new(issue.kind.label()))
-            .when_some(filed_by, |d, by| d.child(SpawnChip::new(by)))
+            // The kit's chip does not shrink: a long name is cut here, the rest clipped.
+            .when_some(filed_by, |d, by| {
+                d.child(div().flex_initial().min_w_0().overflow_hidden().rounded(px(RADIUS_MD)).child(SpawnChip::new(by)))
+            })
             .when(!issue.images.is_empty(), |d| {
                 d.child(
                     row()
@@ -276,7 +295,7 @@ impl IssuesView {
                         .gap(px(SPACE_2))
                         .type_style(LABEL)
                         .child(div().flex_none().mt(px(6.)).child(StatusDot::new(strip.tone.status()).small()))
-                        .child(div().flex_1().min_w_0().text_color(strip.tone.color()).child(strip_text(&strip))),
+                        .child(strip_block(&strip)),
                 )
                 .when_some(progress, |d, p| d.child(div().mt(px(SPACE_2)).child(Progress::new(p).tone(ProgressTone::Info))))
         });
