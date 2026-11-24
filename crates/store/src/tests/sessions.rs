@@ -77,6 +77,9 @@ fn appending_messages_numbers_counts_and_touches_the_session() {
     assert_eq!(store.messages(&s.id, 1..3).unwrap(), vec![first.clone(), second.clone()]);
     assert_eq!(store.messages(&s.id, 2..10).unwrap(), vec![second]);
     assert!(store.messages(&s.id, 3..10).unwrap().is_empty());
+    // `u64::MAX` means "to the end".
+    assert_eq!(store.messages(&s.id, 1..u64::MAX).unwrap().len(), 2);
+    assert_eq!(store.messages(&s.id, 2..u64::MAX).unwrap().len(), 1);
 
     assert!(store.append_message(&SessionId::new("missing"), stored("x", 1)).is_err());
 }

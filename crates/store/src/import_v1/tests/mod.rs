@@ -5,6 +5,7 @@ mod issues;
 mod report;
 mod runs;
 mod sessions;
+mod transactions;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

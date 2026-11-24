@@ -8,7 +8,7 @@ use model::{
     StoredMessage, TodoItem,
 };
 use rusqlite::types::Value;
-use rusqlite::{OptionalExtension as _, params, params_from_iter};
+use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 
 use crate::Store;
 use crate::codec::{Decoder, Filter, check_path, int, json, query_all, query_one, tag, text};
@@ -91,63 +91,121 @@ fn by_agent(session: &Session) -> bool {
     }
 }
 
+/// Writes a session header inside the caller's transaction.
+pub(crate) fn upsert_session_in(tx: &Transaction, session: &Session) -> Result<()> {
+    if let Some(workdir) = &session.workdir {
+        check_path(&workdir.path, "workdir")?;
+        if let Some(source) = &workdir.source {
+            check_path(source, "workdir source")?;
+        }
+    }
+    let workdir = session.workdir.as_ref().map(json).transpose()?;
+    let repo = session.workdir.as_ref().map(|w| w.repo.clone());
+    let model = session.model.to_string();
+    tx.prepare_cached(
+        "INSERT INTO sessions (id, title, parent, depth, runnable, mode, model, workdir, repo, state, origin,
+            by_agent, issue, pinned, archived, created, updated, cost_usd, usage, context_tokens,
+            context_window, forced_skills, pr_url)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
+            ?21, ?22, ?23)
+         ON CONFLICT (id) DO UPDATE SET title = excluded.title, parent = excluded.parent,
+            depth = excluded.depth, runnable = excluded.runnable, mode = excluded.mode,
+            model = excluded.model, workdir = excluded.workdir, repo = excluded.repo,
+            state = excluded.state, origin = excluded.origin, by_agent = excluded.by_agent,
+            issue = excluded.issue, pinned = excluded.pinned, archived = excluded.archived,
+            created = excluded.created, updated = max(sessions.updated, excluded.updated),
+            cost_usd = excluded.cost_usd, usage = excluded.usage,
+            context_tokens = excluded.context_tokens, context_window = excluded.context_window,
+            forced_skills = excluded.forced_skills, pr_url = excluded.pr_url",
+    )?
+    .execute(params![
+        session.id.as_str(),
+        session.title,
+        session.parent.as_ref().map(SessionId::as_str),
+        session.depth,
+        session.runnable.as_str(),
+        tag(&session.mode)?,
+        model,
+        workdir,
+        repo,
+        tag(&session.state)?,
+        json(&session.origin)?,
+        by_agent(session),
+        session.issue.as_ref().map(IssueKey::as_str),
+        session.pinned,
+        session.archived,
+        session.created,
+        session.updated,
+        session.cost_usd,
+        json(&session.usage)?,
+        int(session.context_tokens)?,
+        int(session.context_window)?,
+        json(&session.forced_skills)?,
+        session.pr_url,
+    ])?;
+    Ok(())
+}
+
+/// Deletes a session inside the caller's transaction; whether it existed.
+pub(crate) fn delete_session_in(tx: &Transaction, id: &SessionId) -> Result<bool> {
+    Ok(tx.execute("DELETE FROM sessions WHERE id = ?1", [id.as_str()])? > 0)
+}
+
+/// Records a session's legacy id inside the caller's transaction.
+pub(crate) fn set_session_legacy_id_in(tx: &Transaction, id: &SessionId, legacy_id: &str) -> Result<()> {
+    let changed = tx.execute("UPDATE sessions SET legacy_id = ?2 WHERE id = ?1", [id.as_str(), legacy_id])?;
+    if changed == 0 {
+        bail!("no session {id}");
+    }
+    Ok(())
+}
+
+/// Appends a message inside the caller's transaction; see [`Store::append_message`].
+pub(crate) fn append_message_in(tx: &Transaction, session: &SessionId, message: StoredMessage) -> Result<StoredMessage> {
+    let content = json(&message.message.content)?;
+    let role = tag(&message.message.role)?;
+    let plain = message.message.plain_text();
+    let model = message.model.as_ref().map(ModelRef::to_string);
+    let usage = json(&message.usage)?;
+    let exists = tx
+        .query_row("SELECT 1 FROM sessions WHERE id = ?1", [session.as_str()], |_| Ok(()))
+        .optional()?;
+    if exists.is_none() {
+        bail!("no session {session}");
+    }
+    let seq: i64 = tx.query_row(
+        "SELECT coalesce(max(seq), 0) + 1 FROM messages WHERE session = ?1",
+        [session.as_str()],
+        |row| row.get(0),
+    )?;
+    tx.prepare_cached(
+        "INSERT INTO messages (session, seq, at, role, content, text, compacted, model, usage, cost_usd)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?
+    .execute(params![
+        session.as_str(),
+        seq,
+        message.at,
+        role,
+        content,
+        plain,
+        message.compacted,
+        model,
+        usage,
+        message.cost_usd
+    ])?;
+    tx.prepare_cached(
+        "UPDATE sessions SET message_count = message_count + 1, updated = max(updated, ?2) WHERE id = ?1",
+    )?
+    .execute(params![session.as_str(), message.at])?;
+    Ok(StoredMessage { seq: seq as u64, ..message })
+}
+
 impl Store {
     /// Creates a session or replaces its header. The store owns `message_count` (the number of
     /// stored messages) and never moves `updated` back, so a stale copy cannot undo an append.
     pub fn upsert_session(&self, session: &Session) -> Result<()> {
-        if let Some(workdir) = &session.workdir {
-            check_path(&workdir.path, "workdir")?;
-            if let Some(source) = &workdir.source {
-                check_path(source, "workdir source")?;
-            }
-        }
-        let workdir = session.workdir.as_ref().map(json).transpose()?;
-        let repo = session.workdir.as_ref().map(|w| w.repo.clone());
-        let model = session.model.to_string();
-        self.write(|tx| {
-            tx.prepare_cached(
-                "INSERT INTO sessions (id, title, parent, depth, runnable, mode, model, workdir, repo, state, origin,
-                    by_agent, issue, pinned, archived, created, updated, cost_usd, usage, context_tokens,
-                    context_window, forced_skills, pr_url)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                    ?21, ?22, ?23)
-                 ON CONFLICT (id) DO UPDATE SET title = excluded.title, parent = excluded.parent,
-                    depth = excluded.depth, runnable = excluded.runnable, mode = excluded.mode,
-                    model = excluded.model, workdir = excluded.workdir, repo = excluded.repo,
-                    state = excluded.state, origin = excluded.origin, by_agent = excluded.by_agent,
-                    issue = excluded.issue, pinned = excluded.pinned, archived = excluded.archived,
-                    created = excluded.created, updated = max(sessions.updated, excluded.updated),
-                    cost_usd = excluded.cost_usd, usage = excluded.usage,
-                    context_tokens = excluded.context_tokens, context_window = excluded.context_window,
-                    forced_skills = excluded.forced_skills, pr_url = excluded.pr_url",
-            )?
-            .execute(params![
-                session.id.as_str(),
-                session.title,
-                session.parent.as_ref().map(SessionId::as_str),
-                session.depth,
-                session.runnable.as_str(),
-                tag(&session.mode)?,
-                model,
-                workdir,
-                repo,
-                tag(&session.state)?,
-                json(&session.origin)?,
-                by_agent(session),
-                session.issue.as_ref().map(IssueKey::as_str),
-                session.pinned,
-                session.archived,
-                session.created,
-                session.updated,
-                session.cost_usd,
-                json(&session.usage)?,
-                int(session.context_tokens)?,
-                int(session.context_window)?,
-                json(&session.forced_skills)?,
-                session.pr_url,
-            ])?;
-            Ok(())
-        })
+        self.write(|tx| upsert_session_in(tx, session))
     }
 
     /// One session's header.
@@ -167,7 +225,7 @@ impl Store {
     /// Deletes a session with its messages, todo list and changed files. Its children stay.
     /// Returns whether it existed.
     pub fn delete_session(&self, id: &SessionId) -> Result<bool> {
-        self.write(|tx| Ok(tx.execute("DELETE FROM sessions WHERE id = ?1", [id.as_str()])? > 0))
+        self.write(|tx| delete_session_in(tx, id))
     }
 
     /// Sessions matching `filter`, most recently active first.
@@ -204,13 +262,7 @@ impl Store {
 
     /// Records which old-app session a session was imported from.
     pub fn set_session_legacy_id(&self, id: &SessionId, legacy_id: &str) -> Result<()> {
-        self.write(|tx| {
-            let changed = tx.execute("UPDATE sessions SET legacy_id = ?2 WHERE id = ?1", [id.as_str(), legacy_id])?;
-            if changed == 0 {
-                bail!("no session {id}");
-            }
-            Ok(())
-        })
+        self.write(|tx| set_session_legacy_id_in(tx, id, legacy_id))
     }
 
     /// The session imported from the old app's session `legacy_id`, so an import can run twice.
@@ -231,50 +283,14 @@ impl Store {
     /// ignored), counts it in the session, moves the session's `updated` to its time and
     /// indexes its text for search. Returns the message as stored.
     pub fn append_message(&self, session: &SessionId, message: StoredMessage) -> Result<StoredMessage> {
-        let content = json(&message.message.content)?;
-        let role = tag(&message.message.role)?;
-        let plain = message.message.plain_text();
-        let model = message.model.as_ref().map(ModelRef::to_string);
-        let usage = json(&message.usage)?;
-        self.write(|tx| {
-            let exists = tx
-                .query_row("SELECT 1 FROM sessions WHERE id = ?1", [session.as_str()], |_| Ok(()))
-                .optional()?;
-            if exists.is_none() {
-                bail!("no session {session}");
-            }
-            let seq: i64 = tx.query_row(
-                "SELECT coalesce(max(seq), 0) + 1 FROM messages WHERE session = ?1",
-                [session.as_str()],
-                |row| row.get(0),
-            )?;
-            tx.prepare_cached(
-                "INSERT INTO messages (session, seq, at, role, content, text, compacted, model, usage, cost_usd)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            )?
-            .execute(params![
-                session.as_str(),
-                seq,
-                message.at,
-                role,
-                content,
-                plain,
-                message.compacted,
-                model,
-                usage,
-                message.cost_usd
-            ])?;
-            tx.prepare_cached(
-                "UPDATE sessions SET message_count = message_count + 1, updated = max(updated, ?2) WHERE id = ?1",
-            )?
-            .execute(params![session.as_str(), message.at])?;
-            Ok(StoredMessage { seq: seq as u64, ..message })
-        })
+        self.write(|tx| append_message_in(tx, session, message))
     }
 
     /// Messages whose `seq` is in `seqs`, in order: a page of the transcript. Seqs start at 1.
     pub fn messages(&self, session: &SessionId, seqs: Range<u64>) -> Result<Vec<StoredMessage>> {
-        let (start, end) = (int(seqs.start)?, int(seqs.end)?);
+        // `u64::MAX` is how callers say "to the end"; clamp what SQLite cannot hold.
+        let clamp = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        let (start, end) = (clamp(seqs.start), clamp(seqs.end));
         self.read(|conn| {
             query_all(
                 conn,

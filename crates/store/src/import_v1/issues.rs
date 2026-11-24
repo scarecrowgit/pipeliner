@@ -11,6 +11,7 @@ use model::{
 use serde::Deserialize;
 
 use super::report::Kind;
+use crate::issues;
 use super::runs::{self, IssueInfo, ParsedRun};
 use super::{Ctx, read_json, secs_to_ms};
 
@@ -284,18 +285,24 @@ fn import_issue(
     if cx.dry {
         return Ok(true);
     }
-    cx.store.upsert_issue(&issue)?;
-    for (at, kind) in events(old, pr_url, updated) {
-        cx.store.append_issue_event(
-            &key,
-            IssueEvent {
-                seq: 0,
-                at,
-                actor: Actor::Me,
-                kind,
-            },
-        )?;
-    }
+    // One transaction: the issue and its whole feed, or nothing. Otherwise the next import
+    // would find the issue and keep a truncated feed.
+    cx.store.write(|tx| {
+        issues::upsert_issue_in(tx, &issue)?;
+        for (at, kind) in events(old, pr_url, updated) {
+            issues::append_issue_event_in(
+                tx,
+                &key,
+                IssueEvent {
+                    seq: 0,
+                    at,
+                    actor: Actor::Me,
+                    kind,
+                },
+            )?;
+        }
+        Ok(())
+    })?;
     Ok(true)
 }
 
@@ -337,11 +344,6 @@ fn raise_counter(cx: &Ctx, prefix: &str, old_next: u64, highest: u64) -> Result<
     if old_next <= highest || cx.store.marker(&marker)?.is_some() {
         return Ok(());
     }
-    loop {
-        let key = cx.store.next_issue_key(prefix)?;
-        if split_key(key.as_str()).is_none_or(|(_, n)| n >= old_next) {
-            break;
-        }
-    }
+    cx.store.raise_issue_counter(prefix, old_next)?;
     cx.store.set_marker(&marker, &old_next.to_string())
 }

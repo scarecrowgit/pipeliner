@@ -3,7 +3,7 @@
 use anyhow::Result;
 use base::time::{day_start, week_start};
 use model::{Millis, NodeId, RunId, RunnableRef, SessionId, SpendBucket, SpendByRunnable, Usage, UsageEntry};
-use rusqlite::{Connection, Params, params};
+use rusqlite::{Connection, Params, Transaction, params};
 
 use crate::Store;
 use crate::codec::int;
@@ -35,36 +35,44 @@ fn total_where(conn: &Connection, condition: &str, params: impl Params) -> Resul
     Ok(conn.query_row(&sql, params, |row| read_total(row, 0))?)
 }
 
+/// Appends one model call to the ledger inside the caller's transaction.
+pub(crate) fn record_usage_in(tx: &Transaction, entry: &UsageEntry) -> Result<()> {
+    let usage = entry.usage;
+    let (input, output, cache_read, cache_write) =
+        (int(usage.input)?, int(usage.output)?, int(usage.cache_read)?, int(usage.cache_write)?);
+    tx.prepare_cached(
+        "INSERT INTO usage_ledger (at, session, run, node, runnable, name, created_by, model, input, output,
+            cache_read, cache_write, cost_usd, imported)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+    )?
+    .execute(params![
+        entry.at,
+        entry.session.as_ref().map(SessionId::as_str),
+        entry.run.as_ref().map(RunId::as_str),
+        entry.node.as_ref().map(NodeId::as_str),
+        entry.runnable.as_str(),
+        entry.name,
+        entry.created_by.as_ref().map(RunnableRef::as_str),
+        entry.model.to_string(),
+        input,
+        output,
+        cache_read,
+        cache_write,
+        entry.cost_usd,
+        entry.imported,
+    ])?;
+    Ok(())
+}
+
+/// Whether the ledger has any row of a run.
+pub(crate) fn run_has_usage_in(tx: &Transaction, run: &RunId) -> Result<bool> {
+    Ok(tx.query_row("SELECT EXISTS (SELECT 1 FROM usage_ledger WHERE run = ?1)", [run.as_str()], |row| row.get(0))?)
+}
+
 impl Store {
     /// Appends one model call to the ledger.
     pub fn record_usage(&self, entry: &UsageEntry) -> Result<()> {
-        let usage = entry.usage;
-        let (input, output, cache_read, cache_write) =
-            (int(usage.input)?, int(usage.output)?, int(usage.cache_read)?, int(usage.cache_write)?);
-        self.write(|tx| {
-            tx.prepare_cached(
-                "INSERT INTO usage_ledger (at, session, run, node, runnable, name, created_by, model, input, output,
-                    cache_read, cache_write, cost_usd, imported)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            )?
-            .execute(params![
-                entry.at,
-                entry.session.as_ref().map(SessionId::as_str),
-                entry.run.as_ref().map(RunId::as_str),
-                entry.node.as_ref().map(NodeId::as_str),
-                entry.runnable.as_str(),
-                entry.name,
-                entry.created_by.as_ref().map(RunnableRef::as_str),
-                entry.model.to_string(),
-                input,
-                output,
-                cache_read,
-                cache_write,
-                entry.cost_usd,
-                entry.imported,
-            ])?;
-            Ok(())
-        })
+        self.write(|tx| record_usage_in(tx, entry))
     }
 
     /// Spend of calls made at or after `from` and before `to`.

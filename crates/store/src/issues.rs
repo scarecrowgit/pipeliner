@@ -58,6 +58,70 @@ fn raise_counter(tx: &Transaction, prefix: &str, number: i64) -> Result<()> {
     Ok(())
 }
 
+/// Writes an issue inside the caller's transaction; see [`Store::upsert_issue`].
+pub(crate) fn upsert_issue_in(tx: &Transaction, issue: &Issue) -> Result<()> {
+    let triggers = json(&issue.triggers)?;
+    let images = json(&issue.images)?;
+    let (status, priority, kind) = (tag(&issue.status)?, tag(&issue.priority)?, tag(&issue.kind)?);
+    tx.prepare_cached(&format!(
+        "INSERT INTO issues ({ISSUE_COLUMNS})
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+         ON CONFLICT (key) DO UPDATE SET project = excluded.project, title = excluded.title,
+            body = excluded.body, status = excluded.status, priority = excluded.priority,
+            kind = excluded.kind, owner = excluded.owner, repo = excluded.repo,
+            created = excluded.created, updated = excluded.updated, filed_by = excluded.filed_by,
+            runner = excluded.runner, triggers = excluded.triggers, run = excluded.run,
+            run_count = excluded.run_count, pr_url = excluded.pr_url, images = excluded.images"
+    ))?
+    .execute(params![
+        issue.key.as_str(),
+        issue.project.as_str(),
+        issue.title,
+        issue.body,
+        status,
+        priority,
+        kind,
+        issue.owner,
+        issue.repo,
+        issue.created,
+        issue.updated,
+        issue.filed_by.as_ref().map(RunnableRef::as_str),
+        issue.runner.as_ref().map(RunnableRef::as_str),
+        triggers,
+        issue.run.as_ref().map(RunId::as_str),
+        issue.run_count,
+        issue.pr_url,
+        images,
+    ])?;
+    if let Some((prefix, number)) = split_key(issue.key.as_str()) {
+        raise_counter(tx, prefix, number)?;
+    }
+    Ok(())
+}
+
+/// Appends an activity entry inside the caller's transaction; see [`Store::append_issue_event`].
+pub(crate) fn append_issue_event_in(tx: &Transaction, key: &IssueKey, event: IssueEvent) -> Result<IssueEvent> {
+    // The variant name, so the feed can be filtered by kind later.
+    let kind_tag = serde_json::to_value(&event.kind)?
+        .get("event")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let exists = tx.query_row("SELECT 1 FROM issues WHERE key = ?1", [key.as_str()], |_| Ok(())).optional()?;
+    if exists.is_none() {
+        bail!("no issue {key}");
+    }
+    let seq: i64 = tx.query_row(
+        "SELECT coalesce(max(seq), 0) + 1 FROM issue_events WHERE issue = ?1",
+        [key.as_str()],
+        |row| row.get(0),
+    )?;
+    let stored = IssueEvent { seq: seq as u64, ..event };
+    tx.prepare_cached("INSERT INTO issue_events (issue, seq, at, event, data) VALUES (?1, ?2, ?3, ?4, ?5)")?
+        .execute(params![key.as_str(), seq, stored.at, kind_tag, json(&stored)?])?;
+    Ok(stored)
+}
+
 impl Store {
     /// Allocates the next issue key of a project prefix: `HAR-13` after `HAR-12`. Keys are
     /// never handed out twice, even across threads, and stay above every stored issue's.
@@ -76,47 +140,19 @@ impl Store {
         })
     }
 
+    /// Moves the key counter of `prefix` up to `number` unless it is already higher, in one
+    /// statement. For importing a counter that stood far ahead of the stored issues.
+    pub fn raise_issue_counter(&self, prefix: &str, number: u64) -> Result<()> {
+        if prefix.is_empty() {
+            bail!("an issue key prefix cannot be empty");
+        }
+        let number = crate::codec::int(number)?;
+        self.write(|tx| raise_counter(tx, prefix, number))
+    }
+
     /// Creates an issue or replaces it. Its activity feed is kept.
     pub fn upsert_issue(&self, issue: &Issue) -> Result<()> {
-        let triggers = json(&issue.triggers)?;
-        let images = json(&issue.images)?;
-        let (status, priority, kind) = (tag(&issue.status)?, tag(&issue.priority)?, tag(&issue.kind)?);
-        self.write(|tx| {
-            tx.prepare_cached(&format!(
-                "INSERT INTO issues ({ISSUE_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
-                 ON CONFLICT (key) DO UPDATE SET project = excluded.project, title = excluded.title,
-                    body = excluded.body, status = excluded.status, priority = excluded.priority,
-                    kind = excluded.kind, owner = excluded.owner, repo = excluded.repo,
-                    created = excluded.created, updated = excluded.updated, filed_by = excluded.filed_by,
-                    runner = excluded.runner, triggers = excluded.triggers, run = excluded.run,
-                    run_count = excluded.run_count, pr_url = excluded.pr_url, images = excluded.images"
-            ))?
-            .execute(params![
-                issue.key.as_str(),
-                issue.project.as_str(),
-                issue.title,
-                issue.body,
-                status,
-                priority,
-                kind,
-                issue.owner,
-                issue.repo,
-                issue.created,
-                issue.updated,
-                issue.filed_by.as_ref().map(RunnableRef::as_str),
-                issue.runner.as_ref().map(RunnableRef::as_str),
-                triggers,
-                issue.run.as_ref().map(RunId::as_str),
-                issue.run_count,
-                issue.pr_url,
-                images,
-            ])?;
-            if let Some((prefix, number)) = split_key(issue.key.as_str()) {
-                raise_counter(tx, prefix, number)?;
-            }
-            Ok(())
-        })
+        self.write(|tx| upsert_issue_in(tx, issue))
     }
 
     /// One issue.
@@ -156,27 +192,7 @@ impl Store {
     /// Adds an entry to an issue's activity feed with the next `seq` (the one in `event` is
     /// ignored). Returns the entry as stored.
     pub fn append_issue_event(&self, key: &IssueKey, event: IssueEvent) -> Result<IssueEvent> {
-        // The variant name, so the feed can be filtered by kind later.
-        let kind_tag = serde_json::to_value(&event.kind)?
-            .get("event")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        self.write(|tx| {
-            let exists = tx.query_row("SELECT 1 FROM issues WHERE key = ?1", [key.as_str()], |_| Ok(())).optional()?;
-            if exists.is_none() {
-                bail!("no issue {key}");
-            }
-            let seq: i64 = tx.query_row(
-                "SELECT coalesce(max(seq), 0) + 1 FROM issue_events WHERE issue = ?1",
-                [key.as_str()],
-                |row| row.get(0),
-            )?;
-            let stored = IssueEvent { seq: seq as u64, ..event };
-            tx.prepare_cached("INSERT INTO issue_events (issue, seq, at, event, data) VALUES (?1, ?2, ?3, ?4, ?5)")?
-                .execute(params![key.as_str(), seq, stored.at, kind_tag, json(&stored)?])?;
-            Ok(stored)
-        })
+        self.write(|tx| append_issue_event_in(tx, key, event))
     }
 
     /// An issue's activity feed, oldest first.

@@ -1,4 +1,8 @@
 //! Chat sessions: `sessions/<id>.json` and the pinned/archived lists in `chat_flags.json`.
+//!
+//! A session is found again by its legacy id and, once imported, is skipped whole: running the
+//! import again adds only the sessions not imported before; it never merges messages the old
+//! app saved into a session already imported.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -12,6 +16,7 @@ use model::{
 use serde::Deserialize;
 
 use super::report::Kind;
+use crate::{ledger, sessions};
 use super::{Ctx, json_files, modified_ms, read_json, rel, text};
 
 /// Ids the new sessions get: the old id behind a prefix, so a half-written import is found
@@ -143,7 +148,7 @@ fn load_flags(cx: &mut Ctx) -> Flags {
 pub(super) fn import(cx: &mut Ctx) {
     let flags = load_flags(cx);
     let dir = cx.data.join("sessions");
-    let files = match json_files(&dir) {
+    let files = match json_files(cx, &dir, Kind::Session) {
         Ok(files) => files,
         Err(err) => {
             cx.report.fail(Kind::Session, "sessions", format!("{err:#}"));
@@ -404,24 +409,20 @@ fn space_out(messages: Vec<Message>, created: Millis, updated: Millis) -> Vec<St
         .collect()
 }
 
-/// Writes a converted session. The legacy id goes last: it is what marks the session as
-/// imported, so a failure in between leaves a session the next run removes and writes again.
+/// Writes a converted session in one transaction, so a failure at any step leaves nothing
+/// behind: no half-written session and no ledger row for a retry to count twice. A session
+/// left half-written by an earlier version of the import (without its legacy id) is replaced.
 fn write(cx: &Ctx, converted: &Converted) -> Result<()> {
-    let store = cx.store;
     let id = &converted.session.id;
-    store.delete_session(id)?;
-    let result = (|| -> Result<()> {
-        store.upsert_session(&converted.session)?;
+    cx.store.write(|tx| {
+        sessions::delete_session_in(tx, id)?;
+        sessions::upsert_session_in(tx, &converted.session)?;
         for message in &converted.messages {
-            store.append_message(id, message.clone())?;
+            sessions::append_message_in(tx, id, message.clone())?;
         }
         if let Some(entry) = &converted.ledger {
-            store.record_usage(entry)?;
+            ledger::record_usage_in(tx, entry)?;
         }
-        store.set_session_legacy_id(id, &converted.legacy_id)
-    })();
-    if result.is_err() {
-        let _ = store.delete_session(id);
-    }
-    result
+        sessions::set_session_legacy_id_in(tx, id, &converted.legacy_id)
+    })
 }

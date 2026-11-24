@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use model::{Project, ProjectId, Settings};
-use rusqlite::{OptionalExtension as _, params};
+use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use crate::Store;
 use crate::codec::{Decoder, check_path, json, query_all, query_one};
@@ -14,6 +14,15 @@ fn decode_project(d: &Decoder) -> Result<Project> {
         key_prefix: d.string("key_prefix")?,
         repos: d.json("repos")?,
     })
+}
+
+/// Sets a marker inside the caller's transaction.
+pub(crate) fn set_marker_in(tx: &Transaction, key: &str, value: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        [key, value],
+    )?;
+    Ok(())
 }
 
 impl Store {
@@ -99,13 +108,7 @@ impl Store {
 
     /// Sets a one-off marker.
     pub fn set_marker(&self, key: &str, value: &str) -> Result<()> {
-        self.write(|tx| {
-            tx.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                [key, value],
-            )?;
-            Ok(())
-        })
+        self.write(|tx| set_marker_in(tx, key, value))
     }
 
     /// Removes a marker. Returns whether it was set.

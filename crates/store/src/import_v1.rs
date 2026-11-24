@@ -7,8 +7,10 @@
 //! deletes anything in the old directory, so the old app keeps working next to the new one.
 //!
 //! The import can be repeated: a session is found again by its legacy id, an issue by its key,
-//! a run, an Inbox item by its id. Running it twice imports nothing the second time, and
-//! running it after the old app saved something new imports just that. One bad file or item is
+//! a run, an Inbox item by its id. Running it twice imports nothing the second time; running it
+//! after the old app saved something new adds only what was not imported before (a session
+//! imported once is not updated with messages saved since). Each session, run and issue is
+//! written in one transaction, so a failure leaves nothing half-imported. One bad file or item is
 //! counted and named in the [`ImportReport`]; it never stops the rest.
 //!
 //! | Module | Imports |
@@ -90,20 +92,24 @@ pub(crate) struct Ctx<'a> {
 }
 
 /// The `.json` files of a directory, sorted by name; none when the directory does not exist.
-pub(crate) fn json_files(dir: &Path) -> Result<Vec<PathBuf>> {
+/// An entry that cannot be enumerated is put in the report as a failed `kind`, not dropped.
+pub(crate) fn json_files(cx: &mut Ctx, dir: &Path, kind: Kind) -> Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err).with_context(|| format!("read {}", dir.display())),
     };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-            name.ends_with(".json") && !name.starts_with('.') && path.is_file()
-        })
-        .collect();
+    let mut files = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => files.push(entry.path()),
+            Err(err) => cx.report.fail(kind, rel(&cx.data, dir), format!("cannot list an entry: {err}")),
+        }
+    }
+    files.retain(|path| {
+        let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        name.ends_with(".json") && !name.starts_with('.') && path.is_file()
+    });
     files.sort();
     Ok(files)
 }

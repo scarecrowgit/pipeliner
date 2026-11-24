@@ -4,10 +4,10 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::schema::MIGRATIONS;
 
@@ -30,7 +30,10 @@ impl Db {
     /// Opens (and creates or upgrades) the database file.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // First, so that switching to WAL and migrating wait for another process opening the
+        // same new database instead of failing with SQLITE_BUSY.
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        enable_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         let mut db = Self::prepare(conn)?;
         for _ in 0..READERS {
@@ -85,19 +88,40 @@ impl Db {
     }
 }
 
+/// Switches the file to WAL. Two processes converting a new file at once can get SQLITE_BUSY
+/// without the busy timeout applying (SQLite refuses to wait where waiting would deadlock), so
+/// the switch is retried until the timeout is spent.
+fn enable_wal(conn: &Connection) -> Result<()> {
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::DatabaseBusy && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(err) => return Err(err).context("switch to WAL"),
+        }
+    }
+}
+
+/// Applies the schema steps the database lacks, in one immediate transaction that also reads
+/// `user_version`: a second process opening the same new file waits for the lock, then finds
+/// the work done, instead of running the steps again.
 fn migrate(conn: &mut Connection) -> Result<()> {
-    let applied = conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? as usize;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let applied = tx.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? as usize;
     anyhow::ensure!(
         applied <= MIGRATIONS.len(),
         "the database is at schema {applied}, newer than this build ({})",
         MIGRATIONS.len()
     );
     for (index, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
-        let tx = conn.transaction()?;
         tx.execute_batch(sql).with_context(|| format!("migration {}", index + 1))?;
         tx.pragma_update(None, "user_version", (index + 1) as i64)?;
-        tx.commit()?;
     }
+    tx.commit()?;
     Ok(())
 }
 
@@ -124,6 +148,30 @@ mod tests {
             db.read().query_row("SELECT value FROM meta WHERE key = 'k'", [], |row| row.get(0)).unwrap();
         assert_eq!(value, "v");
         assert_eq!(db.schema_version().unwrap(), MIGRATIONS.len());
+    }
+
+    /// Two processes starting at once both open a database that does not exist yet.
+    #[test]
+    fn two_threads_opening_a_new_file_both_succeed() {
+        for round in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(format!("race-{round}.db"));
+            let barrier = std::sync::Barrier::new(2);
+            let results: Vec<Result<usize>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..2)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            Db::open(&path).and_then(|db| db.schema_version())
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            for result in results {
+                assert_eq!(result.unwrap(), MIGRATIONS.len(), "round {round}");
+            }
+        }
     }
 
     #[test]

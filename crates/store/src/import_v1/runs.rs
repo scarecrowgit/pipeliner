@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 use super::renders::{self, OldRender};
 use super::report::Kind;
+use crate::{ledger, runs, settings};
 use super::{Ctx, json_files, read_json, rel, secs_to_ms};
 
 /// The pipeline of runs saved before runs recorded theirs.
@@ -153,7 +154,7 @@ impl OldRun {
 /// Reads every `runs/*.json`; the ones that do not parse are reported and left out.
 pub(super) fn load_all(cx: &mut Ctx) -> Vec<ParsedRun> {
     let dir = cx.data.join("runs");
-    let files = match json_files(&dir) {
+    let files = match json_files(cx, &dir, Kind::Run) {
         Ok(files) => files,
         Err(err) => {
             cx.report.fail(Kind::Run, "runs", format!("{err:#}"));
@@ -185,14 +186,14 @@ pub(super) struct IssueInfo {
     pub(super) number: u32,
 }
 
-/// Imports one run: skipped when an earlier import finished it, otherwise written (or, in a
-/// dry run, only counted).
+/// Imports one run: skipped when an earlier import finished it (its marker is set), otherwise
+/// written (or, in a dry run, only counted). The run, its log, renders, usage and marker go in
+/// one transaction, so a failure leaves nothing for the retry to mistake for a finished run.
 pub(super) fn import_one(cx: &mut Ctx, parsed: &ParsedRun, info: Option<&IssueInfo>) -> Result<()> {
     let old = &parsed.old;
     let id = RunId::new(&old.id);
     let marker = done_marker(&old.id);
-    let existing = cx.store.run(&id)?;
-    if existing.is_some() && (cx.dry || cx.store.marker(&marker)?.is_some()) {
+    if cx.store.marker(&marker)?.is_some() {
         cx.report.skipped(Kind::Run, 1);
         return Ok(());
     }
@@ -204,22 +205,23 @@ pub(super) fn import_one(cx: &mut Ctx, parsed: &ParsedRun, info: Option<&IssueIn
         cx.report.imported(Kind::Run, 1);
         return Ok(());
     }
-    let store = cx.store;
-    store.upsert_run(&converted.run)?;
-    if store.run_log_tail(&id, 1)?.is_empty() {
-        store.append_run_log(&id, &converted.log)?;
-    }
-    if store.renders(&id)?.is_empty() {
-        for render in &renders {
-            store.add_render(&id, render)?;
+    cx.store.write(|tx| {
+        runs::upsert_run_in(tx, &converted.run)?;
+        if !runs::run_has_log_in(tx, &id)? {
+            runs::append_run_log_in(tx, &id, &converted.log)?;
         }
-    }
-    if existing.is_none() {
-        for entry in &converted.usage {
-            store.record_usage(entry)?;
+        if !runs::run_has_renders_in(tx, &id)? {
+            for render in &renders {
+                runs::add_render_in(tx, &id, render)?;
+            }
         }
-    }
-    store.set_marker(&marker, "1")?;
+        if !ledger::run_has_usage_in(tx, &id)? {
+            for entry in &converted.usage {
+                ledger::record_usage_in(tx, entry)?;
+            }
+        }
+        settings::set_marker_in(tx, &marker, "1")
+    })?;
     cx.report.imported(Kind::Run, 1);
     Ok(())
 }

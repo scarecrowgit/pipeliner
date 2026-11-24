@@ -152,3 +152,13 @@ fn feed_rows_record_their_kind() {
     let kind: String = store.db.read().query_row("SELECT event FROM issue_events", [], |r| r.get(0)).unwrap();
     assert_eq!(kind, "pr_opened");
 }
+
+#[test]
+fn raising_the_counter_only_ever_moves_it_up() {
+    let store = store();
+    assert_eq!(store.next_issue_key("HAR").unwrap().as_str(), "HAR-1");
+    store.raise_issue_counter("HAR", 1_000_000_000_000).unwrap();
+    store.raise_issue_counter("HAR", 5).unwrap();
+    assert_eq!(store.next_issue_key("HAR").unwrap().as_str(), "HAR-1000000000001");
+    assert!(store.raise_issue_counter("", 3).is_err());
+}

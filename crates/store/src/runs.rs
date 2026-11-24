@@ -51,47 +51,102 @@ fn require_run(tx: &Transaction, run: &RunId) -> Result<()> {
     Ok(())
 }
 
+/// Writes a run inside the caller's transaction; see [`Store::upsert_run`].
+pub(crate) fn upsert_run_in(tx: &Transaction, run: &Run) -> Result<()> {
+    for node in &run.nodes {
+        if let Some(worktree) = &node.worktree {
+            check_path(worktree, "node worktree")?;
+        }
+    }
+    let (nodes, usage, state) = (json(&run.nodes)?, json(&run.usage)?, tag(&run.state)?);
+    tx.prepare_cached(&format!(
+        "INSERT INTO runs ({RUN_COLUMNS}, open)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+         ON CONFLICT (id) DO UPDATE SET pipeline = excluded.pipeline, version = excluded.version,
+            issue = excluded.issue, number = excluded.number, title = excluded.title,
+            input = excluded.input, state = excluded.state, test = excluded.test,
+            started = excluded.started, finished = excluded.finished, cost_usd = excluded.cost_usd,
+            usage = excluded.usage, error = excluded.error, pr_url = excluded.pr_url,
+            nodes = excluded.nodes, open = excluded.open"
+    ))?
+    .execute(params![
+        run.id.as_str(),
+        run.pipeline.as_str(),
+        run.version,
+        run.issue.as_ref().map(IssueKey::as_str),
+        run.number,
+        run.title,
+        run.input,
+        state,
+        run.test,
+        run.started,
+        run.finished,
+        run.cost_usd,
+        usage,
+        run.error,
+        run.pr_url,
+        nodes,
+        run.state.is_open(),
+    ])?;
+    Ok(())
+}
+
+/// Appends log lines inside the caller's transaction; see [`Store::append_run_log`].
+pub(crate) fn append_run_log_in(tx: &Transaction, run: &RunId, lines: &[RunLogLine]) -> Result<Vec<RunLogLine>> {
+    let levels = lines.iter().map(|line| tag(&line.level)).collect::<Result<Vec<_>>>()?;
+    require_run(tx, run)?;
+    let mut seq: i64 =
+        tx.query_row("SELECT coalesce(max(seq), 0) FROM run_logs WHERE run = ?1", [run.as_str()], |row| {
+            row.get(0)
+        })?;
+    let mut insert = tx.prepare_cached(
+        "INSERT INTO run_logs (run, seq, at, node, variant, level, text) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    let mut stored = Vec::with_capacity(lines.len());
+    for (line, level) in lines.iter().zip(&levels) {
+        seq += 1;
+        insert.execute(params![
+            run.as_str(),
+            seq,
+            line.at,
+            line.node.as_ref().map(NodeId::as_str),
+            line.variant,
+            level,
+            line.text
+        ])?;
+        stored.push(RunLogLine { seq: seq as u64, ..line.clone() });
+    }
+    Ok(stored)
+}
+
+/// Adds a render inside the caller's transaction; see [`Store::add_render`].
+pub(crate) fn add_render_in(tx: &Transaction, run: &RunId, render: &Render) -> Result<()> {
+    let render = serde_json::to_value(render)?;
+    require_run(tx, run)?;
+    let current: String = tx.query_row("SELECT renders FROM runs WHERE id = ?1", [run.as_str()], |row| row.get(0))?;
+    let mut renders: Vec<serde_json::Value> = serde_json::from_str(&current)
+        .map_err(|err| anyhow::anyhow!("decode runs row {run}: column renders: {err}"))?;
+    renders.push(render);
+    tx.execute("UPDATE runs SET renders = ?2 WHERE id = ?1", params![run.as_str(), json(&renders)?])?;
+    Ok(())
+}
+
+/// Whether a run has any log line yet.
+pub(crate) fn run_has_log_in(tx: &Transaction, run: &RunId) -> Result<bool> {
+    Ok(tx.query_row("SELECT EXISTS (SELECT 1 FROM run_logs WHERE run = ?1)", [run.as_str()], |row| row.get(0))?)
+}
+
+/// Whether a run has any render yet.
+pub(crate) fn run_has_renders_in(tx: &Transaction, run: &RunId) -> Result<bool> {
+    let renders: Option<String> =
+        tx.query_row("SELECT renders FROM runs WHERE id = ?1", [run.as_str()], |row| row.get(0)).optional()?;
+    Ok(renders.is_some_and(|text| text.trim() != "[]"))
+}
+
 impl Store {
     /// Creates a run or replaces it with its node instances. Logs and renders are kept.
     pub fn upsert_run(&self, run: &Run) -> Result<()> {
-        for node in &run.nodes {
-            if let Some(worktree) = &node.worktree {
-                check_path(worktree, "node worktree")?;
-            }
-        }
-        let (nodes, usage, state) = (json(&run.nodes)?, json(&run.usage)?, tag(&run.state)?);
-        self.write(|tx| {
-            tx.prepare_cached(&format!(
-                "INSERT INTO runs ({RUN_COLUMNS}, open)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
-                 ON CONFLICT (id) DO UPDATE SET pipeline = excluded.pipeline, version = excluded.version,
-                    issue = excluded.issue, number = excluded.number, title = excluded.title,
-                    input = excluded.input, state = excluded.state, test = excluded.test,
-                    started = excluded.started, finished = excluded.finished, cost_usd = excluded.cost_usd,
-                    usage = excluded.usage, error = excluded.error, pr_url = excluded.pr_url,
-                    nodes = excluded.nodes, open = excluded.open"
-            ))?
-            .execute(params![
-                run.id.as_str(),
-                run.pipeline.as_str(),
-                run.version,
-                run.issue.as_ref().map(IssueKey::as_str),
-                run.number,
-                run.title,
-                run.input,
-                state,
-                run.test,
-                run.started,
-                run.finished,
-                run.cost_usd,
-                usage,
-                run.error,
-                run.pr_url,
-                nodes,
-                run.state.is_open(),
-            ])?;
-            Ok(())
-        })
+        self.write(|tx| upsert_run_in(tx, run))
     }
 
     /// One run.
@@ -176,32 +231,7 @@ impl Store {
     /// Appends lines to a run's log, numbering them after the last one (the `seq` of each
     /// line is ignored). Returns the lines as stored.
     pub fn append_run_log(&self, run: &RunId, lines: &[RunLogLine]) -> Result<Vec<RunLogLine>> {
-        let levels = lines.iter().map(|line| tag(&line.level)).collect::<Result<Vec<_>>>()?;
-        self.write(|tx| {
-            require_run(tx, run)?;
-            let mut seq: i64 =
-                tx.query_row("SELECT coalesce(max(seq), 0) FROM run_logs WHERE run = ?1", [run.as_str()], |row| {
-                    row.get(0)
-                })?;
-            let mut insert = tx.prepare_cached(
-                "INSERT INTO run_logs (run, seq, at, node, variant, level, text) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )?;
-            let mut stored = Vec::with_capacity(lines.len());
-            for (line, level) in lines.iter().zip(&levels) {
-                seq += 1;
-                insert.execute(params![
-                    run.as_str(),
-                    seq,
-                    line.at,
-                    line.node.as_ref().map(NodeId::as_str),
-                    line.variant,
-                    level,
-                    line.text
-                ])?;
-                stored.push(RunLogLine { seq: seq as u64, ..line.clone() });
-            }
-            Ok(stored)
-        })
+        self.write(|tx| append_run_log_in(tx, run, lines))
     }
 
     /// Up to `limit` log lines after `after_seq` (0 for the start), in order.
@@ -237,16 +267,7 @@ impl Store {
 
     /// Adds a rendered before/after picture to a run.
     pub fn add_render(&self, run: &RunId, render: &Render) -> Result<()> {
-        let render = serde_json::to_value(render)?;
-        self.write(|tx| {
-            require_run(tx, run)?;
-            let current: String = tx.query_row("SELECT renders FROM runs WHERE id = ?1", [run.as_str()], |row| row.get(0))?;
-            let mut renders: Vec<serde_json::Value> = serde_json::from_str(&current)
-                .map_err(|err| anyhow::anyhow!("decode runs row {run}: column renders: {err}"))?;
-            renders.push(render);
-            tx.execute("UPDATE runs SET renders = ?2 WHERE id = ?1", params![run.as_str(), json(&renders)?])?;
-            Ok(())
-        })
+        self.write(|tx| add_render_in(tx, run, render))
     }
 
     /// A run's renders in the order they were added; empty for an unknown run.
