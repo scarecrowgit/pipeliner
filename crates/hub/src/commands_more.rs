@@ -37,6 +37,18 @@ impl Commands {
         self.fire("resume the run", cx, move |api| api.resume_run(&id));
     }
 
+    /// Answers the question an agent of the run waits on (`node` when several ask).
+    pub fn answer_run(&self, id: &RunId, node: Option<&crate::api::NodeId>, text: &str, cx: &mut App) {
+        let (id, node, text) = (id.clone(), node.cloned(), text.to_string());
+        self.fire("answer the agent", cx, move |api| api.answer_run(&id, node.as_ref(), &text));
+    }
+
+    /// Lets the run spend `usd` more and continue.
+    pub fn raise_run_budget(&self, id: &RunId, usd: f64, cx: &mut App) {
+        let id = id.clone();
+        self.fire("raise the run's budget", cx, move |api| api.raise_run_budget(&id, usd));
+    }
+
     // ------------------------------------------------------------ inbox
 
     /// Marks an inbox item read or unread.

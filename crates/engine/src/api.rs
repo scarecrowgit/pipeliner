@@ -290,6 +290,11 @@ pub trait RunApi {
     fn cancel_run(&self, id: &RunId) -> Result<()>;
     /// Continues an interrupted or failed run from where it stopped.
     fn resume_run(&self, id: &RunId) -> Result<()>;
+    /// Answers the question an agent of the run waits on: the instance of `node` when given,
+    /// else the only one that asks.
+    fn answer_run(&self, id: &RunId, node: Option<&NodeId>, text: &str) -> Result<()>;
+    /// Allows the run to spend `usd` more, and continues what stopped at its budget.
+    fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()>;
 }
 
 // ---------------------------------------------------------------- reviews and inbox

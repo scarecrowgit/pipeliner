@@ -2,6 +2,7 @@
 //! the question its open run waits on); an agent or orchestrator gets a chat on the issue.
 //! Every wake-up is recorded in the issue's feed, as `Woken` or `WakeFailed` with the reason.
 
+use crate::api::RunApi as _;
 use anyhow::{Result, anyhow, bail};
 use issues::{Happening, WakeIntent, WakeMode};
 use model::{Actor, Issue, IssueEventKind, PipelineId, RunId, RunState, RunnableRef, WorkMode};

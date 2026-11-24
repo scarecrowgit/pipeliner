@@ -79,31 +79,6 @@ impl Engine {
         let run = shell(&self.inner, &graph.id, version, &item.title, &item.text, test);
         pipelines::launch(&self.inner, graph, run, item)
     }
-
-    /// Answers the question an agent of the run waits on: the instance of `node` when given,
-    /// else the only one that asks.
-    pub fn answer_run(&self, id: &RunId, node: Option<&model::NodeId>, text: &str) -> Result<()> {
-        if text.trim().is_empty() {
-            bail!("The answer is empty");
-        }
-        let run = self.inner.run_or_fail(id)?;
-        let asking: Vec<_> = run.nodes.iter().filter(|n| n.question.is_some() && node.is_none_or(|id| &n.node == id)).collect();
-        let instance = match asking.as_slice() {
-            [one] => *one,
-            [] => bail!("No agent of run {id} waits for an answer"),
-            _ => bail!("Several agents of run {id} ask something; name the node to answer"),
-        };
-        let key = pipeline::InstanceKey { node: instance.node.clone(), variant: instance.variant, attempt: instance.attempt };
-        let handle = pipelines::handle(&self.inner, id)?;
-        handle.answer(key.clone(), text.trim().to_string()).map_err(|e| anyhow!("{e}"))?;
-        pipelines::resolve(&self.inner, &pipelines::question_inbox_id(id, &key))
-    }
-
-    /// Allows the run to spend `usd` more, and continues what stopped at its budget.
-    pub fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()> {
-        self.inner.run_or_fail(id)?;
-        pipelines::handle(&self.inner, id)?.raise_budget(usd).map_err(|e| anyhow!("{e}"))
-    }
 }
 
 impl RunApi for Engine {
@@ -187,5 +162,30 @@ impl RunApi for Engine {
             self.inner.publish(Event::RunChanged { run });
         }
         Ok(())
+    }
+
+    /// Answers the question an agent of the run waits on: the instance of `node` when given,
+    /// else the only one that asks.
+    fn answer_run(&self, id: &RunId, node: Option<&model::NodeId>, text: &str) -> Result<()> {
+        if text.trim().is_empty() {
+            bail!("The answer is empty");
+        }
+        let run = self.inner.run_or_fail(id)?;
+        let asking: Vec<_> = run.nodes.iter().filter(|n| n.question.is_some() && node.is_none_or(|id| &n.node == id)).collect();
+        let instance = match asking.as_slice() {
+            [one] => *one,
+            [] => bail!("No agent of run {id} waits for an answer"),
+            _ => bail!("Several agents of run {id} ask something; name the node to answer"),
+        };
+        let key = pipeline::InstanceKey { node: instance.node.clone(), variant: instance.variant, attempt: instance.attempt };
+        let handle = pipelines::handle(&self.inner, id)?;
+        handle.answer(key.clone(), text.trim().to_string()).map_err(|e| anyhow!("{e}"))?;
+        pipelines::resolve(&self.inner, &pipelines::question_inbox_id(id, &key))
+    }
+
+    /// Allows the run to spend `usd` more, and continues what stopped at its budget.
+    fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()> {
+        self.inner.run_or_fail(id)?;
+        pipelines::handle(&self.inner, id)?.raise_budget(usd).map_err(|e| anyhow!("{e}"))
     }
 }

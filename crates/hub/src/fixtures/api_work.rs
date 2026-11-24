@@ -308,6 +308,17 @@ impl RunApi for FixtureApi {
         self.record("resume_run", id.to_string())?;
         self.set_run_state(id, RunState::Running)
     }
+
+    fn answer_run(&self, id: &RunId, node: Option<&crate::api::NodeId>, text: &str) -> Result<()> {
+        let node = node.map(ToString::to_string).unwrap_or_default();
+        self.record("answer_run", format!("{id} {node} {text}"))?;
+        self.set_run_state(id, RunState::Running)
+    }
+
+    fn raise_run_budget(&self, id: &RunId, usd: f64) -> Result<()> {
+        self.record("raise_run_budget", format!("{id} {usd}"))?;
+        self.set_run_state(id, RunState::Running)
+    }
 }
 
 impl InboxApi for FixtureApi {
