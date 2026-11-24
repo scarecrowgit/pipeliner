@@ -190,7 +190,7 @@ impl TranscriptView {
             None => line_row(place, &tool.name, "", "", status),
             Some(ToolDisplay::Line { verb, target, result }) => line_row(place, verb, target, result, status),
             Some(ToolDisplay::Command { command, output, .. }) => self.command_card(index, block, command, output, status, cx),
-            Some(ToolDisplay::Diff(file)) => self.diff_card(block, tool, file, status),
+            Some(ToolDisplay::Diff(file)) => self.diff_card(block, tool, file, status, cx),
             Some(ToolDisplay::Text { title, body }) => self.text_card(index, block, title, body, status, cx),
         };
         let selector = probe.clone();
@@ -286,9 +286,26 @@ impl TranscriptView {
     }
 
     /// An edit or a new file: the kit's diff card with `edit`, the path and `+3 −2`.
-    fn diff_card(&mut self, block: &Arc<Block>, tool: &ToolBlock, file: &FileDiff, status: ToolStatus) -> AnyElement {
+    fn diff_card(
+        &mut self,
+        block: &Arc<Block>,
+        tool: &ToolBlock,
+        file: &FileDiff,
+        status: ToolStatus,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let diff = self.diff_file(block, file);
-        DiffCard::new(ElementId::NamedInteger("edit".into(), block.id), diff)
+        let id = block.id;
+        let state = self.ui.get(&id).map(|ui| ui.diff).unwrap_or_default();
+        let this = cx.weak_entity();
+        DiffCard::new(ElementId::NamedInteger("edit".into(), id), diff)
+            .state(state, move |state, _, cx| {
+                this.update(cx, |this, cx| {
+                    this.ui.entry(id).or_default().diff = state;
+                    cx.notify();
+                })
+                .ok();
+            })
             .label(diff_verb(&tool.name, file))
             .compact()
             .collapse_after(DIFF_CLAMP)

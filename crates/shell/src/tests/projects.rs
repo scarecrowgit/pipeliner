@@ -8,7 +8,8 @@ use hub::api::{PipelineId, ProjectId};
 use super::{setup, setup_with_width};
 use crate::sidebar::limits::{LIMITS_DIALOG, parse_amount};
 use crate::sidebar::projects::form::{DELETE_DIALOG, FORM_DIALOG, clean_prefix, problem, suggest_prefix};
-use crate::sidebar::projects::{ANCHOR, matches};
+use crate::sidebar::next_run_label;
+use crate::sidebar::projects::{ANCHOR, matches, state_word};
 
 fn current(t: &super::Setup) -> Option<String> {
     t.settings().current_project.map(|id| id.to_string())
@@ -60,7 +61,7 @@ fn a_new_project_checks_its_folders_and_becomes_current(cx: &mut TestAppContext)
 
     t.click("project-form-save");
     assert!(!t.open(FORM_DIALOG));
-    assert_eq!(t.recorded("save_project"), ["Billing service"]);
+    assert_eq!(t.recorded("create_project"), ["Billing service"]);
     let project = t.api.with_world(|world| world.projects.iter().find(|p| p.name == "Billing service").cloned());
     let project = project.expect("the project was saved");
     assert_eq!(project.key_prefix, "BILL");
@@ -104,7 +105,7 @@ fn the_limits_dialog_saves_the_limit_and_slots(cx: &mut TestAppContext) {
     t.typed("abc");
     t.click("limits-save");
     assert!(t.open(LIMITS_DIALOG), "a bad amount keeps the dialog open");
-    assert!(t.recorded("set_settings").is_empty());
+    assert!(t.recorded("set_daily_limit").is_empty() && t.recorded("set_slots").is_empty());
 
     t.click("limits-amount");
     t.keys("ctrl-a");
@@ -189,4 +190,30 @@ fn amounts_parse_with_or_without_a_dollar_sign() {
     assert_eq!(parse_amount("7,5"), Some(7.5));
     assert_eq!(parse_amount("0"), None);
     assert_eq!(parse_amount("ten"), None);
+}
+
+#[gpui::test]
+fn the_switcher_loads_live_counts_and_switches_through_the_engine(cx: &mut TestAppContext) {
+    let mut t = setup(cx);
+    let ops = t.cx.update(|_, cx| hub::ops(cx));
+    let loaded = |t: &mut super::Setup| t.cx.update(|_, cx| ops.read(cx).counts_for(&ProjectId::new("payments")).is_some());
+    assert!(!loaded(&mut t), "counts are read when the switcher first opens");
+    t.click("sidebar-project");
+    assert!(loaded(&mut t));
+    t.click("project-checkout");
+    assert_eq!(t.recorded("set_current_project"), ["checkout"]);
+    assert!(t.recorded("set_settings").is_empty(), "switching does not rewrite the settings");
+}
+
+#[test]
+fn project_states_and_next_runs_read_as_drawn() {
+    assert_eq!(state_word(2), "2 running");
+    assert_eq!(state_word(0), "idle");
+    let hour = 60 * 60 * 1000;
+    let now = 1_795_000_000_000;
+    let soon = next_run_label(now, now + 3 * hour);
+    assert_eq!(soon.len(), 5, "a clock time within a day: {soon}");
+    assert!(soon.contains(':'));
+    let later = next_run_label(now, now + 50 * hour);
+    assert!(!later.contains(':'), "a weekday further out: {later}");
 }

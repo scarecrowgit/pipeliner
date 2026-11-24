@@ -129,7 +129,7 @@ pub(super) fn dir_row(
     faded
         .apply(el)
         .child(icon(IconName::Folder, 14., TEXT_MUTED))
-        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(dir.name.clone())))
+        .child(div().flex_1().min_w_0().type_style(MONO).child(crate::workdir::common::line_text(dir.name.clone(), MONO.line)))
         .when(dir.is_repo, |d| d.child(Badge::new("repo").square()))
         .probe(name)
         .into_any_element()

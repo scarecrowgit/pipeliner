@@ -147,21 +147,46 @@ fn popover(view: &Entity<SessionView>, cx: &App) -> AnyElement {
             .icon(icon)
             .hint(hint)
             .on_click(move |_, window, cx| v.update(cx, |this, cx| this.export(format, window, cx)))
-            .probe(id)
+            .probe_name(id)
     };
     Popover::new()
         .width(400.)
         .title("Share this chat")
         .subtitle("A read-only copy of the thread as it is now. New messages show up as you send them.")
-        .child(MenuItem::new("chat-share-only-me", "Only me").subline("Nobody else can open it").checked(true))
-        .child(MenuItem::new("chat-share-workspace", "People in your workspace").subline("Can read and fork, can’t reply").check_column().coming_soon())
-        .child(MenuItem::new("chat-share-anyone", "Anyone with the link").subline("Read-only, no sign-in").check_column().coming_soon())
+        .child(access_row("chat-share-only-me", "Only me", "Nobody else can open it", true))
+        .child(access_row("chat-share-workspace", "People in your workspace", "Can read and fork, can’t reply", false))
+        .child(access_row("chat-share-anyone", "Anyone with the link", "Read-only, no sign-in", false))
         .child(PopSeparator)
         .child(include)
         .child(PopSeparator)
         .child(export("chat-share-markdown", "Export as Markdown", ".md", IconName::File, ExportFormat::Markdown))
         .child(export("chat-share-jsonl", "Export transcript", ".jsonl · with tool calls", IconName::Download, ExportFormat::Jsonl))
         .into_any_element()
+}
+
+/// Who can open the copy (`.mi` with a radio): only the person for now; the hosted choices
+/// are drawn as the mockup draws them, disabled, with "Coming soon".
+fn access_row(id: &'static str, label: &'static str, sub: &'static str, selected: bool) -> impl IntoElement {
+    let soon = !selected;
+    let fg = if soon { TEXT_DISABLED } else { TEXT };
+    row()
+        .id(id)
+        .debug_selector(move || id.into())
+        .min_h(px(MENU_ITEM_HEIGHT))
+        .gap(px(SPACE_2_5))
+        .px(px(SPACE_2_5))
+        .py(px(SPACE_1_5))
+        .rounded(px(RADIUS_MD))
+        .child(div().flex_none().child(Radio::new((id, 0usize), selected).disabled(soon)))
+        .child(
+            col()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_color(fg).child(label))
+                .child(div().type_style(LABEL).text_color(if soon { TEXT_DISABLED } else { TEXT_MUTED }).child(sub)),
+        )
+        .when(soon, |d| d.child(Tag::new("Coming soon")))
+        .probe(id)
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use hub::api::Api;
 use hub::fixtures::{FixtureApi, SCENARIOS, start_route};
-use hub::{Hub, Overlay};
+use hub::Hub;
 
 /// What the command line asked for.
 struct Args {
@@ -97,22 +97,11 @@ fn main() {
         };
         let opened = cx.open_window(options, |window, cx| {
             let (shell, root) = shell::mount(screens::all(), window, cx);
-            // The palette is built anew each time it opens: it takes focus and starts from an
-            // empty query on creation.
-            let router = hub::router(cx);
+            // The palette is built anew each time it opens: it starts from an empty query.
             let hub = hub::hub(cx);
-            let mut was_open = false;
-            let slot = shell.downgrade();
-            window
-                .observe(&router, cx, move |router, window, cx| {
-                    let open = router.read(cx).is_open(Overlay::Palette);
-                    if open && !was_open {
-                        let view = cx.new(|cx| palette::Palette::new(&hub, window, cx));
-                        slot.update(cx, |shell, cx| shell.set_palette(view, window, cx)).ok();
-                    }
-                    was_open = open;
-                })
-                .detach();
+            shell.update(cx, |shell, cx| {
+                shell.set_palette(move |window, cx| cx.new(|cx| palette::Palette::new(&hub, window, cx)).into(), window, cx)
+            });
             root
         });
         if let Err(error) = opened {

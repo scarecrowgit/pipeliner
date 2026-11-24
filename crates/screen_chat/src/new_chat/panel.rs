@@ -11,7 +11,8 @@ use ui_rich::text_field;
 
 use super::NewChatView;
 use crate::workdir::common::{
-    self, Blocker, blocker_line, display_path, folder_name, git_state, host_label, mode_cards, remote_owner,
+    self, Blocker, blocker_line, display_path, folder_name, git_state, host_label, line_text, mode_cards, path_line,
+    remote_owner,
 };
 
 /// Width of the panel, px (the mockup's 400).
@@ -89,7 +90,7 @@ impl NewChatView {
                                         .type_style(HEADING)
                                         .font_family(FONT_MONO)
                                         .debug_selector(|| "new-chat-panel-name".into())
-                                        .child(truncate_lh(folder_name(&path), HEADING.line))
+                                        .child(line_text(folder_name(&path), HEADING.line))
                                         .probe("new-chat-panel-name"),
                                 ),
                             )
@@ -101,10 +102,7 @@ impl NewChatView {
                                         .type_style(MONO_SM)
                                         .text_color(TEXT_MUTED)
                                         .debug_selector(|| "new-chat-panel-path".into())
-                                        .child(truncate_lh(
-                                            format!("{runtime} · {}", display_path(&path, cx)),
-                                            MONO_SM.line,
-                                        ))
+                                        .child(path_line(format!("{runtime} · {}", display_path(&path, cx)), MONO_SM.line))
                                         .probe("new-chat-panel-path"),
                                 ),
                             ),
@@ -133,7 +131,7 @@ impl NewChatView {
                             .flex_shrink()
                             .min_w_0()
                             .type_style(MONO)
-                            .child(truncate(entry.branch.clone().unwrap_or_default())),
+                            .child(line_text(entry.branch.clone().unwrap_or_default(), MONO.line)),
                     ),
             );
         }

@@ -10,7 +10,7 @@ use ui_rich::text_field;
 
 use super::NewChatView;
 use super::complete::dir_row;
-use crate::workdir::common::{Blocker, FolderRow, display_path, folder_name, mode_words, radio, short_path};
+use crate::workdir::common::{Blocker, FolderRow, display_path, folder_name, line_text, mode_words, path_line, radio};
 
 /// Width of the folder column's content, px.
 const COLUMN: f32 = 720.;
@@ -287,7 +287,14 @@ impl NewChatView {
                     .child(summary)
                     .child(note.type_style(LABEL)),
             )
-            .child(div().flex_none().child(KeyHints::new().hint(["↑", "↓"], "move").hint(["⌘O"], "open folder")))
+            // Stacked, as drawn: the summary keeps the room.
+            .child(
+                col()
+                    .flex_none()
+                    .gap(px(SPACE_1))
+                    .child(KeyHints::new().hint(["↑", "↓"], "move"))
+                    .child(KeyHints::new().hint(["⌘O"], "open folder")),
+            )
             .child(
                 Button::new("new-chat-start", label)
                     .primary()
@@ -306,6 +313,9 @@ impl NewChatView {
         let runtime = self.runtime(cx).map_or_else(|| "this machine".to_string(), |runtime| runtime.name);
         let muted = |text: String| div().flex_none().text_color(TEXT_MUTED).child(text);
         let mono = |text: String| div().flex_none().font_family(FONT_MONO).type_style(MONO).child(text);
+        // The branch gives way first: it ends in `…` rather than being clipped.
+        let branch_cell =
+            |text: String| div().flex_shrink().min_w_0().font_family(FONT_MONO).type_style(MONO).child(line_text(text, MONO.line));
         let mut line = row()
             .gap(px(SPACE_1))
             .overflow_hidden()
@@ -316,13 +326,13 @@ impl NewChatView {
         if self.mode == WorkMode::Worktree {
             let branch = self.branch.read(cx).text().to_string();
             if !branch.is_empty() {
-                line = line.child(mono(branch));
+                line = line.child(branch_cell(branch));
             }
             if let Some(base) = &self.base {
                 line = line.child(muted("from".into())).child(mono(base.clone()));
             }
         } else if let Some(branch) = self.facts.branch() {
-            line = line.child(muted("on".into())).child(mono(branch.to_string()));
+            line = line.child(muted("on".into())).child(branch_cell(branch.to_string()));
         }
         line.into_any_element()
     }
@@ -348,7 +358,7 @@ fn group_head(title: &str, meta: String) -> impl IntoElement {
                 .overflow_hidden()
                 .type_style(MONO_SM)
                 .text_right()
-                .child(truncate_lh(short_path(&meta, 64), MONO_SM.line)),
+                .child(path_line(meta, MONO_SM.line).justify_end()),
         )
 }
 
@@ -394,7 +404,7 @@ fn typed_row(
                     row()
                         .gap(px(SPACE_1_5))
                         .child(div().flex_none().type_style(BODY_STRONG).child("Open"))
-                        .child(div().flex_1().min_w_0().type_style(MONO).child(truncate(display_path(path, cx)))),
+                        .child(div().flex_1().min_w_0().type_style(MONO).child(path_line(display_path(path, cx), MONO.line))),
                 )
                 .child(div().type_style(LABEL).text_color(tone).child(sub)),
         )

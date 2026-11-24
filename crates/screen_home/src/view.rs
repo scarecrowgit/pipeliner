@@ -1,12 +1,11 @@
 //! The Home view: its state, the header parts, the keyboard and the page that holds the blocks.
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, MouseButton,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent, MouseButton,
     Render, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use hub::api::Period;
 use hub::{CatalogModel, OpsModel, Route};
-use ui::motion::{self, Look};
 use ui::prelude::*;
 
 use crate::blocks::{Block, block, probed};
@@ -112,42 +111,18 @@ impl HomeView {
     }
 
     /// `.seg`: a raised track with a thumb under the chosen period.
-    fn period_switch(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let options: Vec<AnyElement> = PERIODS
-            .into_iter()
-            .enumerate()
-            .map(|(ix, option)| {
-                let chosen = option == self.period;
-                let id = gpui::ElementId::from(("home-period", ix));
-                let bg = if chosen { SURFACE_HOVER } else { TRANSPARENT };
-                let rest = Look::bg(bg).fg(if chosen { TEXT } else { TEXT_MUTED });
-                let hover = Look::bg(bg).fg(TEXT);
-                let style = if chosen { TypeStyle { weight: FontWeight::MEDIUM, ..BODY } } else { BODY };
-                let el = motion::hover_fade(div().id(id.clone()), id, rest, hover, window, cx)
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .px(px(SPACE_3))
-                    .rounded(px(RADIUS_MD))
-                    .type_style(style)
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .child(period::label(option))
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_period(option, cx)));
-                probed(el, format!("home-period-{}", period::name(option))).into_any_element()
+    fn period_switch(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let selected = PERIODS.iter().position(|option| *option == self.period).unwrap_or(0);
+        let seg = PERIODS.into_iter().fold(Segmented::new("home-period"), |seg, option| {
+            seg.option(period::label(option)).option_probe(format!("home-period-{}", period::name(option)))
+        });
+        let view = cx.entity();
+        seg.selected(selected)
+            .on_select(move |ix, _, cx| {
+                if let Some(option) = PERIODS.get(ix).copied() {
+                    view.update(cx, |this, cx| this.set_period(option, cx));
+                }
             })
-            .collect();
-        row()
-            .flex_none()
-            .h(px(CONTROL_HEIGHT))
-            .p(px(3.))
-            .gap(px(SPACE_0_5))
-            .bg(SURFACE_RAISED)
-            .border_1()
-            .border_color(LINE_STRONG)
-            .rounded(px(RADIUS_LG))
-            .children(options)
             .into_any_element()
     }
 

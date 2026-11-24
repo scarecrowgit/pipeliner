@@ -4,22 +4,22 @@
 //! # Mounting
 //!
 //! The router decides when it is open: `Router::open_overlay(Overlay::Palette)` (the shell binds
-//! Cmd-K to `toggle_overlay`). The shell then draws a [`Palette`] as the last child of its root,
-//! over everything, and drops it when the overlay leaves the router:
+//! Cmd-K to `toggle_overlay`). The shell then builds a new [`Palette`] and opens it as a dialog
+//! layer of the overlay host (`Overlays::open_dialog_view`), which draws the scrim, centres the
+//! panel and fades it in and out; when the overlay leaves the router the shell closes the layer:
 //!
 //! ```ignore
 //! // once at startup, after ui::init and ui_rich::bind_keys
 //! palette::init(cx);
 //!
-//! // in the shell, when the router's overlay becomes `Overlay::Palette`
-//! self.palette = Some(cx.new(|cx| Palette::new(&hub, window, cx)));
-//! // in render, while the router has it open
-//! root.relative().children(self.palette.clone())
+//! // in the shell, when the router opens `Overlay::Palette`
+//! let palette = cx.new(|cx| Palette::new(&hub, window, cx));
+//! ui::overlays(window, cx).open_dialog_view("palette", palette, close_the_router_overlay, window, cx);
 //! ```
 //!
-//! A new palette starts from an empty query with its field focused. It closes itself by clearing
-//! the overlay in the router (Escape, a press on the scrim, the Esc key cap) after a 100 ms fade,
-//! or by navigating to the chosen chat, which clears every overlay.
+//! A new palette starts from an empty query and focuses its field when first drawn. It closes
+//! by clearing the overlay in the router (Escape, the Esc key cap), by navigating to the chosen
+//! chat, which clears every overlay, or by a press on the layer's scrim.
 //!
 //! # Keys
 //!

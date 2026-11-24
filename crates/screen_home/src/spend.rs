@@ -206,21 +206,11 @@ impl HomeView {
     }
 }
 
-/// The rows, with a probe over each (the kit's bars draw them as one element).
+/// The rows, each probed `home-agent-<n>`.
 fn agent_rows(rows: &[SpendByRunnable]) -> AnyElement {
-    let bars = ValueBars::new(rows.iter().map(|row| {
-        let value = ValueRow::new(row.name.clone(), row.cost_usd);
+    ValueBars::new(rows.iter().enumerate().map(|(ix, row)| {
+        let value = ValueRow::new(row.name.clone(), row.cost_usd).probe(format!("home-agent-{ix}"));
         if row.spawned { value.spawn() } else { value }
-    }));
-    div()
-        .relative()
-        .w_full()
-        .child(bars)
-        .children(rows.iter().enumerate().map(|(ix, _)| {
-            probed(
-                div().absolute().left_0().right_0().top(px(AGENT_ROW * ix as f32)).h(px(AGENT_ROW)),
-                format!("home-agent-{ix}"),
-            )
-        }))
-        .into_any_element()
+    }))
+    .into_any_element()
 }

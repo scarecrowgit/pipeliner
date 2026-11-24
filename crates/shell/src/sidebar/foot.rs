@@ -52,7 +52,6 @@ impl Sidebar {
             .mt(px(SPACE_2))
             .mx(px(-SPACE_2))
             .pt(px(SPACE_3))
-            .pb(px(SPACE_1))
             .px(px(SPACE_4))
             .border_t_1()
             .border_color(LINE)
@@ -200,7 +199,7 @@ fn spend_popover(ops: &OpsModel) -> AnyElement {
                 .icon(IconName::Settings)
                 .hint("Settings")
                 .on_click(|_, window, cx| super::limits::open(window, cx))
-                .probe("spend-limits"),
+                .probe_name("spend-limits"),
         )
         .into_any_element()
 }

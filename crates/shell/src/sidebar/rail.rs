@@ -86,7 +86,6 @@ impl Sidebar {
         let spend_block = col()
             .id(SPEND_ANCHOR)
             .debug_selector(|| SPEND_ANCHOR.into())
-            .mt_auto()
             .flex_none()
             .items_center()
             .gap(px(SPACE_1_5))
@@ -105,33 +104,40 @@ impl Sidebar {
             .flex_none()
             .h_full()
             .items_center()
-            .gap(px(SPACE_1))
             .py(px(SPACE_3))
-            .child(expand)
             .child(
-                IconButton::new("sidebar-search", IconName::Search)
-                    .rail()
-                    .tooltip("Search · ⌘K")
-                    .on_click(|_, _, cx| open_palette(cx))
-                    .probe("sidebar-search"),
-            )
-            .child(
-                IconButton::new("sidebar-new-chat", IconName::Edit)
-                    .rail()
-                    .tooltip("New chat · ⌘N")
-                    .on_click(|_, _, cx| hub::navigate(Route::NewChat, cx))
-                    .probe("sidebar-new-chat"),
+                col()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(SPACE_1))
+                    .child(expand)
+                    .child(
+                        IconButton::new("sidebar-search", IconName::Search)
+                            .rail()
+                            .tooltip("Search · ⌘K")
+                            .on_click(|_, _, cx| open_palette(cx))
+                            .probe("sidebar-search"),
+                    )
+                    .child(
+                        IconButton::new("sidebar-new-chat", IconName::Edit)
+                            .rail()
+                            .tooltip("New chat · ⌘N")
+                            .on_click(|_, _, cx| hub::navigate(Route::NewChat, cx))
+                            .probe("sidebar-new-chat"),
+                    ),
             )
             .child(rule())
             .child(col().flex_none().items_center().gap(px(SPACE_1)).children(nav))
             .child(rule())
-            .children(pipelines)
+            .child(col().flex_none().items_center().gap(px(SPACE_1)).children(pipelines))
+            .child(div().flex_1().min_h_0())
             .child(spend_block)
             .into_any_element()
     }
 }
 
-/// `.rail hr`: a 24px hairline between groups.
+/// `.rail hr`: a 24px hairline between groups, 10px clear of them (the rail's 4px gap and the
+/// rule's own 6px margin in the mockup).
 fn rule() -> impl IntoElement {
-    div().flex_none().w(px(SPACE_6)).h(px(1.)).my(px(SPACE_1_5)).bg(LINE)
+    div().flex_none().w(px(SPACE_6)).h(px(1.)).my(px(SPACE_1 + SPACE_1_5)).bg(LINE)
 }

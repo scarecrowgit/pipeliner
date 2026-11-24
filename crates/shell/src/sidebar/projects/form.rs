@@ -170,28 +170,24 @@ impl ProjectForm {
             cx.notify();
             return false;
         }
-        let id = match &self.editing {
-            Some(project) => project.id.clone(),
-            None => fresh_id(&name, &self.others),
-        };
-        let project = Project { id: id.clone(), name, key_prefix: prefix, repos: self.repos.clone() };
-        hub::commands(cx).save_project(project, cx);
-        if self.editing.is_none() {
-            switch_to(&id, cx);
+        match &self.editing {
+            Some(project) => {
+                let project = Project { id: project.id.clone(), name, key_prefix: prefix, repos: self.repos.clone() };
+                hub::commands(cx).save_project(project, cx);
+            }
+            None => {
+                let new = hub::api::NewProject { name, key_prefix: prefix, repos: self.repos.clone() };
+                let created = hub::commands(cx).create_project(new, cx);
+                cx.spawn(async move |_, cx| {
+                    if let Some(project) = created.await {
+                        cx.update(|cx| hub::commands(cx).set_current_project(&project.id, cx)).ok();
+                    }
+                })
+                .detach();
+            }
         }
         true
     }
-}
-
-/// An id for a new project: the slug of its name, made unique.
-fn fresh_id(name: &str, others: &[Project]) -> ProjectId {
-    let base = base::id::slug(name, 32);
-    let taken = |id: &str| others.iter().any(|p| p.id.as_str() == id);
-    if !taken(&base) {
-        return ProjectId::new(base);
-    }
-    let n = (2..).find(|n| !taken(&format!("{base}-{n}"))).unwrap_or(2);
-    ProjectId::new(format!("{base}-{n}"))
 }
 
 /// "New project…".

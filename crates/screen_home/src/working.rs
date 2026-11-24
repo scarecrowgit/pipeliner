@@ -18,12 +18,12 @@ enum Width {
 
 /// `Who, Working on, Runtime, Time, Cost, State`.
 const COLUMNS: [(&str, Width, bool); 6] = [
-    ("Who", Width::Flex(1.), false),
-    ("Working on", Width::Flex(1.25), false),
-    ("Runtime", Width::Fixed(84.), false),
-    ("Time", Width::Fixed(56.), true),
-    ("Cost", Width::Fixed(64.), true),
-    ("State", Width::Fixed(200.), false),
+    ("Who", Width::Flex(1.07), false),
+    ("Working on", Width::Flex(1.), false),
+    ("Runtime", Width::Fixed(92.), false),
+    ("Time", Width::Fixed(48.), true),
+    ("Cost", Width::Fixed(60.), true),
+    ("State", Width::Fixed(164.), false),
 ];
 
 /// One cell of the table: padded like `.tbl td`, sized by its column.

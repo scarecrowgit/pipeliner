@@ -3,7 +3,9 @@
 
 use std::collections::HashMap;
 
-use gpui::{AnyView, Context, Entity, IntoElement, Render, Subscription, Window, div, prelude::*, px};
+use std::rc::Rc;
+
+use gpui::{AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window, div, prelude::*, px};
 use hub::{HubNotice, Overlay, Route, Router};
 use ui::prelude::*;
 
@@ -15,6 +17,9 @@ use crate::sidebar::Sidebar;
 
 /// The overlay key of the palette's dialog layer.
 pub const PALETTE_LAYER: &str = "palette";
+
+/// Builds a fresh palette view each time the palette opens.
+type PaletteFactory = Rc<dyn Fn(&mut Window, &mut App) -> AnyView>;
 
 /// The screen on show.
 struct Current {
@@ -32,9 +37,7 @@ pub struct Shell {
     current: Option<Current>,
     sidebar: Entity<Sidebar>,
     router: Entity<Router>,
-    palette: Option<AnyView>,
-    /// The palette's layer was opened by us and not seen closing yet.
-    palette_shown: bool,
+    palette: Option<PaletteFactory>,
     mounts: usize,
     _subscriptions: Vec<Subscription>,
 }
@@ -60,7 +63,6 @@ impl Shell {
             sidebar,
             router,
             palette: None,
-            palette_shown: false,
             mounts: 0,
             _subscriptions: subscriptions,
         };
@@ -71,11 +73,18 @@ impl Shell {
         shell
     }
 
-    /// Mount the palette: the view shown in a dialog layer while the router has
-    /// [`Overlay::Palette`] open. It positions itself in the layer and must occlude what is
-    /// under it (a `ui::Dialog` does both).
-    pub fn set_palette(&mut self, view: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) {
-        self.palette = Some(view.into());
+    /// Mount the palette: `build` makes the view shown in a dialog layer each time the router
+    /// opens [`Overlay::Palette`], so every opening starts afresh. The view positions itself
+    /// in the layer and must occlude what is under it; the layer gives it the scrim, the fade
+    /// and Escape. When the layer closes on its own (Escape, a press on the scrim) the router
+    /// hears of it.
+    pub fn set_palette(
+        &mut self,
+        build: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.palette = Some(Rc::new(build));
         self.sync(window, cx);
     }
 
@@ -117,31 +126,36 @@ impl Shell {
         }
         let wanted = self.router.read(cx).is_open(Overlay::Palette);
         let overlays = ui::overlays(window, cx);
+        if !overlays.is_mounted(cx) {
+            return;
+        }
         let open = overlays.is_open(PALETTE_LAYER, cx);
         match (wanted, open, self.palette.clone()) {
-            (true, false, Some(view)) => {
-                overlays.open_dialog(PALETTE_LAYER, move |_, _| view.clone().into_any_element(), window, cx);
-                self.palette_shown = true;
+            (true, false, Some(build)) => {
+                let view = build(window, cx);
+                let router = self.router.clone();
+                overlays.open_dialog_view(
+                    PALETTE_LAYER,
+                    view,
+                    move |_, cx| {
+                        if router.read(cx).is_open(Overlay::Palette) {
+                            router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
+                        }
+                    },
+                    window,
+                    cx,
+                );
             }
             // Nothing to show: do not leave the router thinking the palette is up.
             (true, false, None) => {
-                if overlays.is_mounted(cx) {
-                    self.close_palette_route(window, cx);
-                }
+                let router = self.router.clone();
+                cx.defer_in(window, move |_, _, cx| {
+                    router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
+                });
             }
-            (false, true, _) => {
-                overlays.close(PALETTE_LAYER, window, cx);
-                self.palette_shown = false;
-            }
+            (false, true, _) => overlays.close(PALETTE_LAYER, window, cx),
             _ => {}
         }
-    }
-
-    fn close_palette_route(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let router = self.router.clone();
-        cx.defer_in(window, move |_, _, cx| {
-            router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
-        });
     }
 
     /// Show the screen of `route`: a kept view when there is one, else a new one.
@@ -180,13 +194,6 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The palette's layer closed on its own (Escape, a press on the scrim).
-        if self.palette_shown && !ui::overlays(window, cx).is_open(PALETTE_LAYER, cx) {
-            self.palette_shown = false;
-            if self.router.read(cx).is_open(Overlay::Palette) {
-                self.close_palette_route(window, cx);
-            }
-        }
         let header = self.current.as_ref().map(|current| {
             let fallback = section_label(current.route.section());
             match current.mounted.header.clone() {

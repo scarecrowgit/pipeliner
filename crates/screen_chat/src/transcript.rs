@@ -65,6 +65,9 @@ pub(crate) struct RowUi {
     pub open: Option<bool>,
     /// "Show more" was clicked.
     pub expanded: bool,
+    /// An edit's diff card: folded or not, "Show all" or not. Held here so it survives the
+    /// row scrolling out of the list and back.
+    pub diff: ui_rich::diff_view::DiffCardState,
 }
 
 /// A Reject being written: the request, its one-line note field.

@@ -75,15 +75,12 @@ fn meta(text: impl Into<SharedString>) -> impl IntoElement {
     div().flex_none().child(text.into())
 }
 
-/// Characters of mono 11px text the panel's width holds (280px of content).
-const PATH_CHARS: usize = 42;
 
-/// "mac-mini · ~/.harness/…/fix-PAY-1423": the runtime and the home-relative path, shortened
-/// in the middle so both ends stay readable.
+/// "mac-mini · ~/.harness/worktrees/payments-api/fix-PAY-1423": the runtime and the
+/// home-relative path; the panel cuts its middle to fit.
 pub(crate) fn workdir_place(runtime: &str, path: &str) -> String {
     let runtime = if runtime.is_empty() { "local" } else { runtime };
-    let room = PATH_CHARS.saturating_sub(runtime.chars().count() + 3).max(12);
-    format!("{runtime} · {}", crate::workdir::common::short_path(path, room))
+    format!("{runtime} · {path}")
 }
 
 fn workdir(view: &Entity<SessionView>, session: &Session, detail: Option<&SessionDetail>, cx: &App) -> Option<AnyElement> {
@@ -121,7 +118,12 @@ fn workdir(view: &Entity<SessionView>, session: &Session, detail: Option<&Sessio
                             .child(truncate(name).type_style(MONO).font_weight(gpui::FontWeight::MEDIUM))
                             .child(Badge::new(host).square()),
                     )
-                    .child(truncate_lh(place.clone(), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED).probe_value("chat-panel-workdir-path", place))
+                    .child(
+                        crate::workdir::common::path_line(place.clone(), MONO_SM.line)
+                            .type_style(MONO_SM)
+                            .text_color(TEXT_MUTED)
+                            .probe_value("chat-panel-workdir-path", place),
+                    )
                     .when_some(git, |d, git| d.child(div().mt(px(SPACE_2)).child(KeyValue::new().row("git", div().child(git))))),
             )
             .into_any_element(),

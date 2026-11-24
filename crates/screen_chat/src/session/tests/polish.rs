@@ -20,11 +20,10 @@ fn an_unknown_context_window_claims_no_share() {
 }
 
 #[test]
-fn a_long_workdir_path_is_cut_in_the_middle() {
-    let place = workdir_place("", "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e/scratchpad/cli-smoke");
-    assert!(place.starts_with("local · /tmp/…"), "{place}");
-    assert!(place.ends_with("/cli-smoke"), "{place}");
-    assert!(place.chars().count() <= 42, "{place}");
+fn the_workdir_place_names_the_runtime_and_keeps_the_whole_path() {
+    // The panel cuts the middle of a long path when it draws it (`truncate_middle`).
+    let long = "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e/scratchpad/cli-smoke";
+    assert_eq!(workdir_place("", long), format!("local · {long}"));
     assert_eq!(workdir_place("mac-mini", "~/code/acme"), "mac-mini · ~/code/acme");
 }
 

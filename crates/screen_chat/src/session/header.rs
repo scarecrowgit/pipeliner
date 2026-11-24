@@ -29,6 +29,7 @@ pub(super) fn actions(this: &mut SessionView, window: &mut Window, cx: &mut Cont
             .ghost()
             .icon(IconName::Share)
             .selected(share_open)
+            .focus_on_click(false)
             .on_click(move |_, window, cx| share.update(cx, |this, cx| this.open_share(window, cx)))
             .popover_anchor(SHARE)
             .probe(SHARE)
@@ -36,6 +37,7 @@ pub(super) fn actions(this: &mut SessionView, window: &mut Window, cx: &mut Cont
         Button::new(NEW, "New session")
             .secondary()
             .icon(IconName::Plus)
+            .focus_on_click(false)
             .on_click(|_, _, cx| hub::navigate(Route::NewChat, cx))
             .probe(NEW)
             .into_any_element(),

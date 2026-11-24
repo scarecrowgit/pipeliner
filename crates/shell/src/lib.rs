@@ -14,8 +14,10 @@
 //! });
 //! cx.open_window(options, |window, cx| {
 //!     let (shell, root) = shell::mount(screens, window, cx);
-//!     let palette = cx.new(|cx| Palette::new(window, cx));
-//!     shell.update(cx, |shell, cx| shell.set_palette(palette, window, cx));
+//!     let hub = hub::hub(cx);
+//!     shell.update(cx, |shell, cx| {
+//!         shell.set_palette(move |window, cx| cx.new(|cx| Palette::new(&hub, window, cx)).into(), window, cx)
+//!     });
 //!     root
 //! })?;
 //! ```
@@ -26,7 +28,7 @@
 //! - **Header**: each [`Mounted`] screen fills a [`Header`] every frame (breadcrumb, badges,
 //!   actions); without one the header shows the section's label.
 //! - **Keys** ([`init`]): ⌘K / Ctrl-K opens the palette (the router's [`hub::Overlay::Palette`],
-//!   drawn in the slot [`Shell::set_palette`] fills), ⌘N / Ctrl-N goes to the new-chat page,
+//!   built afresh by the factory [`Shell::set_palette`] takes), ⌘N / Ctrl-N goes to the new-chat page,
 //!   ⌘\ / Ctrl-\ collapses or expands the sidebar (saved in the settings), ⌘O opens the
 //!   project switcher, ⌘, the current project's settings, ⌘1–⌘5 switch projects.
 //! - **Editor**: a visit to the pipeline editor in a window narrower than

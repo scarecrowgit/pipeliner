@@ -40,32 +40,49 @@ fn main() {
     });
 }
 
-/// A stand-in for the app behind the palette, and the shell's mounting logic.
+/// A stand-in for the app behind the palette, and the shell's mounting logic: a fresh palette
+/// in a dialog layer each time the router opens it.
 struct Stage {
     hub: Entity<Hub>,
-    palette: Option<Entity<Palette>>,
     _router: Subscription,
 }
 
 impl Stage {
     fn new(hub: Entity<Hub>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let router = hub::router(cx);
-        let subscription = cx.observe_in(&router, window, |this, router, window, cx| {
-            let open = router.read(cx).is_open(Overlay::Palette);
-            match (open, this.palette.is_some()) {
-                (true, false) => this.palette = Some(cx.new(|cx| Palette::new(&this.hub, window, cx))),
-                (false, true) => this.palette = None,
-                _ => {}
+        let subscription = cx.observe_in(&router, window, |this, router, window, cx| this.follow(&router, window, cx));
+        // The overlay host exists once this root is built.
+        cx.defer_in(window, move |this, window, cx| this.follow(&router, window, cx));
+        Self { hub, _router: subscription }
+    }
+
+    fn follow(&mut self, router: &Entity<hub::Router>, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = router.read(cx).is_open(Overlay::Palette);
+        let overlays = ui::overlays(window, cx);
+        match (wanted, overlays.is_open(LAYER, cx)) {
+            (true, false) => {
+                let palette = cx.new(|cx| Palette::new(&self.hub, window, cx));
+                let router = router.clone();
+                overlays.open_dialog_view(
+                    LAYER,
+                    palette,
+                    move |_, cx| {
+                        if router.read(cx).is_open(Overlay::Palette) {
+                            router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
+                        }
+                    },
+                    window,
+                    cx,
+                );
             }
-            cx.notify();
-        });
-        let mut stage = Self { hub, palette: None, _router: subscription };
-        if router.read(cx).is_open(Overlay::Palette) {
-            stage.palette = Some(cx.new(|cx| Palette::new(&stage.hub, window, cx)));
+            (false, true) => overlays.close(LAYER, window, cx),
+            _ => {}
         }
-        stage
     }
 }
+
+/// The overlay key of the palette's layer.
+const LAYER: &str = "palette";
 
 impl Render for Stage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -83,7 +100,6 @@ impl Render for Stage {
                     .text_color(TEXT_MUTED)
                     .child(div().p(px(SPACE_4)).child("Cmd/Ctrl-K opens the palette")),
             )
-            .children(self.palette.clone())
     }
 }
 

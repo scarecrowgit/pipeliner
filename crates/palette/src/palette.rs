@@ -3,11 +3,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context, Entity, ScrollHandle, Subscription, Task, Window, point, px};
+use gpui::{AppContext as _, Context, Entity, ScrollHandle, Subscription, Window, point, px};
 use hub::api::{Millis, SearchResult, SessionHit, SessionQuery};
 use hub::{Hub, LoadState, Overlay, Route, Router, SearchModel};
-use ui::motion::{self, Presence};
-use ui::theme::DURATION_EXIT;
 use ui_rich::{TextInput, TextInputEvent};
 
 use crate::facets::Facet;
@@ -40,12 +38,12 @@ pub struct Palette {
     /// The selected row (not entry): index into `listing.rows`.
     pub(crate) selected: usize,
     pub(crate) scroll: ScrollHandle,
-    pub(crate) presence: Presence,
-    /// Set once Escape, the scrim or the close key asked to leave: input is ignored.
+    /// Set once Escape or the close key asked to leave: input is ignored.
     pub(crate) closing: bool,
+    /// The field has taken focus since the palette was first drawn in its layer.
+    pub(crate) took_focus: bool,
     /// The clock the sections are counted from; the wall clock unless a test sets it.
     pub(crate) now: Option<Millis>,
-    exit: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -59,8 +57,6 @@ impl Palette {
             cx.subscribe(&input, |this, _, event: &TextInputEvent, cx| this.on_input(event, cx)),
             cx.observe(&search, |this, _, cx| this.sync(cx)),
         ];
-        let mut presence = Presence::default();
-        presence.set(true);
         let mut palette = Self {
             hub: hub.clone(),
             search,
@@ -72,10 +68,9 @@ impl Palette {
             listing: Listing::default(),
             selected: 0,
             scroll: ScrollHandle::new(),
-            presence,
             closing: false,
+            took_focus: false,
             now: None,
-            exit: None,
             _subscriptions: subscriptions,
         };
         palette.edit_query(|query| *query = SessionQuery::default(), cx);
@@ -273,24 +268,14 @@ impl Palette {
         self.router.update(cx, |router, cx| router.navigate(Route::Chat { session: id }, cx));
     }
 
-    /// Leaves without choosing: the overlay fades out, then leaves the router.
+    /// Leaves without choosing: the overlay leaves the router, and the layer it is drawn in
+    /// fades out.
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         if self.closing {
             return;
         }
         self.closing = true;
-        self.presence.set(false);
-        if motion::reduced() {
-            self.router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
-        } else {
-            self.exit = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(motion::scaled(DURATION_EXIT)).await;
-                this.update(cx, |this, cx| {
-                    this.router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
-                })
-                .ok();
-            }));
-        }
+        self.router.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
         cx.notify();
     }
 

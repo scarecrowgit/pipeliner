@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use gpui::{Div, HighlightStyle, SharedString, StyledText, div, prelude::*, px};
+use gpui::{Div, HighlightStyle, SharedString};
 use ui::theme::{ACCENT_SOFT, ACCENT_TEXT};
 
 /// Characters of context kept before the first match.
@@ -71,23 +71,18 @@ fn mark_style() -> HighlightStyle {
 }
 
 /// One line of `text`, `height` px tall, that ends in `…` when it does not fit, with `marks`
-/// highlighted. The same recipe as the kit's `truncate` (a clamped, wrapping line is
-/// re-measured at the final width), for text that has styled parts.
+/// highlighted; the marks survive the cut.
 pub(crate) fn line(text: impl Into<SharedString>, marks: &[Range<usize>], height: f32) -> Div {
     let text: SharedString = text.into();
     let marks = clean(&text, marks);
-    let styled = StyledText::new(text).with_highlights(marks.into_iter().map(|r| (r, mark_style())));
-    div().flex().flex_grow().flex_shrink().min_w_0().h(px(height)).overflow_hidden().child(
-        div().w_full().min_w_0().overflow_hidden().whitespace_normal().line_clamp(1).text_ellipsis().child(styled),
-    )
+    ui::truncate::truncate_styled(text, marks.into_iter().map(|r| (r, mark_style())), height)
 }
 
 /// Wrapped text of at most `lines` lines with `marks` highlighted, for the preview.
 pub(crate) fn block(text: impl Into<SharedString>, marks: &[Range<usize>], lines: usize) -> Div {
     let text: SharedString = text.into();
     let marks = clean(&text, marks);
-    let styled = StyledText::new(text).with_highlights(marks.into_iter().map(|r| (r, mark_style())));
-    div().w_full().min_w_0().overflow_hidden().whitespace_normal().line_clamp(lines).text_ellipsis().child(styled)
+    ui::truncate::clamp_styled(text, marks.into_iter().map(|r| (r, mark_style())), lines)
 }
 
 #[cfg(test)]

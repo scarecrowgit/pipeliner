@@ -341,9 +341,8 @@ impl SessionView {
     }
 }
 
-/// The controls at the end of the composer's row: the session's forced skills (a lock and
-/// the name, as drawn), and the context use while the panel is folded away.
-pub(super) fn trailing(this: &SessionView, cx: &App) -> Vec<AnyElement> {
+/// The session's forced skills after the pickers (a lock and the name, as drawn).
+pub(super) fn forced_skills(this: &SessionView, cx: &App) -> Vec<AnyElement> {
     let mut out = Vec::new();
     if let Some(session) = this.header_session(cx) {
         for (ix, skill) in session.forced_skills.iter().enumerate() {
@@ -366,6 +365,13 @@ pub(super) fn trailing(this: &SessionView, cx: &App) -> Vec<AnyElement> {
             );
         }
     }
+    out
+}
+
+/// The control at the end of the composer's row: the context use while the panel is folded
+/// away.
+pub(super) fn trailing(this: &SessionView, cx: &App) -> Vec<AnyElement> {
+    let mut out = Vec::new();
     if !this.panel_open {
         let usage = this.model.read(cx).context();
         if usage.window > 0 {

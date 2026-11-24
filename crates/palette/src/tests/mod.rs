@@ -8,21 +8,48 @@ use std::sync::Arc;
 use gpui::{Context, Entity, IntoElement, Render, TestAppContext, VisualTestContext, Window, prelude::*};
 use hub::fixtures::{FixtureApi, World};
 use hub::{Hub, Overlay, Route};
+use ui::OverlayHost;
 
 use crate::Palette;
 
 /// The fixed clock of the test world.
 pub(crate) const NOW: i64 = 1_795_000_000_000;
 
-/// A window root holding the palette, as the shell does.
-struct Stage {
-    palette: Entity<Palette>,
-}
+/// The screen under the palette.
+struct Stage;
 
 impl Render for Stage {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        ui::root().relative().child(self.palette.clone())
+        ui::root()
     }
+}
+
+/// The overlay key of the palette's layer, as the shell names it.
+const LAYER: &str = "palette";
+
+/// Open `palette` in a dialog layer, as the shell does: the layer closing on its own tells the
+/// router, and the router closing the overlay closes the layer.
+fn mount(palette: Entity<Palette>, window: &mut Window, cx: &mut gpui::App) {
+    let router = hub::router(cx);
+    let follow = router.clone();
+    ui::overlays(window, cx).open_dialog_view(
+        LAYER,
+        palette,
+        move |_, cx| {
+            if follow.read(cx).is_open(Overlay::Palette) {
+                follow.update(cx, |router, cx| router.close_overlay(Overlay::Palette, cx));
+            }
+        },
+        window,
+        cx,
+    );
+    window
+        .observe(&router, cx, |router, window, cx| {
+            if !router.read(cx).is_open(Overlay::Palette) {
+                ui::overlays(window, cx).close(LAYER, window, cx);
+            }
+        })
+        .detach();
 }
 
 /// An open palette over the Acme world, with the search settled.
@@ -43,16 +70,17 @@ pub(crate) fn open(cx: &mut TestAppContext) -> (Open, &mut VisualTestContext) {
     let hub = cx.update(|cx| Hub::new(api.clone(), cx));
     cx.update(|cx| hub::navigate(Route::Home, cx));
     cx.update(|cx| hub::router(cx).update(cx, |router, cx| router.open_overlay(Overlay::Palette, cx)));
-    let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
-    let put = slot.clone();
-    let h = hub.clone();
-    let (_stage, cx) = cx.add_window_view(move |window, cx| {
-        let palette = cx.new(|cx| Palette::new(&h, window, cx));
-        *put.borrow_mut() = Some(palette.clone());
-        Stage { palette }
+    let (_host, cx) = cx.add_window_view(|window, cx| {
+        let stage = cx.new(|_| Stage);
+        OverlayHost::new(window, cx).with_content(stage)
     });
-    let Some(palette) = slot.borrow_mut().take() else { panic!("the palette was not built") };
     cx.update(|window, _| window.activate_window());
+    let palette = cx.update(|window, cx| {
+        let palette = cx.new(|cx| Palette::new(&hub, window, cx));
+        mount(palette.clone(), window, cx);
+        palette
+    });
+    cx.run_until_parked();
     palette.update(cx, |palette, cx| palette.set_now(NOW, cx));
     settle(cx);
     (Open { api, palette }, cx)

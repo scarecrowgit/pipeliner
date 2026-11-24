@@ -103,7 +103,7 @@ pub(crate) fn agent_choices(catalog: &CatalogModel, session: Option<&Session>) -
             sub: r.description.clone().into(),
             model: model_of(Some(r)),
             icon: if orchestrator { IconName::Orchestrator } else { IconName::Agent },
-            tone: if orchestrator { TileTone::Accent } else { TileTone::Neutral },
+            tone: TileTone::Neutral,
             runnable: r.reference.clone(),
             mode,
             current: session.is_some_and(|s| s.runnable == r.reference),
@@ -167,6 +167,7 @@ pub(super) fn model_trigger(this: &SessionView, window: &mut Window, cx: &mut Co
     let view = cx.entity();
     SelectBox::new(MODEL_ANCHOR, label)
         .small()
+        .mono()
         .open(open)
         .on_click(move |_, window, cx| view.update(cx, |this, cx| this.open_model_picker(window, cx)))
         .popover_anchor(MODEL_ANCHOR)

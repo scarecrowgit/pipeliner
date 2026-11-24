@@ -99,6 +99,7 @@ pub(crate) fn matches(project: &Project, query: &str) -> bool {
 /// Open the switcher under the project button (or the rail's logo when collapsed).
 pub(crate) fn open(window: &mut Window, cx: &mut App) {
     let ops = hub::ops(cx);
+    ops.update(cx, |ops, cx| ops.ensure_project_counts(cx));
     let layer = if crate::collapse::is_collapsed(ops.read(cx), cx) { RAIL_ANCHOR } else { ANCHOR };
     let anchor = Anchor::of(layer, window, cx);
     let switcher = cx.new(|cx| Switcher::new(ops, layer, window, cx));
@@ -129,6 +130,7 @@ fn render(switcher: &Entity<Switcher>, window: &mut Window, cx: &mut App) -> Any
     let shown = this.matches(cx);
     let selected = this.selected.min(shown.len().saturating_sub(1));
     let search = this.search.clone();
+    let working: Vec<Option<u32>> = shown.iter().map(|p| ops.counts_for(&p.id).map(|counts| counts.working_runs)).collect();
 
     let mut list = col().flex_none();
     for (ix, project) in shown.iter().enumerate() {
@@ -138,6 +140,7 @@ fn render(switcher: &Entity<Switcher>, window: &mut Window, cx: &mut App) -> Any
             current: current.as_ref() == Some(&project.id),
             selected: ix == selected,
             jump,
+            working: working.get(ix).copied().flatten(),
         };
         list = list.child(row.render(ix, switcher, window, cx));
     }
@@ -156,7 +159,7 @@ fn render(switcher: &Entity<Switcher>, window: &mut Window, cx: &mut App) -> Any
             MenuItem::new("project-new", "New project…")
                 .icon(IconName::Plus)
                 .on_click(|_, window, cx| form::open_new(window, cx))
-                .probe("project-new"),
+                .probe_name("project-new"),
         )
         .child(MenuItem::new("project-invite", "Invite people").icon(IconName::Users).coming_soon())
         .child(
@@ -165,7 +168,7 @@ fn render(switcher: &Entity<Switcher>, window: &mut Window, cx: &mut App) -> Any
                 .hint("⌘,")
                 .disabled(!has_current)
                 .on_click(|_, window, cx| form::open_edit(window, cx))
-                .probe("project-settings"),
+                .probe_name("project-settings"),
         )
         .child(PopSeparator)
         .child(MenuItem::new("project-account", "Switch account").tile(Avatar::new("ME")).coming_soon())
@@ -173,13 +176,15 @@ fn render(switcher: &Entity<Switcher>, window: &mut Window, cx: &mut App) -> Any
         .into_any_element()
 }
 
-/// One project row (`.mi.ws-row`): tile, name with a check when current, its repos, the jump
-/// key at the right.
+/// One project row (`.mi.ws-row`): tile, name with a check when current, its repos, and at
+/// the right its live state over the jump key.
 struct ProjectRow {
     project: Project,
     current: bool,
     selected: bool,
     jump: Option<usize>,
+    /// Runs working on its issues now, once the counts have loaded.
+    working: Option<u32>,
 }
 
 impl ProjectRow {
@@ -234,9 +239,34 @@ impl ProjectRow {
                     )
                     .child(truncate_block(repos_line(&self.project), LABEL.line).type_style(LABEL).text_color(TEXT_MUTED)),
             )
-            .when_some(self.jump, |d, n| d.child(Kbd::new(format!("⌘{n}"))))
+            .when(self.working.is_some() || self.jump.is_some(), |d| {
+                d.child(
+                    col()
+                        .flex_none()
+                        .items_end()
+                        .gap(px(SPACE_0_5))
+                        .children(self.working.map(project_state))
+                        .children(self.jump.map(|n| Kbd::new(format!("⌘{n}")))),
+                )
+            })
             .probe(name)
     }
+}
+
+/// The word for a project's live state: "2 running", or "idle".
+pub(crate) fn state_word(working: u32) -> String {
+    if working > 0 { format!("{working} running") } else { "idle".to_string() }
+}
+
+/// A project's live state: a dot and [`state_word`].
+fn project_state(working: u32) -> impl IntoElement {
+    let word = state_word(working);
+    let (status, color) = if working > 0 { (Status::Running, TEXT_SECONDARY) } else { (Status::Idle, TEXT_MUTED) };
+    row()
+        .gap(px(SPACE_1_5))
+        .type_style(LABEL)
+        .child(StatusDot::new(status).small())
+        .child(div().text_color(color).child(word))
 }
 
 /// "payments-api, checkout-web, ledger · 3 repos".
@@ -270,16 +300,13 @@ fn letter_tile(name: &str) -> impl IntoElement {
         .child(letter)
 }
 
-/// Make `id` the current project (saved in the settings).
+/// Make `id` the current project.
 pub(crate) fn switch_to(id: &ProjectId, cx: &mut App) {
     let ops = hub::ops(cx);
-    let Some(settings) = ops.read(cx).settings().value().cloned() else { return };
-    if settings.current_project.as_ref() == Some(id) {
+    if ops.read(cx).current_project().is_some_and(|project| &project.id == id) {
         return;
     }
-    let mut settings = (*settings).clone();
-    settings.current_project = Some(id.clone());
-    hub::commands(cx).set_settings(settings, cx);
+    hub::commands(cx).set_current_project(id, cx);
 }
 
 /// Switch to the `n`th project of the list (1-based), for ⌘1–⌘5.

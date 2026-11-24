@@ -93,6 +93,7 @@ impl Sidebar {
             }),
             cx.observe_global::<collapse::Pending>(|_, cx| cx.notify()),
         ];
+        ops.update(cx, |ops, cx| ops.ensure_schedules(cx));
         let mut sidebar = Self {
             router,
             chats,
@@ -154,6 +155,8 @@ impl Sidebar {
     fn pipelines(&self, cx: &App) -> Vec<PipelineRow> {
         let catalog = self.catalog.read(cx);
         let open = self.runs.read(cx).open_runs();
+        let ops = self.ops.read(cx);
+        let now = base::time::now_ms();
         catalog
             .of_kind(RunnableKind::Pipeline)
             .filter(|runnable| !runnable.archived)
@@ -163,7 +166,13 @@ impl Sidebar {
                 let running = open.iter().filter(|run| run.pipeline.as_str() == reference.id()).count();
                 let queued = activity.map_or(0, |a| a.queued);
                 let state = activity.map(|a| a.state.clone()).unwrap_or_default();
+                let next = ops.next_scheduled_run(&reference).filter(|at| *at >= now);
                 let (status, meta) = pipeline_status(runnable.paused, &state, queued, running);
+                // A deployed pipeline at rest shows when its schedule next runs it ("02:00").
+                let meta = match (status, next) {
+                    (Status::Idle, Some(at)) if matches!(state, RunnableState::Live { .. }) => Some(next_run_label(now, at).into()),
+                    _ => meta,
+                };
                 PipelineRow { reference, name: runnable.name.clone().into(), status, meta }
             })
             .collect()
@@ -405,6 +414,16 @@ fn pipeline_status(paused: bool, state: &RunnableState, queued: u32, running: us
         _ if running > 0 => (Status::Running, Some(format!("{running} running").into())),
         RunnableState::Live { version } => (Status::Idle, Some(format!("v{version}").into())),
         _ => (Status::Idle, None),
+    }
+}
+
+/// When a schedule next runs a pipeline: "02:00" within a day, else the weekday ("Wed").
+pub(crate) fn next_run_label(now: i64, at: i64) -> String {
+    let offset = base::time::utc_offset(at);
+    if at - now < 24 * 60 * 60 * 1000 {
+        base::time::clock_time(at, offset)
+    } else {
+        base::time::weekday_short(base::time::civil(at, offset).weekday).to_string()
     }
 }
 

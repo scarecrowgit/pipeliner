@@ -278,7 +278,7 @@ fn chat_row(
                 .w(px(240.))
                 .type_style(MONO_SM)
                 .text_color(TEXT_MUTED)
-                .child(truncate_lh(folder.unwrap_or_else(|| "no folder".to_string()), MONO_SM.line)),
+                .child(crate::workdir::common::path_line(folder.unwrap_or_else(|| "no folder".to_string()), MONO_SM.line)),
         )
         .child(
             div()

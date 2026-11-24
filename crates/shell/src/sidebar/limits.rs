@@ -63,12 +63,9 @@ impl LimitsForm {
                 }
             }
         };
-        let ops = hub::ops(cx);
-        let Some(settings) = ops.read(cx).settings().value().cloned() else { return false };
-        let mut settings = (*settings).clone();
-        settings.daily_limit_usd = limit;
-        settings.slots = self.slots;
-        hub::commands(cx).set_settings(settings, cx);
+        let commands = hub::commands(cx);
+        commands.set_daily_limit(limit, cx);
+        commands.set_slots(self.slots, cx);
         true
     }
 }

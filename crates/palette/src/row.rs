@@ -36,7 +36,8 @@ impl Palette {
             snippet::line(session.title.clone(), &hit.title_highlights, BODY.line)
         };
         let title_row = row_title(title, hit.children);
-        let sub = truncate_lh(sub_line(session), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED);
+        // The kit's styled line keeps the mono face when it cuts; `truncate_lh` comes out in sans.
+        let sub = snippet::line(sub_line(session), &[], MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED);
         let matched = hit.snippet.as_ref().map(|found| {
             let found = snippet::window(&found.text, &found.highlights);
             snippet::line(found.text, &found.marks, LABEL_TIGHT.line).type_style(LABEL_TIGHT).text_color(TEXT_SECONDARY)

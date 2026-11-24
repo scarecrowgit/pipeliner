@@ -82,27 +82,17 @@ pub(crate) fn display_path(path: &Path, cx: &App) -> String {
     hub::display_path(path, cx)
 }
 
-/// A path shortened in the middle to about `max` characters, keeping its first part and as
-/// many of its last parts as fit: `/tmp/…/scratchpad/cli-smoke`.
-pub(crate) fn short_path(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let parts: Vec<&str> = text.split('/').collect();
-    let head = if parts.first().is_some_and(|p| p.is_empty()) { format!("/{}", parts.get(1).unwrap_or(&"")) } else { parts[0].to_string() };
-    let skip = if text.starts_with('/') { 2 } else { 1 };
-    let mut tail: Vec<&str> = Vec::new();
-    for part in parts.iter().skip(skip).rev() {
-        let len = head.chars().count() + 3 + tail.iter().map(|p| p.chars().count() + 1).sum::<usize>() + part.chars().count();
-        if len > max && !tail.is_empty() {
-            break;
-        }
-        tail.insert(0, part);
-    }
-    if tail.len() + skip >= parts.len() {
-        return text.to_string();
-    }
-    format!("{head}/…/{}", tail.join("/"))
+/// One line of text in its parent's font and size, cut at the end with `…`. Machine text
+/// (names, branches) goes through this rather than `truncate`, whose cut line comes out in
+/// the sans face.
+pub(crate) fn line_text(text: impl Into<SharedString>, line_height: f32) -> gpui::Div {
+    ui::truncate::truncate_styled(text, Vec::<(std::ops::Range<usize>, gpui::HighlightStyle)>::new(), line_height)
+}
+
+/// A path on one line in its parent's font: the head and the last parts stay, the middle
+/// gives way (`~/…/payments-api/fix-PAY-1423`). Wrapped in a row so it fills a column.
+pub(crate) fn path_line(text: impl Into<SharedString>, line_height: f32) -> gpui::Div {
+    row().min_w_0().child(ui::truncate::truncate_middle(text, line_height))
 }
 
 /// A path as the user typed it: `~` resolves to the home directory.
@@ -456,12 +446,12 @@ impl FolderRow {
                                     .min_w_0()
                                     .type_style(BODY_STRONG)
                                     .font_family(FONT_MONO)
-                                    .child(truncate(title)),
+                                    .child(line_text(title, BODY.line)),
                             )
                             .child(Badge::new(host_label(entry.host)).square())
                             .when_some(tag, |d, branch| d.child(Tag::new(branch).mono())),
                     )
-                    .child(truncate_lh(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
+                    .child(path_line(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
             )
             .child(
                 row()
@@ -610,13 +600,6 @@ mod tests {
         assert_eq!((in_place.base, in_place.branch), (None, None));
     }
 
-    #[test]
-    fn long_paths_lose_their_middle() {
-        assert_eq!(short_path("~/code/acme", 40), "~/code/acme");
-        let long = "/tmp/claude-1000/-mnt-storage-projects-pipeliner/b931af7e-9892/scratchpad/cli-smoke";
-        assert_eq!(short_path(long, 40), "/tmp/…/scratchpad/cli-smoke");
-        assert!(short_path(long, 40).chars().count() <= 40);
-    }
 
     #[test]
     fn remotes_read_as_host_and_owner() {

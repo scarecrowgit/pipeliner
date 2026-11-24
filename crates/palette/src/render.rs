@@ -6,7 +6,6 @@ use gpui::{
 };
 use hub::LoadState;
 use ui::dev::Probe as _;
-use ui::motion::{Pop, PopFrame};
 use ui::prelude::*;
 
 use crate::facets::{Facet, filtered};
@@ -37,12 +36,10 @@ pub(crate) enum Body {
 
 impl Render for Palette {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(frame) = self.presence.frame(Pop::Dialog) else {
-            return div().into_any_element();
-        };
-        let scrim = self.presence.frame(Pop::Scrim).unwrap_or(frame);
-        if !(frame.settled() && scrim.settled()) {
-            window.request_animation_frame();
+        // The layer took focus when it opened, after the palette was built: take it back once.
+        if !self.took_focus {
+            self.took_focus = true;
+            self.focus(window, cx);
         }
 
         let viewport = window.viewport_size();
@@ -50,36 +47,19 @@ impl Render for Palette {
         let height = (f32::from(viewport.height) - PANEL_TOP - SPACE_8).clamp(320., PANEL_HEIGHT);
         let wide = width >= PREVIEW_MIN_PANEL;
 
-        let panel = col()
-            .id("palette-panel")
+        // The overlay layer draws the scrim, centres this panel and fades it in and out.
+        col()
+            .id("palette")
             .w(px(width))
             .h(px(height))
             .flex_none()
-            .mt(px(PANEL_TOP + frame.dy))
+            .mt(px(PANEL_TOP))
             .border_1()
             .border_color(LINE_STRONG)
             .rounded(px(RADIUS_DIALOG))
             .bg(SURFACE)
             .overflow_hidden()
             .occlude()
-            .opacity(frame.opacity)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    // A press on text or a button must not take the keyboard from the field.
-                    this.focus(window, cx);
-                }),
-            )
-            .child(self.search_row(cx))
-            .child(self.chips(cx))
-            .child(self.body(wide, cx))
-            .child(self.footer())
-            .when(frame.leaving, |d| d.child(div().absolute().inset_0().occlude()));
-
-        div()
-            .id("palette")
-            .absolute()
-            .inset_0()
             .key_context(crate::CONTEXT)
             .on_action(cx.listener(|this, _: &keys::Cancel, _, cx| this.close(cx)))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.page(-1, cx)))
@@ -93,31 +73,20 @@ impl Render for Palette {
                     cx.stop_propagation();
                 }
             }))
-            .child(scrim_layer(scrim, frame.leaving, cx))
-            .child(div().absolute().inset_0().flex().flex_col().items_center().child(panel))
-            .into_any_element()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    // A press on text or a button must not take the keyboard from the field.
+                    this.focus(window, cx);
+                }),
+            )
+            .child(self.search_row(cx))
+            .child(self.chips(cx))
+            .child(self.body(wide, cx))
+            .child(self.footer())
     }
 }
 
-/// The dim layer over the window; a press on it closes the palette.
-fn scrim_layer(frame: PopFrame, leaving: bool, cx: &mut Context<Palette>) -> impl IntoElement {
-    div()
-        .id("palette-scrim")
-        .absolute()
-        .inset_0()
-        .bg(SCRIM)
-        .opacity(frame.opacity)
-        .occlude()
-        .when(!leaving, |d| {
-            d.on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.close(cx);
-                    cx.stop_propagation();
-                }),
-            )
-        })
-}
 
 impl Palette {
     /// The search field with its scope tag, the count of matches and the Esc key cap.

@@ -196,6 +196,7 @@ impl Render for SessionView {
         let composer = composer_view(&self.composer)
             .leading(pickers::agent_trigger(self, window, cx))
             .leading(pickers::model_trigger(self, window, cx));
+        let composer = input::forced_skills(self, cx).into_iter().fold(composer, |c, el| c.leading(el));
         let composer = input::trailing(self, cx).into_iter().fold(composer, |c, el| c.trailing(el));
         let dock = div().flex_none().px(px(SPACE_6)).pb(px(SPACE_4)).child(
             row().justify_center().child(

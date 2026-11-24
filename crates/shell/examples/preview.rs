@@ -153,8 +153,7 @@ fn main() {
             },
             |window, cx| {
                 let (shell, root) = shell::mount(screens(), window, cx);
-                let palette = cx.new(|_| PaletteStandIn);
-                shell.update(cx, |shell, cx| shell.set_palette(palette, window, cx));
+                shell.update(cx, |shell, cx| shell.set_palette(|_, cx| cx.new(|_| PaletteStandIn).into(), window, cx));
                 root
             },
         );

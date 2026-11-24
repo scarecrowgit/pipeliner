@@ -9,7 +9,7 @@ use ui::prelude::*;
 use ui_rich::text_field;
 
 use super::WorkdirChip;
-use super::common::{SWITCH_NOTE, display_path, entry_matches, git_state, host_label, workdir_label};
+use super::common::{SWITCH_NOTE, display_path, entry_matches, git_state, host_label, line_text, path_line, workdir_label};
 
 /// Width of the popover, px (the mockup's 480).
 const WIDTH: f32 = 480.;
@@ -101,7 +101,7 @@ pub(super) fn build(chip: &Entity<WorkdirChip>, window: &mut Window, cx: &mut Ap
             .icon(IconName::Folder)
             .kbd("⌘O")
             .on_click(move |_, window, cx| browse.update(cx, |chip, cx| chip.browse(window, cx)))
-            .probe("workdir-popover-switch"),
+            .probe_name("workdir-popover-switch"),
     );
     let has_path = shown.current.is_some() || chip.read(cx).choice().is_some();
     if has_path {
@@ -110,7 +110,7 @@ pub(super) fn build(chip: &Entity<WorkdirChip>, window: &mut Window, cx: &mut Ap
             MenuItem::new("workdir-popover-copy", "Copy path")
                 .icon(IconName::Copy)
                 .on_click(move |_, window, cx| copy.update(cx, |chip, cx| chip.copy_path(window, cx)))
-                .probe("workdir-popover-copy"),
+                .probe_name("workdir-popover-copy"),
         );
     }
     if shown.session {
@@ -122,7 +122,7 @@ pub(super) fn build(chip: &Entity<WorkdirChip>, window: &mut Window, cx: &mut Ap
                 .icon(IconName::X)
                 .subline("The agent can only talk")
                 .on_click(move |_, window, cx| clear.update(cx, |chip, cx| chip.clear(window, cx)))
-                .probe("workdir-popover-none"),
+                .probe_name("workdir-popover-none"),
         );
     }
     pop.into_any_element()
@@ -146,7 +146,7 @@ fn head(shown: &Shown, cx: &App) -> AnyElement {
                                 .min_w_0()
                                 .type_style(BODY_STRONG)
                                 .font_family(FONT_MONO)
-                                .child(truncate(workdir_label(&workdir.repo, workdir.branch.as_deref()))),
+                                .child(line_text(workdir_label(&workdir.repo, workdir.branch.as_deref()), BODY.line)),
                         )
                         .child(Badge::new(host_label(workdir.host)).square()),
                 )
@@ -155,7 +155,7 @@ fn head(shown: &Shown, cx: &App) -> AnyElement {
                         .mt(px(SPACE_0_5))
                         .type_style(MONO_SM)
                         .text_color(TEXT_MUTED)
-                        .child(truncate_lh(format!("{runtime} · {}", display_path(&workdir.path, cx)), MONO_SM.line)),
+                        .child(path_line(format!("{runtime} · {}", display_path(&workdir.path, cx)), MONO_SM.line)),
                 )
                 .when_some(shown.state.clone(), |d, state| {
                     d.child(div().mt(px(SPACE_1)).type_style(LABEL).text_color(TEXT_SECONDARY).child(state))
@@ -224,11 +224,11 @@ fn item(
                                 .flex_shrink()
                                 .min_w_0()
                                 .type_style(MONO)
-                                .child(truncate(workdir_label(&entry.repo, entry.branch.as_deref()))),
+                                .child(line_text(workdir_label(&entry.repo, entry.branch.as_deref()), MONO.line)),
                         )
                         .child(Badge::new(host_label(entry.host)).square()),
                 )
-                .child(truncate_block(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
+                .child(path_line(display_path(&entry.path, cx), MONO_SM.line).type_style(MONO_SM).text_color(TEXT_MUTED)),
         )
         .child(div().flex_none().type_style(LABEL).text_color(tone).whitespace_nowrap().child(hint))
         .probe(name)

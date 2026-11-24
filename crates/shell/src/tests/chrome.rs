@@ -88,9 +88,19 @@ fn a_notice_becomes_a_toast(cx: &mut TestAppContext) {
 fn keys_open_the_palette_start_a_chat_and_collapse(cx: &mut TestAppContext) {
     let mut t = setup(cx);
     let shell = t.shell.clone();
+    let built = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = built.clone();
     t.cx.update(|window, cx| {
-        let palette = cx.new(|_| Palette);
-        shell.update(cx, |shell, cx| shell.set_palette(palette, window, cx));
+        shell.update(cx, |shell, cx| {
+            shell.set_palette(
+                move |_, cx| {
+                    count.set(count.get() + 1);
+                    cx.new(|_| Palette).into()
+                },
+                window,
+                cx,
+            )
+        });
     });
     let router = t.cx.update(|_, cx| hub::router(cx));
 
@@ -99,6 +109,7 @@ fn keys_open_the_palette_start_a_chat_and_collapse(cx: &mut TestAppContext) {
     assert!(t.cx.update(|_, cx| router.read(cx).is_open(Overlay::Palette)));
     assert!(t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));
     assert!(t.drawn("palette"), "the mounted palette view is drawn in the layer");
+    assert_eq!(built.get(), 1);
 
     // Escape closes the layer; the router follows.
     t.cx.simulate_keystrokes("escape");
@@ -109,6 +120,7 @@ fn keys_open_the_palette_start_a_chat_and_collapse(cx: &mut TestAppContext) {
     // The search field opens it too; navigating closes it.
     t.click("sidebar-search");
     assert!(t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));
+    assert_eq!(built.get(), 2, "each opening builds a fresh palette");
     t.cx.update(|_, cx| hub::navigate(Route::Chats, cx));
     t.cx.run_until_parked();
     assert!(!t.cx.update(|window, cx| ui::overlays(window, cx).is_open(PALETTE_LAYER, cx)));

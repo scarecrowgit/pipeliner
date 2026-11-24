@@ -163,5 +163,5 @@ fn workdir_line(session: &Session) -> gpui::Div {
     }
     parts.extend(session.issue.as_ref().map(ToString::to_string));
     let text = if parts.is_empty() { "No folder".to_string() } else { parts.join(" · ") };
-    div().type_style(MONO_SM).text_color(TEXT_MUTED).child(truncate_lh(text, MONO_SM.line))
+    div().type_style(MONO_SM).text_color(TEXT_MUTED).child(crate::snippet::line(text, &[], MONO_SM.line))
 }

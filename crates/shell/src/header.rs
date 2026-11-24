@@ -46,7 +46,8 @@ impl RenderOnce for HeaderBar {
             .border_b_1()
             .border_color(LINE)
             .child(trail)
-            .children(after)
+            // Badges and chips keep their size: the title is what gives way.
+            .children(after.into_iter().map(|el| div().flex_none().child(el)))
             .child(grow())
             .child(row().flex_none().gap(px(SPACE_2)).children(actions))
             .probe("header")
