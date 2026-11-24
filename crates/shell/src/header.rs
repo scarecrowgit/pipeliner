@@ -46,12 +46,21 @@ impl RenderOnce for HeaderBar {
             .border_b_1()
             .border_color(LINE)
             .child(trail)
-            // Badges and chips keep their size: the title is what gives way.
-            .children(after.into_iter().map(|el| div().flex_none().child(el)))
+            .child(after_row(after))
             .child(grow())
             .child(row().flex_none().gap(px(SPACE_2)).children(actions))
             .probe("header")
     }
+}
+
+/// The badges and chips after the title. They keep their size while there is room; in a
+/// window too narrow for the whole bar they are clipped from the right before the title is
+/// cut, and the actions always stay on screen.
+fn after_row(after: Vec<gpui::AnyElement>) -> impl IntoElement {
+    let mut clip = row().gap(px(SPACE_2)).min_w_0().overflow_hidden();
+    // Gives way far sooner than the title, whose shrink factor is 1.
+    clip.style().flex_shrink = Some(1000.);
+    clip.children(after.into_iter().map(|el| div().flex_none().child(el)))
 }
 
 /// A crumb before the last one: muted, regular weight, `text` on hover.
