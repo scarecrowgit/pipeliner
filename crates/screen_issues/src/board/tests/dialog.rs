@@ -108,7 +108,7 @@ fn the_autopilots_popover_lists_and_switches_them(cx: &mut TestAppContext) {
     let (api, view, cx) = open(cx, None);
     autopilots(&view, cx);
     assert!(drawn(cx, "issues-autopilot-0"));
-    assert!(drawn(cx, "issues-autopilot-new"), "drawn as coming soon");
+    assert!(drawn(cx, "issues-autopilot-new"));
     click(cx, "issues-autopilot-toggle-0");
     let sent = recorded(&api);
     assert!(sent.iter().any(|c| c == "save_autopilot Nightly e2e triage"), "{sent:?}");

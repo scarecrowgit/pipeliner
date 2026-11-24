@@ -72,6 +72,10 @@ fn a_run_out_of_budget_can_be_raised(cx: &mut TestAppContext) {
         run.state = RunState::WaitingAnswer;
         run.nodes[2].status = NodeStatus::Waiting;
     });
+    assert!(!shown(cx, "issue-run-budget"), "a run waiting with no question is not guessed to be over budget");
+    // The engine says why the run waits.
+    t.api.emit(Event::RunWaiting { run: RunId::new("run-1427"), waiting: Some(hub::api::RunWait::Budget) });
+    cx.run_until_parked();
     assert!(shown(cx, "issue-run-budget"));
     click(cx, "issue-run-raise");
     assert_eq!(calls(&t.api, "raise_run_budget"), ["run-1427 1"]);

@@ -17,7 +17,7 @@ async fn waiting_items_come_first_and_tabs_filter(cx: &mut TestAppContext) {
         rows(&t, cx),
         ["inbox-1423", "inbox-1435", "inbox-1427", "inbox-1431"]
     );
-    click(cx, "inbox-tab-all");
+    click(cx, "inbox-tabs-1");
     assert_eq!(
         rows(&t, cx),
         [
@@ -28,7 +28,7 @@ async fn waiting_items_come_first_and_tabs_filter(cx: &mut TestAppContext) {
             "inbox-1419"
         ]
     );
-    click(cx, "inbox-tab-archived");
+    click(cx, "inbox-tabs-2");
     assert!(rows(&t, cx).is_empty());
     assert!(shown(cx, "inbox-empty"));
 }
@@ -92,7 +92,7 @@ async fn archiving_moves_to_the_next_item(cx: &mut TestAppContext) {
     assert_eq!(calls(&t.api, "archive_inbox"), ["inbox-1435 true"]);
     assert_eq!(focus(&t, cx), item("inbox-1427"));
     assert_eq!(rows(&t, cx), ["inbox-1423", "inbox-1427", "inbox-1431"]);
-    click(cx, "inbox-tab-archived");
+    click(cx, "inbox-tabs-2");
     assert_eq!(rows(&t, cx), ["inbox-1435"]);
 }
 

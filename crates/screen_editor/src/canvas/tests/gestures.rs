@@ -45,6 +45,23 @@ fn dragging_a_node_moves_it_on_the_grid_in_one_undo_step(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+fn two_drags_of_one_node_are_two_undo_steps(cx: &mut gpui::TestAppContext) {
+    let (canvas, draft, cx) = open(cx, graph());
+    let zoom = canvas.read_with(cx, |c, _| c.zoom());
+    let pos = |cx: &mut gpui::VisualTestContext| {
+        draft.read_with(cx, |d, _| d.graph().and_then(|g| g.node(&"fixer".into())).map(|n| (n.pos.x, n.pos.y)))
+    };
+    let from = header_of(cx, "node-fixer");
+    drag(cx, from, point(from.x + px(100.0 * zoom), from.y));
+    let from = header_of(cx, "node-fixer");
+    drag(cx, from, point(from.x + px(100.0 * zoom), from.y));
+    assert_eq!(pos(cx), Some((604.0, 40.0)));
+    draft.update(cx, |d, cx| d.undo(cx));
+    assert_eq!(pos(cx), Some((504.0, 40.0)), "the end of the first drag sealed its step");
+    assert_eq!(draft.read_with(cx, |d, _| d.can_undo()), Some("Move node"), "the step keeps its name");
+}
+
+#[gpui::test]
 fn a_drag_from_a_port_to_a_node_draws_the_edge_that_fits(cx: &mut gpui::TestAppContext) {
     let mut g = graph();
     g.nodes.push(node("helper", "Helper", 600.0, 400.0, NodeKind::Subagent(SubagentNode::default())));

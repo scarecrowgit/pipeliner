@@ -49,8 +49,8 @@ pub enum Gesture {
     /// Dragging the background.
     Pan { last: Point<Pixels> },
     /// Pressed on a node's header; moves it once the pointer travels.
-    /// `stepped`: the drag has its own undo step, later moves fold into it.
-    Move { id: NodeId, start: Pos, press: Point<Pixels>, grab: Point<f32>, moved: bool, stepped: bool },
+    /// Its moves fold into one undo step, sealed when the drag ends.
+    Move { id: NodeId, start: Pos, press: Point<Pixels>, grab: Point<f32>, moved: bool },
     Connect(Connect),
 }
 
@@ -124,7 +124,6 @@ impl CanvasView {
                     press: event.position,
                     grab: p,
                     moved: false,
-                    stepped: false,
                 });
             }
             cx.notify();
@@ -161,7 +160,7 @@ impl CanvasView {
                 self.fitting = false;
                 cx.notify();
             }
-            Some(Gesture::Move { id, start, press, grab, moved, stepped }) => {
+            Some(Gesture::Move { id, start, press, grab, moved }) => {
                 let travel = distance(
                     point(f32::from(press.x), f32::from(press.y)),
                     point(f32::from(event.position.x), f32::from(event.position.y)),
@@ -172,21 +171,16 @@ impl CanvasView {
                 *moved = true;
                 let to = Pos { x: start.x + snap(p.x - grab.x), y: start.y + snap(p.y - grab.y) };
                 let id = id.clone();
-                let fold = *stepped;
-                *stepped |= self.draft.update(cx, |draft, cx| {
-                    let before = draft.revision();
-                    let change = |graph: &mut GraphDef| {
-                        if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == id) {
-                            node.pos = to;
-                        }
-                    };
-                    // The first change of a drag starts its own step; the rest fold into it.
-                    if fold {
-                        draft.edit_folded("Move node", change, cx);
-                    } else {
-                        draft.edit("Move node", change, cx);
-                    }
-                    draft.revision() != before
+                self.draft.update(cx, |draft, cx| {
+                    draft.edit_folded(
+                        "Move node",
+                        |graph: &mut GraphDef| {
+                            if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == id) {
+                                node.pos = to;
+                            }
+                        },
+                        cx,
+                    );
                 });
             }
             Some(Gesture::Connect(connect)) => {
@@ -231,10 +225,15 @@ impl CanvasView {
         self.finish_connect(cx);
     }
 
-    /// Ends the gesture: a drawn edge lands on `target`.
+    /// Ends the gesture: a drawn edge lands on `target`; a drag closes its undo step, so the
+    /// next drag is a step of its own.
     fn finish(&mut self, target: Option<(NodeId, EdgeKind)>, cx: &mut Context<Self>) {
-        if let (Some(Gesture::Connect(connect)), Some((to, kind))) = (self.gesture.take(), target) {
-            self.connect(&connect.from, &connect.port, &to, kind, cx);
+        match (self.gesture.take(), target) {
+            (Some(Gesture::Connect(connect)), Some((to, kind))) => {
+                self.connect(&connect.from, &connect.port, &to, kind, cx);
+            }
+            (Some(Gesture::Move { moved: true, .. }), _) => self.draft.update(cx, |draft, _| draft.seal()),
+            _ => {}
         }
         cx.notify();
     }
@@ -276,27 +275,35 @@ impl CanvasView {
     }
 
     /// Moves the selected node by `dx`, `dy` canvas units; presses in a row on one node are
-    /// one undo step.
+    /// one undo step, sealed when the selection changes ([`Self::end_nudge`]).
     pub fn nudge(&mut self, dx: f32, dy: f32, cx: &mut Context<Self>) {
         let Selection::Node(id) = self.draft.read(cx).selection().clone() else { return };
-        let fold = self.nudging.as_ref() == Some(&id);
+        if self.nudging.as_ref() != Some(&id) {
+            self.end_nudge(cx);
+        }
         let target = id.clone();
         let changed = self.draft.update(cx, |draft, cx| {
             let before = draft.revision();
-            let change = |graph: &mut GraphDef| {
-                if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == target) {
-                    node.pos = Pos { x: node.pos.x + dx, y: node.pos.y + dy };
-                }
-            };
-            if fold {
-                draft.edit_folded("Nudge node", change, cx);
-            } else {
-                draft.edit("Nudge node", change, cx);
-            }
+            draft.edit_folded(
+                "Nudge node",
+                |graph: &mut GraphDef| {
+                    if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == target) {
+                        node.pos = Pos { x: node.pos.x + dx, y: node.pos.y + dy };
+                    }
+                },
+                cx,
+            );
             draft.revision() != before
         });
         if changed {
             self.nudging = Some(id);
+        }
+    }
+
+    /// Ends a run of nudges: the next nudge is an undo step of its own.
+    pub(super) fn end_nudge(&mut self, cx: &mut Context<Self>) {
+        if self.nudging.take().is_some() {
+            self.draft.update(cx, |draft, _| draft.seal());
         }
     }
 

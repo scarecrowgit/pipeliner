@@ -94,10 +94,12 @@ impl EditorView {
         let catalog = hub::catalog(cx);
         let parts = Parts::mount(pipeline.clone(), window, cx);
         let test = test_run::TestRun::new(window, cx);
+        let runs = hub::runs(cx);
         let subscriptions = vec![
             cx.observe(&catalog, |this, _, cx| this.catalog_changed(cx)),
             cx.subscribe(&hub::hub(cx), |this, _, notice: &HubNotice, cx| this.hub_notice(notice, cx)),
             cx.observe(&hub::router(cx), |this, router, cx| this.route_changed(router, cx)),
+            cx.observe(&runs, |this, _, cx| this.offer_last_test_run(cx)),
             cx.on_release(|this, cx| this.save_on_release(cx)),
         ];
         let mut this = Self {
@@ -113,6 +115,7 @@ impl EditorView {
             _subscriptions: subscriptions,
         };
         this.start_loading(cx);
+        this.load_runs(cx);
         this
     }
 
@@ -127,6 +130,7 @@ impl EditorView {
             self.doc = Document::new(node);
             self.test.forget_run();
             self.start_loading(cx);
+            self.load_runs(cx);
         } else if let Some(node) = node {
             self.select_node(node, true, cx);
         }

@@ -1,8 +1,10 @@
 //! The autopilots popover (`issue_autopilots()` of the mockups): the project's autopilots with
-//! their schedule, target and state, switched on and off from here.
+//! their schedule, target, next run and last result, switched on and off from here. A row
+//! opens the dialog that edits it; while the pointer is over it, "Run now" and "Delete" show.
+//! "New autopilot…" opens the same dialog empty.
 //!
-//! Event triggers (Sentry, Jira, webhooks), creating an autopilot and the run history are not
-//! in the engine yet: they are drawn as "Coming soon".
+//! Event triggers (Sentry, Jira, webhooks) and the run history are not in the engine yet: they
+//! are drawn as "Coming soon".
 
 use gpui::{App, Context, Entity, IntoElement, Render, SharedString, Subscription, Window, div, prelude::*, px};
 use hub::OpsModel;
@@ -78,7 +80,7 @@ impl AutopilotsPopover {
         Self { ops, view, _sub: sub }
     }
 
-    fn row(&self, ix: usize, autopilot: &Autopilot, now: Millis, cx: &App) -> impl IntoElement + use<> {
+    fn row(&self, ix: usize, autopilot: &Autopilot, now: Millis, window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
         let event = matches!(autopilot.trigger, AutopilotTrigger::Event { .. });
         let target = match self.view.upgrade() {
             Some(view) => view.read(cx).runner_name(&autopilot.target, cx),
@@ -98,13 +100,64 @@ impl AutopilotsPopover {
                 }
                 hub::commands(cx).save_autopilot(autopilot, cx);
             });
-        row()
-            .id(("issues-autopilot", ix))
-            .debug_selector(move || format!("issues-autopilot-{ix}"))
+        let id = gpui::ElementId::NamedInteger("issues-autopilot".into(), ix as u64);
+        let faded = motion::hover_fade_state(
+            id.clone(),
+            motion::Look::bg(TRANSPARENT),
+            motion::Look::bg(if event { TRANSPARENT } else { SURFACE_HOVER }),
+            window,
+            cx,
+        );
+        let hovered = !event && motion::hovered(id.clone(), window, cx);
+        let actions = hovered.then(|| {
+            let (run, delete) = (autopilot.id.clone(), autopilot.clone());
+            row()
+                .id(("issues-autopilot-actions", ix))
+                .flex_none()
+                .gap(px(SPACE_0_5))
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    IconButton::new(("issues-autopilot-run", ix), IconName::Play)
+                        .small()
+                        .tooltip("Run now")
+                        .on_click(move |_, window, cx| {
+                            hub::commands(cx).run_autopilot(&run, cx);
+                            overlays(window, cx).toast(Toast::new("Autopilot started").detail("Its run shows on the board and in the Inbox"), cx);
+                        })
+                        .probe(format!("issues-autopilot-run-{ix}")),
+                )
+                .child(
+                    IconButton::new(("issues-autopilot-delete", ix), IconName::Trash)
+                        .small()
+                        .tooltip("Delete")
+                        .on_click(move |_, window, cx| {
+                            hub::commands(cx).delete_autopilot(&delete.id, cx);
+                            let restore = delete.clone();
+                            overlays(window, cx).toast(
+                                Toast::new(format!("{} deleted", delete.name)).undo(move |_, cx| {
+                                    hub::commands(cx).save_autopilot(restore.clone(), cx);
+                                }),
+                                cx,
+                            );
+                        })
+                        .probe(format!("issues-autopilot-delete-{ix}")),
+                )
+        });
+        let edit = (!event).then(|| (self.view.clone(), autopilot.clone()));
+        let el = row().id(id).debug_selector(move || format!("issues-autopilot-{ix}"));
+        faded
+            .apply(el)
             .items_start()
             .gap(px(SPACE_2_5))
             .p(px(SPACE_2_5))
             .rounded(px(RADIUS_MD))
+            .when(!event, |d| d.cursor_pointer())
+            .when_some(edit, |d, (view, autopilot)| {
+                d.on_click(move |_, window, cx| {
+                    let autopilot = autopilot.clone();
+                    view.update(cx, |view, cx| view.open_autopilot_form(Some(autopilot), window, cx)).ok();
+                })
+            })
             .child(tile)
             .child(
                 col()
@@ -126,12 +179,21 @@ impl AutopilotsPopover {
                         d.child(div().type_style(LABEL).text_color(if warn { WARNING } else { TEXT_MUTED }).child(line))
                     }),
             )
-            .child(div().flex_none().mt(px(SPACE_0_5)).child(toggle))
+            .children(actions)
+            .child(
+                div()
+                    .id(("issues-autopilot-switch", ix))
+                    .flex_none()
+                    .mt(px(SPACE_0_5))
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(toggle),
+            )
+            .probe(format!("issues-autopilot-{ix}"))
     }
 }
 
 impl Render for AutopilotsPopover {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = base::time::now_ms();
         let loaded = self.ops.read(cx).autopilots();
         let list: Vec<Autopilot> = loaded.value().map(|list| list.as_ref().clone()).unwrap_or_default();
@@ -148,14 +210,19 @@ impl Render for AutopilotsPopover {
             hub::LoadState::Loading if list.is_empty() => vec![note("Loading autopilots…").into_any_element()],
             hub::LoadState::Failed(error) => vec![note(error.clone()).text_color(DANGER).into_any_element()],
             _ if list.is_empty() => vec![note("No autopilot in this project yet.").into_any_element()],
-            _ => list.iter().enumerate().map(|(ix, a)| self.row(ix, a, now, cx).into_any_element()).collect(),
+            _ => list.iter().enumerate().map(|(ix, a)| self.row(ix, a, now, window, cx).into_any_element()).collect(),
         };
         div()
             .child(
                 pop.children(body)
                     .child(PopSeparator)
-                    .child(MenuItem::new("issues-autopilot-new", "New autopilot…").icon(IconName::Plus).coming_soon())
-                    .child(MenuItem::new("issues-autopilot-history", "Run history").icon(IconName::Clock).coming_soon()),
+                    .child(MenuItem::new("issues-autopilot-new", "New autopilot…").icon(IconName::Plus).probe_name("issues-autopilot-new").on_click({
+                        let view = self.view.clone();
+                        move |_, window, cx| {
+                            view.update(cx, |view, cx| view.open_autopilot_form(None, window, cx)).ok();
+                        }
+                    }))
+                    .child(MenuItem::new("issues-autopilot-history", "Run history").icon(IconName::Clock).coming_soon().probe_name("issues-autopilot-history")),
             )
             .probe("issues-autopilots-popover")
     }

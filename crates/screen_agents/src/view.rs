@@ -130,13 +130,15 @@ impl AgentsView {
     /// What follows the title in the shell's header: the one-line explanation.
     pub fn header_badges(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> Vec<AnyElement> {
         vec![
+            // The shell keeps badges at their size, and a truncating text in that box is measured
+            // short and cut without an ellipsis: the line is drawn whole, it fits beside the
+            // title and "New" from the narrowest window the app allows.
             div()
-                .flex_shrink()
-                .min_w_0()
                 .ml(px(SPACE_3))
                 .type_style(BODY)
                 .text_color(TEXT_MUTED)
-                .child(truncate("One list. Anything here can take an issue, answer in chat or sit inside a pipeline."))
+                .whitespace_nowrap()
+                .child("One list. Anything here can take an issue, answer in chat or sit inside a pipeline.")
                 .into_any_element(),
         ]
     }
@@ -149,6 +151,7 @@ impl AgentsView {
             Button::new(NEW, "New")
                 .primary()
                 .icon(IconName::Plus)
+                .trailing_icon(IconName::ChevronDown)
                 .selected(open)
                 .on_click(move |_, window, cx| view.update(cx, |this, cx| this.open_new_menu(window, cx)))
                 .popover_anchor(NEW)

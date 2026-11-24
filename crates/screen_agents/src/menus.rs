@@ -2,36 +2,23 @@
 //! and the small pickers of the panel (assign an issue, add a skill, add a team member).
 //!
 //! `ui` menu rows are probed by their element id, so every row's id is its probe name. A
-//! disabled row that needs a reason sits in a wrapper with the reason as its tooltip.
+//! disabled row keeps its probe and says why in its tooltip.
 
-use gpui::{AnyElement, Context, IntoElement, SharedString, Window, div, prelude::*};
+use gpui::{Context, SharedString, Window};
 use hub::api::{IssueStatus, Runnable, RunnableKind};
 use hub::model::RunnableRef;
 use hub::Route;
-use ui::dev::Probe;
 use ui::prelude::*;
 
 use crate::rows;
 use crate::view::{AgentsView, NEW, open_editor};
 
-/// A disabled menu row with `reason` as its tooltip. Rows outside the menu's item list are
-/// skipped by the keyboard, which a disabled row is anyway.
-fn with_reason(item: MenuItem, id: &str, reason: &'static str) -> AnyElement {
-    let name: SharedString = format!("{id}-why").into();
-    let selector = name.clone();
-    div()
-        .id(name)
-        .debug_selector(move || selector.to_string())
-        .child(item.disabled(true))
-        .tooltip(Tooltip::text(reason))
-        .probe(id.to_string())
-        .into_any_element()
-}
-
-/// Adds `item` to `menu`, disabled with a reason when `blocked` is one.
+/// Adds `item` to `menu`, disabled with a reason as its tooltip when `blocked` is one. The row
+/// keeps its probe name `id` either way.
 fn add(menu: Menu, item: MenuItem, id: &str, blocked: Option<&'static str>) -> Menu {
+    let item = item.probe_name(id.to_string());
     match blocked {
-        Some(reason) => menu.child(with_reason(item, id, reason)),
+        Some(reason) => menu.item(item.disabled(true).tooltip(reason)),
         None => menu.item(item),
     }
 }
@@ -57,8 +44,10 @@ impl AgentsView {
                     }
                 };
                 let (all, import) = (view.clone(), view.clone());
+                // 384 in the mockup; the app's text runs a little wider, and 400 keeps the
+                // longest description whole.
                 Menu::new("agents-new-menu")
-                    .width(384.)
+                    .width(400.)
                     .item(
                         it("agents-new-agent", IconName::Agent, "Agent", "One model with tools, skills and limits", "A")
                             .on_click(pick(RunnableKind::Agent)),

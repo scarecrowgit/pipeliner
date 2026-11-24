@@ -148,8 +148,8 @@ impl InspectorView {
                 let provider_id = provider.provider.id.clone();
                 let selected = models.iter().position(|m| *m == effective.model).unwrap_or(models.len());
                 let mut seg = Segmented::new(SharedString::from(key.to_string())).small().full_width().selected(selected);
-                for model in &models {
-                    seg = seg.option(model.clone());
+                for (ix, model) in models.iter().enumerate() {
+                    seg = seg.option(model.clone()).option_probe(format!("{key}-{ix}"));
                 }
                 let inherited = inherited.clone();
                 let seg = seg.on_select(self.on_value(cx, move |this, ix: usize, cx| {
@@ -196,8 +196,11 @@ impl InspectorView {
             .small()
             .full_width()
             .option("Read only")
+            .option_probe("insp-tools-access-read")
             .option("Read and run")
+            .option_probe("insp-tools-access-run")
             .option("Full")
+            .option_probe("insp-tools-access-full")
             .selected(level)
             .on_select(self.on_value(cx, move |this, ix: usize, cx| {
                 let base = base.clone();

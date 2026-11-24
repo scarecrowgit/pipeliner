@@ -1,4 +1,4 @@
-//! The list view: the same issues as the board, in a table, in the order the sort menu picks.
+//! The list view: the same issues as the board, in a table sorted by a click on a header.
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -11,9 +11,6 @@ use ui::prelude::*;
 use super::IssuesView;
 use super::card::{initials, priority_color, runner_kind, strip};
 use super::columns::status_dot;
-
-/// Probe and anchor of the sort select.
-pub(crate) const SORT: &str = "issues-sort";
 
 /// What the list is ordered by.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,19 +26,22 @@ pub(crate) enum SortBy {
 }
 
 impl SortBy {
-    /// Every order, as the menu lists them.
-    pub(crate) const ALL: [SortBy; 6] =
-        [SortBy::Status, SortBy::Priority, SortBy::Updated, SortBy::Key, SortBy::Title, SortBy::Owner];
+    /// Orders two issues in `direction` (ascending is each order's natural one: board order,
+    /// higher priority first, newest first); ties fall back to the board's order.
+    pub(crate) fn compare_in(self, direction: SortDirection, a: &Issue, b: &Issue) -> Ordering {
+        let first = self.compare_first(a, b);
+        let first = if direction == SortDirection::Descending { first.reverse() } else { first };
+        first.then_with(|| self.compare(a, b))
+    }
 
-    /// The menu's word.
-    pub(crate) fn label(self) -> &'static str {
+    fn compare_first(self, a: &Issue, b: &Issue) -> Ordering {
         match self {
-            SortBy::Status => "Status",
-            SortBy::Priority => "Priority",
-            SortBy::Key => "Key",
-            SortBy::Title => "Title",
-            SortBy::Owner => "Owner",
-            SortBy::Updated => "Updated",
+            SortBy::Status => a.status.cmp(&b.status),
+            SortBy::Priority => b.priority.cmp(&a.priority),
+            SortBy::Key => key_number(&a.key.to_string()).cmp(&key_number(&b.key.to_string())),
+            SortBy::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            SortBy::Owner => a.owner.to_lowercase().cmp(&b.owner.to_lowercase()),
+            SortBy::Updated => b.updated.cmp(&a.updated),
         }
     }
 
@@ -71,10 +71,10 @@ fn key_number(key: &str) -> (String, u64) {
 impl IssuesView {
     /// The issues that pass the filters, in the list's order.
     pub(crate) fn rows(&self, cx: &App) -> Vec<Arc<Issue>> {
-        let sort = self.sort(cx);
+        let (sort, direction) = self.sort(cx);
         let mut rows: Vec<Arc<Issue>> =
             self.issues.read(cx).iter().filter(|issue| self.filters.matches(issue)).cloned().collect();
-        rows.sort_by(|a, b| sort.compare(a, b));
+        rows.sort_by(|a, b| sort.compare_in(direction, a, b));
         rows
     }
 
@@ -84,19 +84,35 @@ impl IssuesView {
         let offset = base::time::utc_offset(now);
         // Beside the open panel there is room for the essentials only.
         let wide = !self.has_panel();
-        let mut table = Table::new("issues-table")
-            .column(Column::new("Key").fixed(104.))
-            .column(Column::new("Title").flex(3.))
-            .column(Column::new("Status").fixed(128.))
-            .column(Column::new("Priority").fixed(88.));
+        let mut columns: Vec<(Column, Option<SortBy>)> = vec![
+            (Column::new("Key").fixed(104.), Some(SortBy::Key)),
+            (Column::new("Title").flex(3.), Some(SortBy::Title)),
+            (Column::new("Status").fixed(128.), Some(SortBy::Status)),
+            (Column::new("Priority").fixed(88.), Some(SortBy::Priority)),
+        ];
         if wide {
-            table = table.column(Column::new("Type").fixed(80.));
+            columns.push((Column::new("Type").fixed(80.), None));
         }
-        table = table.column(Column::new("Owner").fixed(if wide { 150. } else { 120. }));
+        columns.push((Column::new("Owner").fixed(if wide { 150. } else { 120. }), Some(SortBy::Owner)));
         if wide {
-            table = table.column(Column::new("Runs with").flex(2.));
+            columns.push((Column::new("Runs with").flex(2.), None));
         }
-        table = table.column(Column::new("Updated").fixed(84.).right());
+        columns.push((Column::new("Updated").fixed(84.).right(), Some(SortBy::Updated)));
+        let (sort, direction) = self.sort(cx);
+        let by_column: Vec<Option<SortBy>> = columns.iter().map(|(_, by)| *by).collect();
+        let sorted = by_column.iter().position(|by| *by == Some(sort));
+        let mut table = Table::new("issues-table");
+        for (column, by) in columns {
+            table = table.column(if by.is_some() { column.sortable() } else { column });
+        }
+        if let Some(ix) = sorted {
+            table = table.sorted(ix, direction);
+        }
+        let view = cx.entity().downgrade();
+        table = table.on_sort(move |ix, direction, _, cx| {
+            let Some(Some(by)) = by_column.get(ix).copied() else { return };
+            view.update(cx, |this, cx| this.set_sort(by, direction, cx)).ok();
+        });
         for issue in self.rows(cx) {
             table = table.row(self.list_row(&issue, wide, now, offset, cx));
         }
@@ -157,17 +173,4 @@ impl IssuesView {
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_issue(&key, window, cx)))
     }
-}
-
-/// The sort menu, opened from the sort select.
-pub(crate) fn sort_menu(view: &gpui::Entity<IssuesView>, cx: &App) -> Menu {
-    let current = view.read(cx).sort(cx);
-    let items = SortBy::ALL.into_iter().map(|sort| {
-        let v = view.clone();
-        MenuItem::new(("issues-sort-by", sort as usize), sort.label())
-            .check_column()
-            .checked(sort == current)
-            .on_click(move |_, _, cx| v.update(cx, |this, cx| this.set_sort(sort, cx)))
-    });
-    Menu::new("issues-sort-menu").width(200.).label("Sort by").items(items)
 }

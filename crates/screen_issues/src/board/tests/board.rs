@@ -1,12 +1,12 @@
 //! The board, the list, filters and the keyboard.
 
-use gpui::{AppContext as _, Modifiers, MouseButton, TestAppContext};
+use gpui::{AppContext as _, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use hub::api::{Event, IssueStatus, NodeStatus, RunState};
 use hub::model::{IssueKey, RunId};
 use hub::Route;
 
 use super::{click, drawn, open, open_with, recorded, route};
-use crate::board::Layout;
+use crate::board::{IssuesView, Layout};
 use crate::board::card::{StripTone, strip};
 use crate::board::filters::RunsWith;
 
@@ -178,4 +178,24 @@ fn the_empty_project_offers_a_first_issue(cx: &mut TestAppContext) {
     assert!(drawn(cx, "issues-empty-new"));
     click(cx, "issues-empty-new");
     assert!(drawn(cx, "new-issue-create"));
+}
+
+#[gpui::test]
+fn list_headers_sort_the_rows(cx: &mut TestAppContext) {
+    let (_api, view, cx) = open(cx, None);
+    view.update(cx, |view, cx| view.set_layout(Layout::List, cx));
+    cx.run_until_parked();
+    let keys = |view: &Entity<IssuesView>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, cx| view.rows(cx).iter().map(|i| i.key.to_string()).collect::<Vec<_>>())
+    };
+    // Key is the first column: a click sorts by it, a second click turns the order round.
+    click(cx, "issues-table-head-0");
+    let up = keys(&view, cx);
+    let mut sorted = up.clone();
+    sorted.sort();
+    assert_eq!(up, sorted);
+    click(cx, "issues-table-head-0");
+    let down = keys(&view, cx);
+    sorted.reverse();
+    assert_eq!(down, sorted);
 }

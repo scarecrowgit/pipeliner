@@ -6,6 +6,7 @@
 //! issue in the route. The shell draws the header from [`IssuesView::title`],
 //! [`IssuesView::header_badges`] and [`IssuesView::header_actions`].
 
+mod autopilot_form;
 mod autopilots;
 mod card;
 mod columns;
@@ -53,6 +54,7 @@ pub enum Layout {
 struct Remembered {
     layout: Layout,
     sort: SortBy,
+    direction: SortDirection,
 }
 
 impl Global for Remembered {}
@@ -72,6 +74,8 @@ pub struct IssuesView {
     pub(crate) search: Entity<TextInput>,
     /// The dialog's form while it is open.
     form: Option<Entity<NewIssueForm>>,
+    /// The autopilot dialog's form while it is open.
+    pub(crate) autopilot_form: Option<Entity<autopilot_form::AutopilotForm>>,
     focus_pending: bool,
     shown: bool,
     _subs: Vec<Subscription>,
@@ -125,6 +129,7 @@ impl IssuesView {
             filters: Filters::default(),
             search,
             form: None,
+            autopilot_form: None,
             // Focus is taken on the first frame drawn: the shell builds the view before it is
             // in the window.
             focus_pending: true,
@@ -230,12 +235,16 @@ impl IssuesView {
         cx.notify();
     }
 
-    pub(crate) fn sort(&self, cx: &App) -> SortBy {
-        cx.try_global::<Remembered>().map(|r| r.sort).unwrap_or_default()
+    /// The list's order and its direction.
+    pub(crate) fn sort(&self, cx: &App) -> (SortBy, SortDirection) {
+        cx.try_global::<Remembered>().map(|r| (r.sort, r.direction)).unwrap_or_default()
     }
 
-    pub(crate) fn set_sort(&mut self, sort: SortBy, cx: &mut Context<Self>) {
-        cx.default_global::<Remembered>().sort = sort;
+    /// Orders the list by `sort` in `direction`; it holds for the session.
+    pub(crate) fn set_sort(&mut self, sort: SortBy, direction: SortDirection, cx: &mut Context<Self>) {
+        let remembered = cx.default_global::<Remembered>();
+        remembered.sort = sort;
+        remembered.direction = direction;
         cx.notify();
     }
 
@@ -355,6 +364,30 @@ impl IssuesView {
         Seed { project, project_name: found.map(|p| p.name).unwrap_or_default(), repos, owners, status }
     }
 
+    /// Opens the dialog that creates an autopilot in the current project, or edits `editing`.
+    pub(crate) fn open_autopilot_form(
+        &mut self,
+        editing: Option<hub::api::Autopilot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        overlays(window, cx).close(autopilots::BUTTON, window, cx);
+        let project = self.issues.read(cx).project().cloned();
+        let project_name = self.project_name(cx).map(|n| n.to_string()).unwrap_or_default();
+        let form = cx.new(|cx| autopilot_form::AutopilotForm::new(project, project_name, editing, window, cx));
+        self.autopilot_form = Some(form.clone());
+        let me = cx.entity().downgrade();
+        overlays(window, cx).open_dialog_view(
+            autopilot_form::DIALOG,
+            form,
+            move |_, cx| {
+                me.update(cx, |this, _| this.autopilot_form = None).ok();
+            },
+            window,
+            cx,
+        );
+    }
+
     fn open_autopilots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let me = cx.entity().downgrade();
         let popover = cx.new(|cx| autopilots::AutopilotsPopover::new(me, cx));
@@ -383,12 +416,6 @@ impl IssuesView {
         window.defer(cx, move |window, cx| search.read(cx).focus(window));
     }
 
-    fn open_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let me = cx.entity();
-        let anchor = Anchor::of(list::SORT, window, cx);
-        overlays(window, cx).open_menu(anchor, Placement::below().end(), move |_, cx| list::sort_menu(&me, cx), window, cx);
-    }
-
     // ------------------------------------------------------------ drawing
 
     fn render_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -413,13 +440,6 @@ impl IssuesView {
                 .probe(id)
         }).collect::<Vec<_>>();
         let filter_on = self.filters.popover_count() > 0;
-        let sort = (layout == Layout::List).then(|| {
-            SelectBox::new(list::SORT, format!("Sort: {}", self.sort(cx).label()))
-                .small()
-                .on_click(cx.listener(|this, _, window, cx| this.open_sort(window, cx)))
-                .popover_anchor(list::SORT)
-                .probe(list::SORT)
-        });
         row()
             .flex_none()
             .h(px(TAB_HEIGHT))
@@ -434,7 +454,6 @@ impl IssuesView {
                 row()
                     .flex_none()
                     .gap(px(SPACE_1_5))
-                    .children(sort)
                     .child(
                         Button::new(filters::FILTER, filters::button_label(&self.filters))
                             .ghost()

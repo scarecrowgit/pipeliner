@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, Hsla, IntoElement, SharedString, Window, div, prelude::*, px};
-use hub::api::{InboxKind, Issue, NodeInstance, NodeStatus, Run, RunState, SpanKind};
+use gpui::{AnyElement, App, Context, Hsla, IntoElement, SharedString, Window, div, prelude::*, px};
+use hub::api::{InboxKind, Issue, NodeInstance, NodeStatus, Run, RunState, RunWait, SpanKind};
 use hub::{InboxFocus, Route};
 use ui::dev::Probe;
 use ui::motion::Look;
@@ -35,7 +35,7 @@ fn is_spawned(node: &NodeInstance) -> bool {
     node.kind == SpanKind::Spawned || node.spawned_by.is_some()
 }
 
-fn line(run: &Run) -> Line {
+fn line(run: &Run, wait: Option<RunWait>) -> Line {
     let plain = |status, text: &str, color| Line { status, text: text.to_string(), color, spawned: None, percent: None };
     match run.state {
         RunState::Queued => plain(Status::Idle, "Queued", TEXT_MUTED),
@@ -68,7 +68,7 @@ fn line(run: &Run) -> Line {
                 .find_map(|n| n.question.clone().or_else(|| (!n.summary.is_empty()).then(|| n.summary.clone())));
             let text = match question {
                 Some(q) => format!("asks: {}", base::fmt::truncate_chars(base::fmt::first_line(&q), 80)),
-                None if over_budget(run) => "Out of budget · waiting for a raise".into(),
+                None if wait == Some(RunWait::Budget) => "Out of budget · waiting for a raise".into(),
                 None => "asks you a question".into(),
             };
             Line { status: Status::Waiting, text, color: WARNING, spawned: None, percent: None }
@@ -90,9 +90,9 @@ fn line(run: &Run) -> Line {
     }
 }
 
-/// The run waits for a person but nobody asks anything: it stopped at its budget.
-fn over_budget(run: &Run) -> bool {
-    run.state == RunState::WaitingAnswer && run.nodes.iter().all(|n| n.question.is_none())
+/// Why the engine says `run` waits for a person, if it does.
+pub(super) fn wait_of(this: &IssuePanel, run: &Run, cx: &App) -> Option<RunWait> {
+    this.runs.read(cx).waiting(&run.id)
 }
 
 /// The number at the end of a pull request URL: `.../pull/2280` gives 2280.
@@ -118,8 +118,8 @@ fn path(run: &Run) -> String {
 }
 
 /// The run in the runner card: its path, its state in one line and its progress.
-pub(super) fn summary(run: &Run) -> impl IntoElement {
-    let l = line(run);
+pub(super) fn summary(run: &Run, wait: Option<RunWait>) -> impl IntoElement {
+    let l = line(run, wait);
     let mut out = col().flex_none().w_full();
     let path = path(run);
     if !path.is_empty() {
@@ -218,7 +218,7 @@ fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<I
     };
     if run.state == RunState::WaitingReview {
         let route = Route::Inbox { item: review.map(InboxFocus::Review) };
-        let text = line(run).text;
+        let text = line(run, wait_of(this, run, cx)).text;
         out.push(
             callout(IconName::Inbox, WARNING, WARNING_SOFT, cw)
                 .child(
@@ -262,7 +262,7 @@ fn callouts(this: &IssuePanel, issue: &Issue, run: &Arc<Run>, cx: &mut Context<I
                 .into_any_element(),
         );
     }
-    if over_budget(run) {
+    if wait_of(this, run, cx) == Some(RunWait::Budget) {
         let spent = base::fmt::cost(run.cost_usd);
         out.push(
             callout(IconName::Alert, WARNING, WARNING_SOFT, cw)
@@ -464,7 +464,7 @@ fn earlier_run(this: &IssuePanel, run: &Arc<Run>, now: i64, window: &mut Window,
     let open = this.toggled.contains(&run.id);
     let id = run.id.clone();
     let name = SharedString::from(format!("issue-run-{}", run.id));
-    let l = line(run);
+    let l = line(run, wait_of(this, run, cx));
     let head = row()
         .id(name.clone())
         .debug_selector({

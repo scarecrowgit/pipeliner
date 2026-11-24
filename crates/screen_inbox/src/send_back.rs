@@ -31,6 +31,9 @@ pub(crate) enum Mode {
 }
 
 impl Mode {
+    /// The modes in the order the dialog lists them.
+    pub(crate) const ALL: [Mode; 3] = [Mode::Pick, Mode::All, Mode::Over];
+
     /// The mode's name in probes: `send-back-from-variant`.
     pub(crate) fn name(self) -> &'static str {
         match self {
@@ -235,41 +238,43 @@ impl SendBack {
             .debug_selector(|| "send-back-note".into())
             .child(text_area_field("send-back-note-field", &self.note))
             .probe("send-back-note");
-        let option = |mode: Mode, title: String, desc: String, cx: &mut Context<Self>| {
+        let option = |mode: Mode, title: String, desc: String| {
             let name = format!("send-back-from-{}", mode.name());
             let card = OptionCard::new(gpui::ElementId::Name(name.clone().into()), title)
                 .description(desc)
-                .selected(self.mode == mode)
-                .on_select(cx.listener(move |this, _, _, cx| this.set_mode(mode, cx)));
-            let card = if mode == Mode::Pick {
+                .probe_name(name);
+            if mode == Mode::Pick {
                 card.right(Badge::new("your pick").tone(BadgeTone::Accent))
             } else {
                 card
-            };
-            div().child(card).probe(name)
+            }
         };
         let keeps = match branch {
             Some(branch) => format!("Keeps its branch {branch} and builds on it"),
             None => "Keeps its work and builds on it".to_string(),
         };
-        let options = col()
-            .gap(px(SPACE_1_5))
-            .child(option(Mode::Pick, format!("Variant {letter}"), keeps, cx))
-            .child(option(
+        let selected = Mode::ALL.iter().position(|m| *m == self.mode).unwrap_or(0);
+        let modes = cx.entity().downgrade();
+        let options = OptionGroup::new("send-back-from")
+            .option(option(Mode::Pick, format!("Variant {letter}"), keeps))
+            .option(option(
                 Mode::All,
                 format!(
                     "All {}",
                     base::fmt::plural(count as u64, "variant", "variants")
                 ),
                 "Each one gets the note and tries again".to_string(),
-                cx,
             ))
-            .child(option(
+            .option(option(
                 Mode::Over,
                 "Start over".to_string(),
                 "New branches, the variants are archived".to_string(),
-                cx,
-            ));
+            ))
+            .selected(selected)
+            .on_select(move |ix, _, cx| {
+                let mode = Mode::ALL[ix.min(Mode::ALL.len() - 1)];
+                modes.update(cx, |this, cx| this.set_mode(mode, cx)).ok();
+            });
 
         let stepper = cx.entity().downgrade();
         let confirm_key = cx.entity().downgrade();

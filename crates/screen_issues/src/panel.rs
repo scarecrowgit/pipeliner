@@ -126,7 +126,14 @@ impl IssuePanel {
         let inbox = hub::inbox(cx);
         let catalog = hub::catalog(cx);
         issues.update(cx, |model, cx| model.ensure_activity(&issue, cx));
-        let composer = cx.new(|cx| Composer::issue(cx).name("issue"));
+        // The kit draws the placeholder on one line and clips it; the tail goes in the hint,
+        // which ends in an ellipsis instead of being cut mid-word in a narrow panel.
+        let composer = cx.new(|cx| {
+            Composer::issue(cx)
+                .name("issue")
+                .placeholder("Comment")
+                .placeholder_hint(Some("· @mention an agent or pipeline to wake it up".into()))
+        });
         let title = cx.new(TextInput::new);
         let search = cx.new(|cx| TextInput::new(cx).placeholder("Find an orchestrator, agent or pipeline"));
         let answer = cx.new(|cx| TextInput::new(cx).placeholder("Answer…"));

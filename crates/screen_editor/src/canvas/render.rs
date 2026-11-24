@@ -3,7 +3,7 @@
 
 use gpui::{
     AnyElement, BoxShadow, Bounds, Context, DispatchPhase, ElementId, Hsla, IntoElement, MouseButton, MouseMoveEvent,
-    MouseUpEvent, PathBuilder, Pixels, Point, Render, Window, canvas, div, point, prelude::*, px, size,
+    MouseUpEvent, Point, Render, Window, canvas, div, point, prelude::*, px, size,
 };
 use hub::model::EdgeKind;
 use ui::assets::IconName;
@@ -13,7 +13,8 @@ use ui::motion;
 use ui::overlay::PopoverAnchorExt;
 use ui::theme::*;
 use ui_rich::canvas::{
-    Curve, DotGrid, Edges, Legend, NodeFrame, NodeState, PORT_HIT_RADIUS, PORT_SIZE, Viewport, back_curve, route_curve,
+    BACK_DASH, Curve, DotGrid, Edges, Legend, NodeFrame, NodeState, PORT_HIT_RADIUS, PORT_SIZE, SPAWN_DASH, Viewport,
+    back_curve, paint_curve, route_curve,
 };
 
 use super::interaction::Gesture;
@@ -24,11 +25,6 @@ use crate::Selection;
 
 /// The key the add button records its bounds under, for the menu's anchor.
 pub(super) const ADD_ANCHOR: &str = "canvas-add";
-/// Stroke of the highlighted and pending edges, canvas units (the edges' 1.5).
-const STROKE: f32 = 1.5;
-/// Dashes of a back edge and of a spawn edge, canvas units (as the primitives draw them).
-const BACK_DASH: [f32; 2] = [2.0, 3.0];
-const SPAWN_DASH: [f32; 2] = [5.0, 4.0];
 /// Canvas units kept around the view when deciding what to lay out: room for status pills.
 const CULL_MARGIN: f32 = 40.0;
 /// The smallest port target, px, so ports stay reachable when zoomed out.
@@ -38,37 +34,12 @@ const GLOW: f32 = 3.0;
 /// Width of the zoom percentage in the zoom control, px.
 const PERCENT_WIDTH: f32 = 40.0;
 
-/// A curve painted over the edges: a selected back edge, or the edge being drawn.
+/// The edge being drawn, painted over the others.
 #[derive(Clone, Copy)]
 struct Overlay {
     curve: Curve,
     color: Hsla,
     dash: Option<[f32; 2]>,
-}
-
-fn paint_overlay(window: &mut Window, vp: Viewport, origin: Point<Pixels>, overlay: &Overlay) {
-    let at = |p: Point<f32>| {
-        let s = vp.to_screen(p);
-        point(origin.x + px(s.x), origin.y + px(s.y))
-    };
-    let mut path = PathBuilder::stroke(vp.z(STROKE));
-    if let Some([dash, gap]) = overlay.dash {
-        path = path.dash_array(&[vp.z(dash), vp.z(gap)]);
-    }
-    match overlay.curve {
-        Curve::Cubic(c) => {
-            path.move_to(at(c.p0));
-            path.cubic_bezier_to(at(c.p3), at(c.p1), at(c.p2));
-        }
-        Curve::Line(a, b) => {
-            path.move_to(at(a));
-            path.line_to(at(b));
-        }
-    }
-    // A path with no length fails to build: nothing to draw then.
-    if let Ok(path) = path.build() {
-        window.paint_path(path, overlay.color);
-    }
 }
 
 /// A transparent target centred on a port, named for the dev driver; during a drag it rings
@@ -285,18 +256,12 @@ impl Render for CanvasView {
         });
         let in_view = |b: &Bounds<f32>| visible.as_ref().is_none_or(|v| v.intersects(b));
 
-        let mut overlays: Vec<Overlay> = scene
-            .edges
-            .iter()
-            .filter(|e| e.highlight)
-            .map(|e| Overlay { curve: e.edge.curve(), color: ACCENT, dash: Some(BACK_DASH) })
-            .collect();
-        overlays.extend(self.pending_overlay(&scene));
+        let pending = self.pending_overlay(&scene);
         let overlay_layer = canvas(
             |_, _, _| {},
             move |bounds, (), window, _| {
-                for overlay in &overlays {
-                    paint_overlay(window, vp, bounds.origin, overlay);
+                if let Some(o) = &pending {
+                    paint_curve(window, vp, bounds.origin, o.curve, o.color, o.dash);
                 }
             },
         )

@@ -38,9 +38,6 @@ pub struct SceneEdge {
     /// Index in `GraphDef::edges`.
     pub index: usize,
     pub edge: Edge,
-    /// A selected back edge: drawn over in the accent, since the primitives' selected stroke
-    /// would straighten its curve.
-    pub highlight: bool,
 }
 
 /// The whole graph in canvas units.
@@ -90,6 +87,7 @@ impl Scene {
                 EdgeKind::Context => Stroke::Dim,
                 EdgeKind::Spawn if this_selected => Stroke::Selected,
                 EdgeKind::Spawn => Stroke::Spawn,
+                EdgeKind::Back if this_selected => Stroke::SelectedBack,
                 EdgeKind::Back => Stroke::Back,
             };
             let below = a.look.outputs == Outputs::One
@@ -107,7 +105,7 @@ impl Scene {
             {
                 edge = edge.label(format!("×{}", agent.variants.max(1)));
             }
-            scene.edges.push(SceneEdge { index, edge, highlight: this_selected && def.kind == EdgeKind::Back });
+            scene.edges.push(SceneEdge { index, edge });
         }
         scene
     }

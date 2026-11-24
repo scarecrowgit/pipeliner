@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, IntoElement, MouseButton, SharedString, Subscription, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, IntoElement, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use hub::model::{AgentNode, GraphDef, NodeDef, NodeKind};
 use ui::dev::Probe;
 use ui::prelude::*;
-use ui_rich::{SubmitOn, TextArea, TextAreaEvent, TextInput, TextInputEvent};
+use ui_rich::{SubmitOn, TextArea, TextAreaEvent, TextInput, TextInputEvent, text_area_field, text_field};
 
 use super::InspectorView;
 use super::ops::{agent_mut, node_mut};
@@ -68,13 +68,6 @@ impl Editor {
         match self {
             Editor::Line(input) => input.read(cx).focus(window),
             Editor::Area(area) => area.read(cx).focus(window),
-        }
-    }
-
-    fn is_focused(&self, window: &Window, cx: &App) -> bool {
-        match self {
-            Editor::Line(input) => input.read(cx).is_focused(window),
-            Editor::Area(area) => area.read(cx).is_focused(window),
         }
     }
 }
@@ -217,7 +210,6 @@ enum FieldEvent {
     Submit,
     Blur,
     Focus,
-    Tab,
 }
 
 impl InspectorView {
@@ -244,7 +236,9 @@ impl InspectorView {
         let generation = self.fields.generation;
         let (editor, sub) = match spec.rows {
             None => {
-                let input = cx.new(|cx| TextInput::new(cx).placeholder(spec.placeholder.clone()).with_text(&spec.value));
+                let input = cx.new(|cx| {
+                    TextInput::new(cx).placeholder(spec.placeholder.clone()).with_text(&spec.value).tab_moves_focus(true)
+                });
                 let k = key.clone();
                 let sub = cx.subscribe_in(&input, window, move |this, _, event: &TextInputEvent, window, cx| {
                     let event = match event {
@@ -252,7 +246,6 @@ impl InspectorView {
                         TextInputEvent::Submit => FieldEvent::Submit,
                         TextInputEvent::Blur => FieldEvent::Blur,
                         TextInputEvent::Focus => FieldEvent::Focus,
-                        TextInputEvent::Tab => FieldEvent::Tab,
                         _ => return,
                     };
                     this.field_event(&k, generation, event, window, cx);
@@ -299,7 +292,7 @@ impl InspectorView {
         (editor, None)
     }
 
-    fn field_event(&mut self, key: &SharedString, generation: u64, event: FieldEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn field_event(&mut self, key: &SharedString, generation: u64, event: FieldEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if generation != self.fields.generation {
             return;
         }
@@ -344,18 +337,7 @@ impl InspectorView {
                 cx.notify();
             }
             FieldEvent::Focus => cx.notify(),
-            FieldEvent::Tab => self.focus_after(key, window, cx),
             FieldEvent::Changed | FieldEvent::Submit => {}
-        }
-    }
-
-    /// Tab in a single-line field: the next text field, or the next control of the window.
-    fn focus_after(&mut self, key: &SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        let order = &self.fields.order;
-        let next = order.iter().position(|k| k == key).and_then(|at| order.get(at + 1));
-        match next.and_then(|k| self.fields.slots.get(k)) {
-            Some(slot) => slot.editor.focus(window, cx),
-            None => window.focus_next(),
         }
     }
 
@@ -365,23 +347,9 @@ impl InspectorView {
         let mono = spec.mono;
         let (editor, error) = self.slot(spec, window, cx);
         let Editor::Line(input) = &editor else { return div().into_any_element() };
-        let focused = input.read(cx).is_focused(window);
-        let frame = InputFrame::new(key.clone())
-            .small()
-            .focused(focused)
-            .danger(error.is_some() || problem.is_some())
-            .child(div().w_full().min_w_0().when(mono, |d| d.type_style(MONO)).child(input.clone()));
-        let target = editor.clone();
-        let el = div()
-            .w_full()
-            .min_w_0()
-            .child(frame)
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                target.focus(window, cx);
-                // Nothing behind the frame may take the focus back (the host's fallback).
-                cx.stop_propagation();
-            })
-            .probe(key);
+        let danger = error.is_some() || problem.is_some();
+        let field = text_field(key.clone(), input).small().danger(danger).when(mono, |f| f.mono());
+        let el = div().w_full().min_w_0().child(field).probe(key);
         with_messages(el.into_any_element(), error.or(problem))
     }
 
@@ -391,23 +359,9 @@ impl InspectorView {
         let mono = spec.mono;
         let (editor, error) = self.slot(spec, window, cx);
         let Editor::Area(area) = &editor else { return div().into_any_element() };
-        let focused = editor.is_focused(window, cx);
-        let frame = InputFrame::new(key.clone())
-            .multiline()
-            .focused(focused)
-            .danger(error.is_some() || problem.is_some())
-            .child(div().w_full().min_w_0().when(mono, |d| d.type_style(MONO)).child(area.clone()));
-        let target = editor.clone();
-        let el = div()
-            .w_full()
-            .min_w_0()
-            .child(frame)
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                target.focus(window, cx);
-                // Nothing behind the frame may take the focus back (the host's fallback).
-                cx.stop_propagation();
-            })
-            .probe(key);
+        let danger = error.is_some() || problem.is_some();
+        let field = text_area_field(key.clone(), area).danger(danger).when(mono, |f| f.mono());
+        let el = div().w_full().min_w_0().child(field).probe(key);
         with_messages(el.into_any_element(), error.or(problem))
     }
 }

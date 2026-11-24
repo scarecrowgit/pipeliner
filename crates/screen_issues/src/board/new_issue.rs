@@ -282,6 +282,8 @@ impl NewIssueForm {
     fn select(&self, key: &'static str, value: impl Into<SharedString>, glyph: Option<IconName>, cx: &mut Context<Self>) -> AnyElement {
         SelectBox::new(key, value)
             .when_some(glyph, SelectBox::icon)
+            // The repo is a machine name, in mono as drawn.
+            .when(key == "new-issue-repo", SelectBox::mono)
             .on_click(cx.listener(move |this, _, window, cx| this.open_menu(key, window, cx)))
             .popover_anchor(key)
             .into_any_element()

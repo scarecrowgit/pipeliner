@@ -131,7 +131,9 @@ impl IssuesView {
             .id(SharedString::from(probe.clone()))
             .debug_selector(move || selector)
             .flex_none()
-            .w(px(CARD_WIDTH))
+            // The drop target reaches `SPACE_1` past the cards on every side; the cards
+            // themselves are `CARD_WIDTH` wide, as in the mockup.
+            .w(px(CARD_WIDTH + 2. * SPACE_1))
             .gap(px(SPACE_2))
             .p(px(SPACE_1))
             .m(px(-SPACE_1))

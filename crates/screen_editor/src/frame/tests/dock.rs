@@ -12,7 +12,7 @@ use crate::frame::DockTab;
 async fn clicking_a_problem_selects_its_node(cx: &mut TestAppContext) {
     let (t, cx) = open(cx);
     wait_check(cx);
-    click(cx, "dock-tab-problems");
+    click(cx, "dock-tabs-2");
     t.view.read_with(cx, |v, _| assert_eq!(v.dock_tab(), DockTab::Problems));
     click(cx, "problem-0");
     t.view.read_with(cx, |v, cx| {
@@ -23,10 +23,10 @@ async fn clicking_a_problem_selects_its_node(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn the_dock_folds_to_its_tabs(cx: &mut TestAppContext) {
     let (t, cx) = open(cx);
-    assert!(shown(cx, "test-run-start"));
+    assert!(shown(cx, "test-run-new"), "the last test run is on show");
     click(cx, "dock-collapse");
     t.view.read_with(cx, |v, _| assert!(v.dock.collapsed));
-    click(cx, "dock-tab-log");
+    click(cx, "dock-tabs-1");
     t.view.read_with(cx, |v, _| {
         assert!(!v.dock.collapsed, "a tab unfolds the dock");
         assert_eq!(v.dock_tab(), DockTab::Log);
@@ -35,6 +35,10 @@ async fn the_dock_folds_to_its_tabs(cx: &mut TestAppContext) {
 
 /// Types a title and starts a test run from the tab.
 fn start(t: &super::Open, cx: &mut gpui::VisualTestContext) {
+    if shown(cx, "test-run-new") {
+        // The last test run is on show: back to the item's fields first.
+        click(cx, "test-run-new");
+    }
     let title = t.view.read_with(cx, |v, _| v.test.title.clone());
     title.update(cx, |input, cx| input.set_text("Refund webhook times out", cx));
     cx.run_until_parked();
@@ -65,7 +69,7 @@ async fn a_test_run_starts_on_the_saved_draft_and_its_log_arrives(cx: &mut TestA
     t.api.emit(Event::RunLog { run: id.clone(), line: line(1, "worktree ready") });
     t.api.emit(Event::RunLog { run: id.clone(), line: line(2, "read src/refunds.ts") });
     cx.run_until_parked();
-    click(cx, "dock-tab-log");
+    click(cx, "dock-tabs-1");
     t.view.read_with(cx, |v, cx| {
         let lines: Vec<String> = v.log_lines(cx).iter().map(|l| l.text.clone()).collect();
         assert_eq!(lines, ["worktree ready", "read src/refunds.ts"]);
@@ -90,4 +94,18 @@ async fn the_header_button_asks_for_a_title_first(cx: &mut TestAppContext) {
     assert!(calls(&t.api, "test_run").is_empty());
     let focused = t.view.update_in(cx, |v, window, cx| v.test.title.read(cx).is_focused(window));
     assert!(focused, "the title field takes focus");
+}
+
+#[gpui::test]
+async fn the_last_test_run_is_on_show_after_a_restart(cx: &mut TestAppContext) {
+    // The fixture's PAY triage has "Test run #42" from yesterday.
+    let (t, cx) = open(cx);
+    let shown_run = t.view.read_with(cx, |v, cx| v.draft().read(cx).run().cloned());
+    assert_eq!(shown_run.as_ref().map(|id| id.as_str()), Some("run-test-42"), "the last test run is on show");
+    assert!(shown(cx, "test-run-new"), "a finished run offers a new one");
+    // Leaving it for a new run does not bring it back.
+    click(cx, "test-run-new");
+    cx.run_until_parked();
+    assert!(t.view.read_with(cx, |v, cx| v.draft().read(cx).run().is_none()));
+    assert!(shown(cx, "test-run-start"));
 }

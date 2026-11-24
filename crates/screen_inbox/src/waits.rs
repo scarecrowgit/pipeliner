@@ -6,7 +6,9 @@ use gpui::{
     prelude::*, px,
 };
 use hub::RunModel;
-use hub::api::{InboxId, InboxItem, InboxKind, NodeId, Outcome, Run, RunId, RunState, RunStats};
+use hub::api::{
+    InboxId, InboxItem, InboxKind, NodeId, Outcome, Run, RunId, RunState, RunStats, RunWait,
+};
 use ui::dev::Probe;
 use ui::prelude::*;
 use ui_rich::{
@@ -27,16 +29,19 @@ pub(crate) enum Waiting {
     Budget,
 }
 
-/// What `run` waits on from a person, if anything besides a review.
-pub(crate) fn waiting_on(run: &Run) -> Option<Waiting> {
-    if run.state != RunState::WaitingAnswer {
-        return None;
-    }
-    match run.nodes.iter().find(|n| n.question.is_some()) {
-        Some(node) => Some(Waiting::Question {
-            node: node.node.clone(),
-        }),
-        None => Some(Waiting::Budget),
+/// What `run` waits on from a person, if anything besides a review, given why the engine says
+/// it waits (`wait`): a question goes to the node that asked it.
+pub(crate) fn waiting_on(run: &Run, wait: Option<RunWait>) -> Option<Waiting> {
+    match wait? {
+        RunWait::Review => None,
+        RunWait::Budget => Some(Waiting::Budget),
+        RunWait::Question => run
+            .nodes
+            .iter()
+            .find(|n| n.question.is_some())
+            .map(|node| Waiting::Question {
+                node: node.node.clone(),
+            }),
     }
 }
 
@@ -122,6 +127,12 @@ impl InboxView {
         self.item_run.as_ref()?.model.read(cx).run().cloned()
     }
 
+    /// What the open item's run waits on from a person, as the engine reports it.
+    fn item_waiting(&self, cx: &gpui::App) -> Option<Waiting> {
+        let model = self.item_run.as_ref()?.model.read(cx);
+        waiting_on(model.run()?, model.waiting())
+    }
+
     /// A text field of the open item has keyboard focus (the queue's keys stay out of it).
     pub(crate) fn typing(&self, window: &Window, cx: &gpui::App) -> bool {
         self.item_run.as_ref().is_some_and(|r| {
@@ -134,9 +145,7 @@ impl InboxView {
         let Some(open) = self.item_run.as_ref() else {
             return;
         };
-        let Some(Waiting::Question { node }) =
-            open.model.read(cx).run().and_then(|run| waiting_on(run))
-        else {
+        let Some(Waiting::Question { node }) = self.item_waiting(cx) else {
             return;
         };
         let text = open.answer.read(cx).text().trim().to_string();
@@ -173,7 +182,7 @@ impl InboxView {
         let Some(open) = self.item_run.as_ref() else {
             return;
         };
-        if open.model.read(cx).run().and_then(|run| waiting_on(run)) != Some(Waiting::Budget) {
+        if self.item_waiting(cx) != Some(Waiting::Budget) {
             return;
         }
         let id = open.id.clone();
@@ -189,8 +198,8 @@ impl InboxView {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let open = self.item_run.as_ref()?;
-        let run = self.item_run_value(cx)?;
-        let waits = matches!(waiting_on(&run), Some(Waiting::Question { .. }));
+        self.item_run_value(cx)?;
+        let waits = matches!(self.item_waiting(cx), Some(Waiting::Question { .. }));
         if !waits {
             return Some(
                 row()
@@ -244,7 +253,7 @@ impl InboxView {
     pub(crate) fn budget_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.item_run.as_ref()?;
         let run = self.item_run_value(cx)?;
-        if waiting_on(&run) != Some(Waiting::Budget) {
+        if self.item_waiting(cx) != Some(Waiting::Budget) {
             return None;
         }
         let spent = base::fmt::cost(run.cost_usd);

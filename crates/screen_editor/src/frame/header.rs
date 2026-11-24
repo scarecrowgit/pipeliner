@@ -107,17 +107,14 @@ impl EditorView {
         for (id, verb, disabled, tip, keys) in
             [history("editor-undo", "Undo", undo, "⌘Z"), history("editor-redo", "Redo", redo, "⇧⌘Z")]
         {
-            let button = Button::new(id, verb).ghost().disabled(disabled || !loaded).on_click(cx.listener(
-                move |this, _, window, cx| {
-                    match id {
-                        "editor-undo" => this.undo(cx),
-                        _ => this.redo(cx),
-                    }
-                    // Keys go back to the canvas, so ⌘Z keeps working after a click here.
-                    let focus = this.parts.canvas.read(cx).focus_handle().clone();
-                    window.focus(&focus);
-                },
-            ));
+            let glyph = if verb == "Undo" { IconName::Undo } else { IconName::Redo };
+            // The button leaves focus on the canvas, so ⌘Z keeps working after a click here.
+            let button = IconButton::new(id, glyph).focus_on_click(false).disabled(disabled || !loaded).on_click(
+                cx.listener(move |this, _, _, cx| match id {
+                    "editor-undo" => this.undo(cx),
+                    _ => this.redo(cx),
+                }),
+            );
             actions.push(
                 div()
                     .id(SharedString::from(format!("{id}-tip")))
@@ -131,13 +128,20 @@ impl EditorView {
             div()
                 .id("editor-replay-tip")
                 .tooltip(Tooltip::text("Coming soon"))
-                .child(Button::new("editor-replay", "Replay last 100").ghost().icon(IconName::Replay).disabled(true))
+                .child(
+                    Button::new("editor-replay", "Replay last 100")
+                        .ghost()
+                        .icon(IconName::Replay)
+                        .focus_on_click(false)
+                        .disabled(true),
+                )
                 .probe("editor-replay")
                 .into_any_element(),
         );
         actions.push(
             Button::new("editor-test-run", "Test run")
                 .secondary()
+                .focus_on_click(false)
                 .icon(IconName::Play)
                 .disabled(!loaded)
                 .on_click(cx.listener(|this, _, window, cx| this.test_run_clicked(window, cx)))
@@ -147,6 +151,7 @@ impl EditorView {
         actions.push(
             Button::new("editor-deploy", format!("Deploy v{}", versions.next))
                 .primary()
+                .focus_on_click(false)
                 .disabled(!loaded)
                 .on_click(cx.listener(|this, _, window, cx| this.open_deploy(window, cx)))
                 .probe("editor-deploy")

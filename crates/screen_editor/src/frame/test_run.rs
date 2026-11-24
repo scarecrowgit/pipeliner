@@ -41,6 +41,9 @@ pub(super) struct TestRun {
     pub(super) shown: Option<Shown>,
     /// A start was asked for and the engine has not answered yet.
     pub(super) starting: bool,
+    /// The pipeline's last test run was put on show once (after a restart); a person who
+    /// leaves it for a new run is not sent back to it.
+    pub(super) offered_last: bool,
     pub(super) log: LogState,
     _subscriptions: Vec<Subscription>,
 }
@@ -86,6 +89,7 @@ impl TestRun {
             answer,
             shown: None,
             starting: false,
+            offered_last: false,
             log: LogState::default(),
             _subscriptions: subscriptions,
         }
@@ -95,6 +99,7 @@ impl TestRun {
     pub(super) fn forget_run(&mut self) {
         self.shown = None;
         self.starting = false;
+        self.offered_last = false;
         self.log = LogState::default();
     }
 }
@@ -103,6 +108,24 @@ impl EditorView {
     /// The run on show, once its model has it.
     pub(crate) fn shown_run(&self, cx: &App) -> Option<Arc<Run>> {
         self.test.shown.as_ref().and_then(|shown| shown.model.read(cx).run().cloned())
+    }
+
+    /// Asks for the pipeline's newest runs, for its last test run.
+    pub(super) fn load_runs(&mut self, cx: &mut Context<Self>) {
+        let id = self.pipeline.clone();
+        hub::runs(cx).update(cx, |runs, cx| runs.ensure_pipeline_runs(&id, cx));
+        self.offer_last_test_run(cx);
+    }
+
+    /// Once per pipeline: with nothing on show, the last test run (from before a restart)
+    /// goes on show, so the dock reads "Last test run #N" and the canvas marks its nodes.
+    pub(super) fn offer_last_test_run(&mut self, cx: &mut Context<Self>) {
+        if self.test.offered_last || self.test.starting || self.parts.draft.read(cx).run().is_some() {
+            return;
+        }
+        let Some(last) = hub::runs(cx).read(cx).last_test_run(&self.pipeline).map(|run| run.id.clone()) else { return };
+        self.test.offered_last = true;
+        self.parts.draft.update(cx, |draft, cx| draft.show_run(Some(last), cx));
     }
 
     /// The draft put another run on show (or none): follow its model.
@@ -399,7 +422,11 @@ impl EditorView {
         let head = row()
             .gap(px(SPACE_1_5))
             .type_style(LABEL)
-            .child(div().flex_none().type_style(LABEL_STRONG).child(format!("Test run #{}", run.number.max(1))))
+            .child(div().flex_none().type_style(LABEL_STRONG).child(format!(
+                "{} #{}",
+                if open { "Test run" } else { "Last test run" },
+                run.number.max(1)
+            )))
             .child(div().flex_1().min_w_0().text_color(TEXT_MUTED).child(truncate_lh(format!("· {}", facts.join(" · ")), LABEL.line)))
             .child(state_word(run.state))
             .child(legend)

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, ElementId, FontWeight, IntoElement, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, ElementId, IntoElement, Window, div, prelude::*, px};
 use hub::LoadState;
 use hub::api::{InboxItem, InboxKind};
 use ui::dev::Probe;
@@ -153,18 +153,14 @@ impl InboxView {
             .map(|review| review.variants.len())
             .filter(|n| *n > 0)
             .unwrap_or(3);
-        let pick_keys = if picks > 1 {
-            format!("1–{picks}")
-        } else {
-            "1".to_string()
-        };
+
         col()
             .w(px(QUEUE_WIDTH))
             .flex_none()
             .h_full()
             .border_r_1()
             .border_color(LINE)
-            .child(self.render_tabs(window, cx))
+            .child(self.render_tabs(cx))
             .child(body)
             .child(
                 div()
@@ -173,70 +169,39 @@ impl InboxView {
                     .py(px(SPACE_3))
                     .border_t_1()
                     .border_color(LINE)
-                    .child(
-                        KeyHints::new()
-                            .hint(["J", "K"], "move")
-                            .hint([pick_keys], "pick")
-                            .hint(["R"], "send back"),
-                    ),
+                    .child(key_hints(picks)),
             )
             .into_any_element()
     }
 
     /// Waiting / All / Archived, with counts.
-    fn render_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tabs(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let waiting = self.live_items(Tab::Waiting, cx).len();
         let all = self.inbox.read(cx).items().len();
         let archived = self.archived.started.then_some(self.archived.items.len());
-        let tabs: Vec<AnyElement> = Tab::ALL
-            .into_iter()
-            .map(|tab| {
-                let count = match tab {
-                    Tab::Waiting => Some(waiting),
-                    Tab::All => Some(all),
-                    Tab::Archived => archived,
-                };
-                let selected = tab == self.tab;
-                let id = ElementId::Name(format!("inbox-tab-{}", tab.name()).into());
-                let rest =
-                    motion::Look::bg(TRANSPARENT).fg(if selected { TEXT } else { TEXT_MUTED });
-                let hover = motion::Look::bg(TRANSPARENT).fg(TEXT);
-                let selector = format!("inbox-tab-{}", tab.name());
-                let probe = selector.clone();
-                let el = div().id(id.clone()).debug_selector(move || selector);
-                motion::hover_fade(el, id, rest, hover, window, cx)
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(SPACE_1_5))
-                    .h(px(TAB_HEIGHT))
-                    .border_b_2()
-                    .border_color(if selected { ACCENT } else { TRANSPARENT })
-                    .type_style(if selected { BODY_STRONG } else { BODY })
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .child(tab.label())
-                    .when_some(count, |d, n| {
-                        d.child(
-                            div()
-                                .text_color(TEXT_MUTED)
-                                .font_weight(FontWeight::NORMAL)
-                                .tabular()
-                                .child(base::fmt::count(n as u64)),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx)))
-                    .probe(probe)
-                    .into_any_element()
-            })
-            .collect();
+        let selected = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
+        let mut tabs = Tabs::new("inbox-tabs").flush().selected(selected);
+        for tab in Tab::ALL {
+            let count = match tab {
+                Tab::Waiting => Some(waiting),
+                Tab::All => Some(all),
+                Tab::Archived => archived,
+            };
+            tabs = match count {
+                Some(n) => tabs.tab_n(tab.label(), base::fmt::count(n as u64)),
+                None => tabs.tab(tab.label()),
+            }
+            .tab_probe(format!("inbox-tab-{}", tab.name()));
+        }
+        let view = cx.entity().downgrade();
+        let tabs = tabs.on_select(move |ix, _, cx| {
+            let tab = Tab::ALL[ix.min(Tab::ALL.len() - 1)];
+            view.update(cx, |this, cx| this.set_tab(tab, cx)).ok();
+        });
+        // The hairline spans the whole queue, under the padded bar.
         div()
             .relative()
-            .flex()
             .flex_none()
-            .items_center()
-            .gap(px(SPACE_5))
-            .h(px(TAB_HEIGHT))
             .px(px(SPACE_4))
             .child(
                 div()
@@ -247,7 +212,7 @@ impl InboxView {
                     .h(px(1.))
                     .bg(LINE),
             )
-            .children(tabs)
+            .child(tabs)
             .into_any_element()
     }
 
@@ -341,4 +306,37 @@ impl InboxView {
             .probe(probe)
             .into_any_element()
     }
+}
+
+/// The queue's key hints: "J K move  1 – 3 pick  R send back", with the range of picks drawn
+/// as two key caps around a dash, as the mockup does.
+fn key_hints(picks: usize) -> AnyElement {
+    let hint = |keys: Vec<AnyElement>, label: &'static str| {
+        row()
+            .flex_none()
+            .gap(px(SPACE_1))
+            .children(keys)
+            .child(label)
+            .into_any_element()
+    };
+    let picks_keys: Vec<AnyElement> = if picks > 1 {
+        vec![
+            Kbd::new("1").into_any_element(),
+            div().child("–").into_any_element(),
+            Kbd::new(picks.to_string()).into_any_element(),
+        ]
+    } else {
+        vec![Kbd::new("1").into_any_element()]
+    };
+    row()
+        .gap_x(px(SPACE_3_5))
+        .type_style(LABEL)
+        .text_color(TEXT_MUTED)
+        .child(hint(
+            vec![Kbd::new("J").into_any_element(), Kbd::new("K").into_any_element()],
+            "move",
+        ))
+        .child(hint(picks_keys, "pick"))
+        .child(hint(vec![Kbd::new("R").into_any_element()], "send back"))
+        .into_any_element()
 }

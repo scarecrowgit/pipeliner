@@ -287,7 +287,7 @@ fn runner_card(
         .bg(SURFACE)
         .child(head);
     if let Some(run) = latest.as_deref() {
-        card = card.child(run::summary(run));
+        card = card.child(run::summary(run, run::wait_of(this, run, cx)));
     }
     card = card.child(triggers_row(issue.triggers, cw >= TRIGGERS_INLINE, cx));
     card.child(actions_row(runner, kind, latest.as_deref(), cx)).named("issue-runner-card").into_any_element()

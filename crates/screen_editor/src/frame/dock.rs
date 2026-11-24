@@ -5,9 +5,7 @@
 
 use std::f32::consts::PI;
 
-use gpui::{
-    AnyElement, Context, ElementId, IntoElement, SharedString, Transformation, Window, div, prelude::*, px, radians,
-};
+use gpui::{AnyElement, Context, IntoElement, Transformation, Window, div, prelude::*, px, radians};
 use hub::model::Severity;
 use ui::dev::Probe;
 use ui::motion::{self, Look};
@@ -76,7 +74,7 @@ impl EditorView {
     }
 
     pub(super) fn render_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let tabs: Vec<AnyElement> = DockTab::ALL.iter().map(|&tab| self.dock_tab_button(tab, window, cx)).collect();
+        let tabs = self.dock_tabs(cx);
         let collapsed = self.dock.collapsed;
         let chevron = icon(IconName::ChevronDown, 14., TEXT_MUTED)
             .with_transformation(Transformation::rotate(radians(if collapsed { PI } else { 0.0 })));
@@ -105,8 +103,9 @@ impl EditorView {
             .h(px(TAB_HEIGHT))
             .pl(px(SPACE_5))
             .pr(px(SPACE_3))
+            .gap(px(SPACE_2))
             .child(div().absolute().left_0().right_0().bottom_0().h(px(1.)).bg(LINE))
-            .children(tabs)
+            .child(div().flex_1().min_w_0().child(tabs))
             .child(fold.probe("dock-collapse"));
         let body = (!collapsed).then(|| match self.dock.tab {
             DockTab::TestRun => self.render_test_run(window, cx),
@@ -124,57 +123,30 @@ impl EditorView {
             .into_any_element()
     }
 
-    /// One tab: its label, a count after "Log" and a badge after "Problems".
-    fn dock_tab_button(&self, tab: DockTab, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let selected = tab == self.dock.tab && !self.dock.collapsed;
-        let name: SharedString = format!("dock-tab-{}", tab.key()).into();
-        let fg = if selected { TEXT } else { TEXT_MUTED };
-        let faded = motion::hover_fade_state(
-            ElementId::Name(name.clone()),
-            Look::bg(TRANSPARENT).fg(fg),
-            Look::bg(TRANSPARENT).fg(TEXT),
-            window,
-            cx,
-        );
-        let selector = name.clone();
-        let el = div().id(ElementId::Name(name.clone())).debug_selector(move || selector.to_string());
-        let trailing = match tab {
-            DockTab::TestRun => None,
-            DockTab::Log => Some(
-                div()
-                    .text_color(TEXT_MUTED)
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .tabular()
-                    .child(truncate(base::fmt::count(self.log_count(cx) as u64)))
-                    .into_any_element(),
-            ),
-            DockTab::Problems => {
-                let draft = self.parts.draft.read(cx);
-                let problems = draft.problems();
-                let errors = problems.iter().filter(|p| p.severity == Severity::Error).count();
-                (!problems.is_empty()).then(|| {
-                    let badge = CountBadge::new(base::fmt::count(problems.len() as u64));
-                    let badge = if errors > 0 { badge.tone(CountTone::Danger) } else { badge.quiet() };
-                    badge.into_any_element()
-                })
-            }
+    /// The tabs: a count after "Log" and a badge after "Problems".
+    fn dock_tabs(&self, cx: &mut Context<Self>) -> Tabs {
+        let selected = DockTab::ALL.iter().position(|t| *t == self.dock.tab).unwrap_or(0);
+        let (problems, errors) = {
+            let draft = self.parts.draft.read(cx);
+            let problems = draft.problems();
+            (problems.len(), problems.iter().filter(|p| p.severity == Severity::Error).count())
         };
-        faded
-            .apply(el)
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(SPACE_1_5))
-            .h(px(TAB_HEIGHT))
-            .mr(px(SPACE_5))
-            .border_b_2()
-            .border_color(if selected { ACCENT } else { TRANSPARENT })
-            .type_style(if selected { BODY_STRONG } else { BODY })
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| this.open_tab(tab, cx)))
-            .child(truncate(tab.label()))
-            .children(trailing)
-            .probe(name)
-            .into_any_element()
+        let mut tabs = Tabs::new("dock-tabs").flush().selected(selected);
+        for tab in DockTab::ALL {
+            tabs = match tab {
+                DockTab::Log => tabs.tab_n(tab.label(), base::fmt::count(self.log_count(cx) as u64)),
+                _ => tabs.tab(tab.label()),
+            };
+            if tab == DockTab::Problems && problems > 0 {
+                let badge = CountBadge::new(base::fmt::count(problems as u64));
+                tabs = tabs.tab_trailing(if errors > 0 { badge.tone(CountTone::Danger) } else { badge.quiet() });
+            }
+            tabs = tabs.tab_probe(format!("dock-tab-{}", tab.key()));
+        }
+        let view = cx.entity().downgrade();
+        tabs.on_select(move |ix, _, cx| {
+            let tab = DockTab::ALL[ix.min(DockTab::ALL.len() - 1)];
+            view.update(cx, |this, cx| this.open_tab(tab, cx)).ok();
+        })
     }
 }

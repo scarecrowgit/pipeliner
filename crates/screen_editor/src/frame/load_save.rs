@@ -1,9 +1,10 @@
 //! The draft and the file: loading it from the catalog, following the file on disk, saving a
 //! short while after the last edit, and checking the graph for problems after each change.
 //!
-//! The draft is the file. Every save goes through `Commands::save_pipeline`, which runs off
-//! the UI thread and answers only through the catalog: when the file is read back the save
-//! landed, and a "Could not save the pipeline" notice from the hub means it did not.
+//! The draft is the file. Every save goes through `Commands::save_pipeline_with_result`, which
+//! runs off the UI thread: when the file is read back through the catalog the save landed, and
+//! an empty result means it did not (the hub has shown a notice saying why; its words become
+//! the header's reason).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,8 +23,6 @@ use super::EditorView;
 pub(crate) const SAVE_DELAY: Duration = Duration::from_millis(800);
 /// How long after the last edit the graph is checked.
 pub(crate) const CHECK_DELAY: Duration = Duration::from_millis(250);
-/// The notice the hub shows when `save_pipeline` fails.
-const SAVE_FAILED: &str = "Could not save the pipeline";
 
 /// Where loading the pipeline stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +74,8 @@ pub(super) struct Document {
     pub(super) in_flight: Vec<GraphDef>,
     /// Why the last save failed.
     pub(super) save_error: Option<SharedString>,
+    /// The last notice the hub showed while a save was on its way: why it failed, if it did.
+    last_notice: Option<SharedString>,
     save_timer: Option<Task<()>>,
     check_timer: Option<Task<()>>,
     /// The node the route asked for, selected once the graph is there.
@@ -95,6 +96,7 @@ impl Document {
             conflict: None,
             in_flight: Vec::new(),
             save_error: None,
+            last_notice: None,
             save_timer: None,
             check_timer: None,
             pending_node: node,
@@ -279,9 +281,30 @@ impl EditorView {
             }
         };
         self.doc.save_error = None;
+        self.doc.last_notice = None;
         self.doc.in_flight.push(graph.clone());
         self.parts.draft.update(cx, |draft, cx| draft.mark_saved(graph.clone(), cx));
-        hub::commands(cx).save_pipeline(place, graph, cx);
+        let saved = hub::commands(cx).save_pipeline_with_result(place, graph.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            if saved.await.is_none() {
+                this.update(cx, |this, cx| this.save_failed(&graph, cx)).ok();
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The save of `graph` failed: the draft is unsaved again and the header says why.
+    fn save_failed(&mut self, graph: &GraphDef, cx: &mut Context<Self>) {
+        if !self.doc.in_flight.contains(graph) {
+            return;
+        }
+        self.doc.in_flight.clear();
+        let why = self.doc.last_notice.take().unwrap_or_else(|| "the save failed".into());
+        self.doc.save_error = Some(why);
+        if let Some(disk) = self.doc.disk.clone() {
+            self.parts.draft.update(cx, |draft, cx| draft.mark_saved(disk, cx));
+        }
         cx.notify();
     }
 
@@ -299,17 +322,12 @@ impl EditorView {
         }
     }
 
-    /// A failed save: the draft is unsaved again and the header says why.
-    pub(super) fn hub_notice(&mut self, notice: &HubNotice, cx: &mut Context<Self>) {
-        if notice.text.as_ref() != SAVE_FAILED || self.doc.in_flight.is_empty() {
-            return;
+    /// Remembers what the hub said while a save is on its way: if the save then fails, the
+    /// notice (shown before the empty result arrives) says why.
+    pub(super) fn hub_notice(&mut self, notice: &HubNotice, _cx: &mut Context<Self>) {
+        if !self.doc.in_flight.is_empty() {
+            self.doc.last_notice = Some(notice.detail.clone().unwrap_or_else(|| notice.text.clone()));
         }
-        self.doc.in_flight.clear();
-        self.doc.save_error = Some(notice.detail.clone().unwrap_or_else(|| notice.text.clone()));
-        if let Some(disk) = self.doc.disk.clone() {
-            self.parts.draft.update(cx, |draft, cx| draft.mark_saved(disk, cx));
-        }
-        cx.notify();
     }
 
     /// Checks the graph after [`CHECK_DELAY`]; the answer is stored for the revision it was

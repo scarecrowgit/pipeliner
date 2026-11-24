@@ -111,7 +111,7 @@ fn built_ins_cannot_be_edited_or_removed(cx: &mut TestAppContext) {
     let more = "agents-more-agent:build";
     for item in ["agents-more-edit", "agents-more-rename", "agents-more-archive", "agents-more-delete"] {
         click(cx, more);
-        assert!(shown(cx, &format!("{item}-why")), "{item} carries its reason");
+        assert!(shown(cx, item), "{item} is listed, disabled");
         click(cx, item);
         assert!(!shown(cx, "agents-delete-dialog") && !shown(cx, "agents-edit-dialog"));
         cx.simulate_keystrokes("escape");

@@ -40,9 +40,10 @@ use crate::{Draft, DraftEvent, Selection};
 use interaction::Gesture;
 use scene::Scene;
 
-/// Space kept around the graph by [`CanvasView::zoom_to_fit`], px: room for the legend and
-/// the floating controls.
-const FIT_PADDING: f32 = 56.0;
+/// Space kept around the graph by [`CanvasView::zoom_to_fit`], px. The mockup's graph runs to
+/// about 20px from the canvas's edges (the legend sits in the bottom-left corner beside it),
+/// so the graph is drawn as large as the canvas allows.
+const FIT_PADDING: f32 = 24.0;
 
 /// What the canvas tells the frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,7 +85,7 @@ impl CanvasView {
         let subscription = cx.subscribe(&draft, |this, _, event, cx| {
             match event {
                 DraftEvent::RunShown => this.follow_run(cx),
-                DraftEvent::Selected => this.nudging = None,
+                DraftEvent::Selected => this.end_nudge(cx),
                 _ => {}
             }
             cx.notify();

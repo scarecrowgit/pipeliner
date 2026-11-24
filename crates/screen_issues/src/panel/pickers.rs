@@ -56,6 +56,21 @@ pub(super) fn state_label(state: &RunnableState) -> (SharedString, Hsla) {
     }
 }
 
+/// The tone of [`state_label`]'s words as a menu hint: running in info blue, ready and live in
+/// green, waiting in amber, the rest muted.
+pub(super) fn state_tone(state: &RunnableState) -> HintTone {
+    match state {
+        RunnableState::Ready | RunnableState::Live { .. } => HintTone::Success,
+        RunnableState::Running { .. } | RunnableState::Alive { .. } => HintTone::Info,
+        RunnableState::Waiting { .. } => HintTone::Warning,
+        RunnableState::Idle
+        | RunnableState::Queued { .. }
+        | RunnableState::Paused
+        | RunnableState::Draft { .. }
+        | RunnableState::Ended { .. } => HintTone::Muted,
+    }
+}
+
 /// The line under a runnable's name in the picker: a pipeline's path, an orchestrator's team,
 /// an agent's model and runtime.
 pub(super) fn subline(runnable: &Runnable, catalog: &CatalogModel) -> SharedString {
@@ -267,16 +282,17 @@ fn runner_popover(view: &Entity<IssuePanel>, window: &mut Window, cx: &mut App) 
                 RunnableKind::Agent => "Agents",
                 RunnableKind::Pipeline => "Pipelines",
             };
-            list = list.child(PopLabel::new(group));
+            list = list.child(div().flex_none().child(PopLabel::new(group)));
         }
-        let hint = catalog.activity(&runnable.reference).map(|a| state_label(&a.state).0);
+        let hint = catalog.activity(&runnable.reference).map(|a| (state_label(&a.state).0, state_tone(&a.state)));
         let (v, reference) = (view.clone(), runnable.reference.clone());
         let name = SharedString::from(format!("issue-runner-{n}"));
-        list = list.child(
+        // Rows of a scrolling column shrink unless they are told not to.
+        list = list.child(div().flex_none().child(
             MenuItem::new(name.clone(), runnable.name.clone())
                 .tile(Tile::new(kind_icon(runnable.kind)).medium())
                 .subline(subline(runnable, catalog))
-                .when_some(hint, |item, hint| item.hint(hint))
+                .when_some(hint, |item, (hint, tone)| item.hint(hint).hint_tone(tone))
                 .check_column()
                 .checked(attached.as_ref() == Some(&runnable.reference))
                 .selected(n == picked)
@@ -285,7 +301,7 @@ fn runner_popover(view: &Entity<IssuePanel>, window: &mut Window, cx: &mut App) 
                     v.update(cx, |this, cx| this.choose_runner(r, window, cx))
                 })
                 .probe(name),
-        );
+        ));
     }
     if choices.is_empty() {
         let text = if catalog.runnables().is_empty() { "Loading agents and pipelines…" } else { "Nothing matches" };

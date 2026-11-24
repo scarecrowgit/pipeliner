@@ -16,8 +16,8 @@ use crate::view::{AgentsView, SEARCH};
 /// Height of a list row, px (`height:56px` in the mockup).
 const ROW_H: f32 = 56.;
 /// Widths of the State, Activity and Used from columns, px.
-const STATE_W: f32 = 168.;
-const ACTIVITY_W: f32 = 196.;
+const STATE_W: f32 = 152.;
+const ACTIVITY_W: f32 = 182.;
 const USES_W: f32 = 104.;
 
 /// The `ui` status of a row's dot.
@@ -126,9 +126,11 @@ impl AgentsView {
             .children(tabs)
             .child(grow())
             .child(
+                // The mockup's field is `.input.sm` with small text, so its placeholder fits.
                 div()
                     .flex_none()
                     .w(px(240.))
+                    .type_style(LABEL)
                     .child(text_field(SEARCH, &self.search).small().icon(IconName::Search).kbd("F"))
                     .probe(SEARCH),
             )
@@ -231,7 +233,13 @@ impl AgentsView {
                     .flex_1()
                     .min_w_0()
                     .child(name)
-                    .child(truncate_lh(runnable.description.clone(), LABEL.line).type_style(LABEL).text_color(TEXT_SECONDARY)),
+                    // Cut at the width it is given, with an ellipsis (a clamped line in this box
+                    // is measured on one line and clipped instead).
+                    .child(
+                        truncate_styled_block(runnable.description.clone(), [], LABEL.line)
+                            .type_style(LABEL)
+                            .text_color(TEXT_SECONDARY),
+                    ),
             );
         let uses = row().gap(px(SPACE_2)).children(PLACES.iter().enumerate().map(|(ix, (icon_name, label))| {
             let on = uses_at(&runnable.uses, ix);
