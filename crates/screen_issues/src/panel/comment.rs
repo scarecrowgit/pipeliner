@@ -39,7 +39,7 @@ pub(super) fn dock(this: &IssuePanel, _cx: &mut Context<IssuePanel>) -> AnyEleme
         .border_t_1()
         .border_color(LINE)
         .bg(BG)
-        .child(composer_view(&this.composer))
+        .child(composer_view(&this.composer).width(this.content_width()))
         .into_any_element()
 }
 

@@ -493,3 +493,41 @@ fn accepted_mentions_are_drawn_highlighted_and_follow_edits(cx: &mut TestAppCont
     assert!(styled(&c, cx).is_empty(), "{:?}", styled(&c, cx));
     c.update(cx, |c, cx| c.set_rows(1, 3, cx));
 }
+
+/// An issue composer in a frame of a known width, as the issue panel draws it.
+struct NarrowPage {
+    composer: Entity<Composer>,
+    width: f32,
+}
+
+impl Render for NarrowPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let composer = crate::composer_view(&self.composer).width(self.width);
+        ui::root().flex().flex_col().child(div().w(px(self.width)).child(composer))
+    }
+}
+
+#[gpui::test]
+fn a_long_hint_is_cut_before_the_send_button_leaves_the_card(cx: &mut TestAppContext) {
+    const WIDTH: f32 = 300.;
+    ui::motion::set_reduced(true);
+    cx.update(|cx| {
+        ui::init(cx);
+        crate::bind_keys(cx);
+    });
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        let composer = cx.new(|cx| {
+            let mut c = Composer::issue(cx);
+            c.set_hint(Some("Mentions wake agents when you post, and the hint goes on and on".into()), cx);
+            c
+        });
+        let page = cx.new(|_| NarrowPage { composer, width: WIDTH });
+        OverlayHost::new(window, cx).with_content(page)
+    });
+    cx.run_until_parked();
+    let send = cx.debug_bounds("composer-send").expect("send button drawn");
+    let hint = cx.debug_bounds("composer-hint").expect("hint drawn");
+    assert!(send.right() <= px(WIDTH), "the button stays inside the card: {send:?}");
+    assert!(hint.right() <= send.left(), "the hint ends before the button: {hint:?} {send:?}");
+    assert!(hint.size.width > px(40.), "the hint keeps the room that is left: {hint:?}");
+}

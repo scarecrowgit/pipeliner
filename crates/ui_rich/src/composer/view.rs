@@ -26,11 +26,15 @@ pub struct ComposerView {
     composer: Entity<Composer>,
     leading: Vec<AnyElement>,
     trailing: Vec<AnyElement>,
+    width: Option<f32>,
 }
+
+/// Under this width an issue composer has no room for both its hint and the key cap.
+const KEY_CAP_BESIDE_HINT_FROM: f32 = 400.;
 
 /// The view of `composer`, slots empty.
 pub fn composer_view(composer: &Entity<Composer>) -> ComposerView {
-    ComposerView { composer: composer.clone(), leading: Vec::new(), trailing: Vec::new() }
+    ComposerView { composer: composer.clone(), leading: Vec::new(), trailing: Vec::new(), width: None }
 }
 
 impl ComposerView {
@@ -43,6 +47,13 @@ impl ComposerView {
     /// A control at the end of the row, before the attach and send buttons (a skill tag).
     pub fn trailing(mut self, el: impl IntoElement) -> Self {
         self.trailing.push(el.into_any_element());
+        self
+    }
+
+    /// The width the composer is drawn at, when the screen knows it. In a narrow issue
+    /// composer the key cap gives its place to the hint.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 }
@@ -123,7 +134,8 @@ impl RenderOnce for ComposerView {
                 .child(icon(IconName::Lock, 12., TEXT_MUTED))
                 .child(r)
         });
-        let controls = controls_row(&f, &entity, self.leading, self.trailing);
+        let narrow = self.width.is_some_and(|w| w < KEY_CAP_BESIDE_HINT_FROM);
+        let controls = controls_row(&f, &entity, self.leading, self.trailing, narrow);
 
         let on = |left: bool| {
             let e = entity.clone();
@@ -194,12 +206,24 @@ fn text_block(f: &Frame, area: Entity<crate::TextArea>) -> impl IntoElement {
         .probe_value(format!("{}-text", f.name), f.text.clone())
 }
 
-/// The row under the text: slots, hint, attach and send (or stop).
+/// One line of muted label text that ends in an ellipsis when its row is too narrow for it.
+fn shrinking_label(text: SharedString) -> gpui::Div {
+    row()
+        .flex_shrink()
+        .min_w_0()
+        .type_style(LABEL)
+        .text_color(TEXT_MUTED)
+        .child(truncate_lh(text, LABEL.line))
+}
+
+/// The row under the text: slots, hint, attach and send (or stop). The buttons keep their
+/// size; the hint and the note are cut first. `narrow` drops the key cap beside a hint.
 fn controls_row(
     f: &Frame,
     entity: &Entity<Composer>,
     leading: Vec<AnyElement>,
     trailing: Vec<AnyElement>,
+    narrow: bool,
 ) -> impl IntoElement {
     let name = &f.name;
     let off = f.disabled.is_some();
@@ -238,7 +262,8 @@ fn controls_row(
             .into_any_element()
     };
     let hint = f.hint.clone().map(|h| {
-        div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(h)
+        let selector = format!("{name}-hint");
+        shrinking_label(h).debug_selector(move || selector)
     });
     let base = row().px(px(SPACE_2)).pb(px(SPACE_2)).gap(px(SPACE_1_5));
     match f.kind {
@@ -250,9 +275,9 @@ fn controls_row(
             .children(attach)
             .child(send),
         ComposerKind::Issue => {
-            let note = (f.attach && f.hint.is_none() && !off).then(|| {
-                div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child("Paste or drop images")
-            });
+            let note = (f.attach && f.hint.is_none() && !off)
+                .then(|| shrinking_label("Paste or drop images".into()));
+            let key_cap = (!narrow || f.hint.is_none()).then(|| Kbd::new("⌘↵"));
             base.children(attach)
                 .children(note)
                 .children(leading)
@@ -260,12 +285,11 @@ fn controls_row(
                 .children(trailing)
                 .child(
                     row()
-                        .flex_none()
+                        .flex_shrink()
+                        .min_w_0()
                         .gap(px(SPACE_1))
-                        .type_style(LABEL)
-                        .text_color(TEXT_MUTED)
                         .children(hint)
-                        .child(Kbd::new("⌘↵")),
+                        .children(key_cap),
                 )
                 .child(send)
         }
