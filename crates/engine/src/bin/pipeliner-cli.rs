@@ -5,6 +5,7 @@
 //!   pipeliner-cli templates
 //!   pipeliner-cli create <template-id> [name]
 //!   pipeliner-cli run <pipeline name> <input...>
+//!   pipeliner-cli start <pipeline name> <input...>   (queue a run for the owning process)
 //!   pipeliner-cli runs
 //!   pipeliner-cli show <run number>
 //!   pipeliner-cli waiting
@@ -67,6 +68,17 @@ fn main() -> Result<()> {
             let r = engine.start_run(&p.id, &input, None)?;
             println!("run #{} {}", r.number, r.id);
             drive_until_idle(&engine, &r.id)?;
+        }
+        "start" => {
+            // Queue a run and exit; the owning process (app or `serve`) executes it.
+            let name = rest.first().context("pipeline name")?;
+            let p = store
+                .pipelines()
+                .into_iter()
+                .find(|p| &p.name == name || &p.id == name)
+                .context("no such pipeline")?;
+            let r = engine.start_run(&p.id, &rest[1..].join(" "), None)?;
+            println!("run #{} {}", r.number, r.id);
         }
         "watch" => {
             let r = find_run(&store, rest.first().context("run number")?)?;
