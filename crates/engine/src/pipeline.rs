@@ -190,7 +190,9 @@ pub fn drive(engine: &Engine, run_id: &str) -> Result<()> {
             .node(&node_id)
             .cloned()
             .ok_or_else(|| anyhow!("node {node_id} is missing"))?;
-        if run.status != Status::Running {
+        // A run resuming at a gate stays Waiting; the gate flips it back once you decide.
+        let at_gate = matches!(node.kind, NodeKind::Gate(_));
+        if run.status != Status::Running && !(at_gate && run.status == Status::Waiting) {
             store.update_run(run_id, |r| {
                 if r.status.is_active() {
                     r.status = Status::Running;
