@@ -246,35 +246,9 @@ impl PipelinesScreen {
         ed.debounce = None;
         ed.saved_seq = ed.edit_seq;
         let id = ed.pipeline_id.clone();
-        let name = ed.name.clone();
-        let job = state::run_engine(cx, move |e| {
-            let store = e.store();
-            match what {
-                Confirm::Archive => {
-                    let mut p = store
-                        .pipeline(&id)
-                        .ok_or_else(|| anyhow::anyhow!("pipeline not found"))?;
-                    p.archived = true;
-                    p.updated_at = harness_core::now();
-                    store.put_pipeline(&p)?;
-                    store.log(
-                        "pipeline.archived",
-                        None,
-                        None,
-                        format!("Pipeline {} archived", p.name),
-                    );
-                }
-                Confirm::Delete => {
-                    store.delete_pipeline(&id)?;
-                    store.log(
-                        "pipeline.deleted",
-                        None,
-                        None,
-                        format!("Pipeline {name} deleted"),
-                    );
-                }
-            }
-            Ok(())
+        let job = state::run_engine(cx, move |e| match what {
+            Confirm::Archive => e.archive_pipeline(&id),
+            Confirm::Delete => e.delete_pipeline(&id),
         });
         cx.spawn(async move |_, cx| {
             if job.await.is_some() {

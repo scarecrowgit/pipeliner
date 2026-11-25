@@ -387,23 +387,18 @@ impl PipelinesScreen {
         let job = state::run_engine(cx, {
             let id = id.clone();
             move |e| {
-                let store = e.store();
-                let mut p = store
-                    .pipeline(&id)
-                    .ok_or_else(|| anyhow::anyhow!("pipeline not found"))?;
+                // The graph saves even if the name is rejected (e.g. a duplicate).
+                e.save_draft(&id, graph)?;
+                // While the name field is empty, keep the stored name.
                 let name = if name.is_empty() {
-                    p.name.clone()
+                    e.store()
+                        .pipeline(&id)
+                        .map(|p| p.name)
+                        .unwrap_or_default()
                 } else {
                     name
                 };
-                if p.name != name || p.description != description || p.color != color {
-                    p.name = name;
-                    p.description = description;
-                    p.color = color;
-                    p.updated_at = harness_core::now();
-                    store.put_pipeline(&p)?;
-                }
-                e.save_draft(&id, graph)
+                e.update_pipeline_meta(&id, &name, &description, color)
             }
         });
         cx.spawn(async move |this, cx| {

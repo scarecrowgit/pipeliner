@@ -432,6 +432,86 @@ impl Engine {
         Ok(p.version)
     }
 
+    /// Renames / re-describes / recolors a pipeline. The name is trimmed and must be
+    /// non-empty and unique (case-insensitive) among the other pipelines. A no-op when
+    /// nothing changed.
+    pub fn update_pipeline_meta(
+        &self,
+        pipeline_id: &str,
+        name: &str,
+        description: &str,
+        color: u32,
+    ) -> Result<()> {
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("Pipeline name can't be empty");
+        }
+        if self
+            .store
+            .pipelines()
+            .iter()
+            .any(|o| o.id != p.id && o.name.trim().eq_ignore_ascii_case(name))
+        {
+            bail!("A pipeline named {name} already exists");
+        }
+        if p.name == name && p.description == description && p.color == color {
+            return Ok(());
+        }
+        let old = std::mem::replace(&mut p.name, name.to_string());
+        p.description = description.to_string();
+        p.color = color;
+        p.updated_at = now();
+        self.store.put_pipeline(&p)?;
+        let text = if old == p.name {
+            format!("Pipeline {} updated", p.name)
+        } else {
+            format!("Pipeline {old} renamed to {}", p.name)
+        };
+        self.store.log("pipeline.updated", None, None, text);
+        Ok(())
+    }
+
+    /// Hides a pipeline; its runs stay. New runs can't start from it.
+    pub fn archive_pipeline(&self, pipeline_id: &str) -> Result<()> {
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
+        if p.archived {
+            return Ok(());
+        }
+        p.archived = true;
+        p.updated_at = now();
+        self.store.put_pipeline(&p)?;
+        self.store.log(
+            "pipeline.archived",
+            None,
+            None,
+            format!("Pipeline {} archived", p.name),
+        );
+        Ok(())
+    }
+
+    /// Removes a pipeline for good.
+    pub fn delete_pipeline(&self, pipeline_id: &str) -> Result<()> {
+        let p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
+        self.store.delete_pipeline(&p.id)?;
+        self.store.log(
+            "pipeline.deleted",
+            None,
+            None,
+            format!("Pipeline {} deleted", p.name),
+        );
+        Ok(())
+    }
+
     pub fn discard_draft(&self, pipeline_id: &str) -> Result<()> {
         let mut p = self
             .store
@@ -629,5 +709,94 @@ impl Drop for SlotGuard {
     fn drop(&mut self) {
         *self.0.count.lock() += 1;
         self.0.cv.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine() -> Engine {
+        Engine::new(Store::open_in_memory().unwrap(), Config::default())
+    }
+
+    fn pipeline(e: &Engine, name: &str) -> Pipeline {
+        let t = e.templates().into_iter().next().expect("a starter template");
+        e.create_pipeline(&t, name).unwrap()
+    }
+
+    fn has_event(e: &Engine, kind: &str) -> bool {
+        e.store().events(50).iter().any(|ev| ev.kind == kind)
+    }
+
+    #[test]
+    fn update_meta_saves_and_logs() {
+        let e = engine();
+        let p = pipeline(&e, "Alpha");
+        e.update_pipeline_meta(&p.id, "  Beta ", "does things", 0x123456)
+            .unwrap();
+        let q = e.store().pipeline(&p.id).unwrap();
+        assert_eq!(q.name, "Beta");
+        assert_eq!(q.description, "does things");
+        assert_eq!(q.color, 0x123456);
+        assert!(q.updated_at >= p.updated_at);
+        assert!(e
+            .store()
+            .events(50)
+            .iter()
+            .any(|ev| ev.kind == "pipeline.updated" && ev.text.contains("Alpha")));
+    }
+
+    #[test]
+    fn update_meta_noop_does_not_log() {
+        let e = engine();
+        let p = pipeline(&e, "Alpha");
+        e.update_pipeline_meta(&p.id, &p.name, &p.description, p.color)
+            .unwrap();
+        assert!(!has_event(&e, "pipeline.updated"));
+        assert_eq!(e.store().pipeline(&p.id).unwrap().updated_at, p.updated_at);
+    }
+
+    #[test]
+    fn update_meta_rejects_empty_and_duplicate_names() {
+        let e = engine();
+        let a = pipeline(&e, "Alpha");
+        let b = pipeline(&e, "Beta");
+        assert!(e.update_pipeline_meta(&b.id, "   ", "", b.color).is_err());
+        assert!(e.update_pipeline_meta(&b.id, "alpha", "", b.color).is_err());
+        assert_eq!(e.store().pipeline(&b.id).unwrap().name, "Beta");
+        // Keeping its own name (or changing case of it) is fine.
+        e.update_pipeline_meta(&a.id, "ALPHA", "x", a.color).unwrap();
+        assert_eq!(e.store().pipeline(&a.id).unwrap().name, "ALPHA");
+        assert!(e.update_pipeline_meta("missing", "X", "", 0).is_err());
+    }
+
+    #[test]
+    fn archive_hides_pipeline_and_frees_name() {
+        let e = engine();
+        let a = pipeline(&e, "Alpha");
+        e.archive_pipeline(&a.id).unwrap();
+        let q = e.store().pipeline(&a.id).unwrap();
+        assert!(q.archived);
+        assert!(q.updated_at >= a.updated_at);
+        assert!(e.store().pipelines().iter().all(|p| p.id != a.id));
+        assert!(has_event(&e, "pipeline.archived"));
+        let b = pipeline(&e, "Beta");
+        e.update_pipeline_meta(&b.id, "Alpha", "", b.color).unwrap();
+        assert!(e.archive_pipeline("missing").is_err());
+    }
+
+    #[test]
+    fn delete_removes_pipeline_and_logs() {
+        let e = engine();
+        let a = pipeline(&e, "Alpha");
+        e.delete_pipeline(&a.id).unwrap();
+        assert!(e.store().pipeline(&a.id).is_none());
+        assert!(e
+            .store()
+            .events(50)
+            .iter()
+            .any(|ev| ev.kind == "pipeline.deleted" && ev.text.contains("Alpha")));
+        assert!(e.delete_pipeline(&a.id).is_err());
     }
 }
