@@ -1788,11 +1788,21 @@ fn pr_body(run: &Run, pipeline: &str) -> String {
             if o.summary.trim().is_empty() || matches!(n.kind, NodeKind::Source(_)) {
                 continue;
             }
-            s.push_str(&format!(
-                "- **{}**: {}\n",
-                n.name,
-                o.summary.trim().replace('\n', " ")
-            ));
+            // Keep the agent's Markdown; demote its headings under this section.
+            let body: String = o
+                .summary
+                .trim()
+                .lines()
+                .map(|l| {
+                    if l.starts_with('#') {
+                        format!("##{l}")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            s.push_str(&format!("### {}\n\n{body}\n\n", n.name));
         }
     }
     s.push_str("\n🤖 Generated with Pipeliner\n");
