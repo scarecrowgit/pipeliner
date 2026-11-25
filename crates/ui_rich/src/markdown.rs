@@ -8,6 +8,10 @@
 //!   sideways, and mouse selection across blocks copied with Cmd/Ctrl+C ([`bind_keys`]).
 //!   [`Markdown::verbatim`] shows any other text (errors, tool output, log lines) exactly as
 //!   given with the same selection and copy, in the type style and colour the caller picks.
+//! - Pictures: an image whose target is a local picture file ([`local_image`], relative
+//!   targets against [`Markdown::image_base`]) becomes a thumbnail under its paragraph (link
+//!   text in headings and table cells); a click on it, or on a link to a local picture, opens
+//!   the image viewer on all local pictures of the text. Other images stay link text.
 //! - [`SelectionGroup`] lets several views (log lines, list rows) share one selection: a
 //!   drag across them selects through all of them, a copy joins their parts.
 //! - [`plain_text`] and [`first_paragraph`] strip the Markdown for previews and list rows.
@@ -15,6 +19,7 @@
 mod cache;
 pub(crate) mod element;
 mod group;
+mod image;
 mod layout;
 mod parse;
 mod render;
@@ -30,4 +35,5 @@ pub use cache::{ParseCache, parse_cached};
 pub use parse::{Align, Block, Document, Inline, Item, List, Style, Table, parse};
 pub use rich::{first_paragraph, plain_text};
 pub use group::SelectionGroup;
+pub use image::{IMAGE_EXTENSIONS, local_image};
 pub use view::{Copy, KEY_CONTEXT, LinkHandler, Markdown, SelectAll, bind_keys};

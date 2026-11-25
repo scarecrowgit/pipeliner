@@ -2,6 +2,8 @@
 //! the view in a test window.
 
 mod group;
+mod image_window;
+mod images;
 mod parse;
 mod runs;
 mod text;
@@ -74,11 +76,11 @@ fn check_runs(runs: &[Inline], src: &str, allow_empty: bool) {
         "empty text block in {src:?}"
     );
     for r in runs {
-        assert!(!r.text.is_empty(), "empty run in {src:?}");
+        assert!(r.image || !r.text.is_empty(), "empty run in {src:?}");
     }
     for w in runs.windows(2) {
         assert!(
-            w[0].style != w[1].style || w[0].link != w[1].link,
+            w[0].style != w[1].style || w[0].link != w[1].link || w[0].image || w[1].image,
             "unmerged runs in {src:?}"
         );
     }

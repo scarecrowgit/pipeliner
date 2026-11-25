@@ -5,6 +5,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
+use super::image::{Images, text_runs};
 use super::parse::{Block, Document, Inline, parse};
 
 /// The look of one span of a unit's text.
@@ -234,10 +235,20 @@ pub(crate) fn verbatim_unit(text: &str) -> Unit {
     }
 }
 
-/// The selectable units of `doc` in reading order: the order the renderer walks it in.
+/// The selectable units of `doc` in reading order, for a text without thumbnails.
+#[cfg(test)]
 pub(crate) fn units(doc: &Document, mentions: &[String]) -> Vec<Unit> {
+    units_with(doc, mentions, &Images::default())
+}
+
+/// The selectable units of `doc` in reading order: the order the renderer walks it in.
+/// A paragraph's thumbnails (its images that are readable files in `images`) are not text:
+/// the paragraph's unit is the text around them, and a paragraph of thumbnails only has no
+/// unit. A copied selection across a thumbnail therefore skips the picture.
+pub(crate) fn units_with(doc: &Document, mentions: &[String], images: &Images) -> Vec<Unit> {
     let mut w = Walk {
         mentions,
+        images,
         out: Vec::new(),
     };
     for block in &doc.blocks {
@@ -248,6 +259,7 @@ pub(crate) fn units(doc: &Document, mentions: &[String]) -> Vec<Unit> {
 
 struct Walk<'a> {
     mentions: &'a [String],
+    images: &'a Images,
     out: Vec<Unit>,
 }
 
@@ -265,11 +277,15 @@ impl Walk<'_> {
     fn block(&mut self, block: &Block, lead: &str) {
         match block {
             Block::Paragraph(runs) => {
-                let text = RichText::from_inlines(runs, self.mentions);
-                self.unit(text, lead.to_string(), UnitKind::Body);
+                let runs = text_runs(runs, self.images, true);
+                if !runs.is_empty() {
+                    let text = RichText::from_inlines(&runs, self.mentions);
+                    self.unit(text, lead.to_string(), UnitKind::Body);
+                }
             }
             Block::Heading { level, text } => {
-                let text = RichText::from_inlines(text, self.mentions);
+                let runs = text_runs(text, self.images, false);
+                let text = RichText::from_inlines(&runs, self.mentions);
                 self.unit(text, lead.to_string(), UnitKind::Heading(*level));
             }
             Block::Code { lang, text } => {
@@ -280,8 +296,15 @@ impl Walk<'_> {
                 self.unit(RichText::plain(text), lead.to_string(), kind);
             }
             Block::Quote(blocks) => {
-                for (i, b) in blocks.iter().enumerate() {
-                    self.block(b, if i == 0 { lead } else { "\n\n" });
+                // The lead goes to the first block that has a unit.
+                let mut first = Some(lead);
+                for b in blocks {
+                    let l = first.take().unwrap_or("\n\n");
+                    let before = self.out.len();
+                    self.block(b, l);
+                    if self.out.len() == before && l == lead {
+                        first = Some(lead);
+                    }
                 }
             }
             Block::List(list) => self.list(list, lead, 0),
@@ -292,8 +315,9 @@ impl Walk<'_> {
                     } else {
                         "\t".into()
                     };
+                    let cell = text_runs(cell, self.images, false);
                     self.unit(
-                        RichText::from_inlines(cell, self.mentions),
+                        RichText::from_inlines(&cell, self.mentions),
                         j,
                         UnitKind::HeadCell,
                     );
@@ -305,7 +329,8 @@ impl Walk<'_> {
                             (_, 0, _) => "\n".into(),
                             _ => "\t".into(),
                         };
-                        let text = RichText::from_inlines(cell, self.mentions);
+                        let cell = text_runs(cell, self.images, false);
+                        let text = RichText::from_inlines(&cell, self.mentions);
                         self.unit(text, j, UnitKind::Cell);
                     }
                 }
@@ -325,12 +350,18 @@ impl Walk<'_> {
                 "\n"
             };
             let brk = if brk.is_empty() { "\n" } else { brk };
+            // The marker goes to the first block that has a unit (not one of thumbnails only).
             let mut first = Some(format!("{brk}{indent}{marker} "));
             for b in &item.blocks {
+                let marked = first.is_some();
                 let lead = first.take().unwrap_or_else(|| format!("\n{indent}  "));
+                let before = self.out.len();
                 match b {
                     Block::List(sub) => self.list(sub, &lead, depth + 1),
                     other => self.block(other, &lead),
+                }
+                if marked && self.out.len() == before {
+                    first = Some(lead);
                 }
             }
         }

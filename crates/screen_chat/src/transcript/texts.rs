@@ -70,10 +70,17 @@ impl TranscriptView {
             return md;
         }
         let source = SharedString::from(text.to_string());
+        let base = self.image_base(cx);
         let md = cx.new(|cx| {
             let md = match mode {
                 Mode::Verbatim => Markdown::verbatim(source, cx),
-                Mode::Markdown => Markdown::new(source, cx).on_link(|url, _, cx| cx.open_url(url)),
+                Mode::Markdown => {
+                    let md = Markdown::new(source, cx).on_link(|url, _, cx| cx.open_url(url));
+                    match base {
+                        Some(dir) => md.image_base(dir),
+                        None => md,
+                    }
+                }
             };
             md.type_style(style).color(color)
         });

@@ -93,12 +93,15 @@ pub enum Align {
 /// A run of text with one style.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Inline {
-    /// The text; `\n` for a line break.
+    /// The text; `\n` for a line break. For an image, its alt text (may be empty).
     pub text: String,
     /// How it looks.
     pub style: Style,
-    /// The target URL when the run is (inside) a link.
+    /// The target URL when the run is (inside) a link, or the target of an image.
     pub link: Option<String>,
+    /// The run is an image `![alt](target)`: `text` is the alt text, `link` the target. An
+    /// image is always a run of its own, never merged with its neighbours.
+    pub image: bool,
 }
 
 /// Inline emphasis of a run.
@@ -190,6 +193,10 @@ struct Builder {
     italic: u32,
     strike: u32,
     links: Vec<String>,
+    /// The image being read: its target and the alt text so far.
+    image: Option<(String, String)>,
+    /// Images open inside the one being read, plus itself.
+    image_depth: u32,
     code: Option<(String, String)>,
     heading: Option<u8>,
     table: Option<TableState>,
@@ -213,10 +220,16 @@ impl Builder {
         if text.is_empty() {
             return;
         }
+        if let Some((_, alt)) = self.image.as_mut() {
+            // Alt text is plain: its emphasis and line breaks are dropped.
+            alt.push_str(if text == "\n" { " " } else { text });
+            return;
+        }
         let link = self.links.last().cloned();
         if let Some(last) = self.inline.last_mut()
             && last.style == style
             && last.link == link
+            && !last.image
         {
             last.text.push_str(text);
             return;
@@ -225,6 +238,7 @@ impl Builder {
             text: text.to_string(),
             style,
             link,
+            image: false,
         });
     }
 
@@ -351,9 +365,13 @@ impl Builder {
             Tag::Emphasis => self.italic += 1,
             Tag::Strong => self.bold += 1,
             Tag::Strikethrough => self.strike += 1,
-            Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. } => {
-                self.links.push(dest_url.to_string())
+            Tag::Link { dest_url, .. } => self.links.push(dest_url.to_string()),
+            // An image inside another image's alt text is read as its alt text.
+            Tag::Image { dest_url, .. } if self.image.is_none() => {
+                self.image = Some((dest_url.to_string(), String::new()));
+                self.image_depth = 1;
             }
+            Tag::Image { .. } => self.image_depth += 1,
             _ => {}
         }
     }
@@ -419,10 +437,28 @@ impl Builder {
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
             TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
-            TagEnd::Link | TagEnd::Image => {
+            TagEnd::Link => {
                 self.links.pop();
             }
+            TagEnd::Image => {
+                self.image_depth = self.image_depth.saturating_sub(1);
+                if self.image_depth == 0 {
+                    self.end_image();
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Close the image being read: one run of its own with the alt text as its text.
+    fn end_image(&mut self) {
+        if let Some((target, alt)) = self.image.take() {
+            self.inline.push(Inline {
+                text: alt.trim().to_string(),
+                style: self.style(),
+                link: Some(target),
+                image: true,
+            });
         }
     }
 
@@ -444,6 +480,8 @@ impl Builder {
 
     /// Close whatever the (possibly unfinished) source left open and return the document.
     fn finish(mut self) -> Document {
+        self.image_depth = 0;
+        self.end_image();
         if let Some((lang, mut text)) = self.code.take() {
             trim_code(&mut text);
             self.push_block(Block::Code { lang, text });
@@ -525,9 +563,12 @@ fn table_of(t: TableState) -> Table {
     Table { align, head, rows }
 }
 
-/// Drop trailing whitespace and empty runs.
+/// Drop trailing whitespace and empty runs (an image stays, whatever its alt text).
 fn trim_runs(runs: &mut Vec<Inline>) {
     while let Some(last) = runs.last_mut() {
+        if last.image {
+            break;
+        }
         let keep = last.text.trim_end().len();
         last.text.truncate(keep);
         if last.text.is_empty() {
@@ -536,7 +577,7 @@ fn trim_runs(runs: &mut Vec<Inline>) {
             break;
         }
     }
-    runs.retain(|r| !r.text.is_empty());
+    runs.retain(|r| !r.text.is_empty() || r.image);
 }
 
 fn trim_code(text: &mut String) {

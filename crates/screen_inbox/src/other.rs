@@ -134,10 +134,12 @@ impl InboxView {
         if item.summary.is_empty() {
             return None;
         }
-        let md = self.texts.get(
+        let folder = self.item_folder(item, cx);
+        let md = self.texts.get_in(
             "summary",
             item.summary.clone(),
             Look::markdown(BODY, TEXT),
+            folder,
             cx,
         );
         Some(block("item-summary", md))

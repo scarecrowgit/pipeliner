@@ -3,6 +3,7 @@
 //! open so a selection survives redraws and can be copied.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use gpui::{AnyElement, App, AppContext as _, Entity, Focusable as _, Hsla, SharedString, Window};
 use ui::prelude::*;
@@ -105,6 +106,23 @@ impl Texts {
             md.type_style(look.style).color(look.color)
         });
         self.views.insert(key, (look.markdown, view.clone()));
+        view
+    }
+
+    /// [`get`](Self::get) for Markdown written by an agent that worked in `folder`: a picture
+    /// it names by a relative path is looked up there.
+    pub(crate) fn get_in(
+        &mut self,
+        key: impl Into<SharedString>,
+        text: impl Into<SharedString>,
+        look: Look,
+        folder: Option<PathBuf>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        let view = self.get(key, text, look, cx);
+        if folder.is_some() {
+            view.update(cx, |md, cx| md.set_image_base(folder, cx));
+        }
         view
     }
 

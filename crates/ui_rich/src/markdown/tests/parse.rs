@@ -9,6 +9,7 @@ fn plain(s: &str) -> Inline {
         text: s.into(),
         style: Style::default(),
         link: None,
+        image: false,
     }
 }
 

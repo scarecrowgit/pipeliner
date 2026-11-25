@@ -82,7 +82,7 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
 }
 
 /// A `w` × `h` grey PNG with a gradient.
-fn png(w: u32, h: u32) -> Vec<u8> {
+pub(crate) fn png(w: u32, h: u32) -> Vec<u8> {
     let mut raw = Vec::with_capacity(((w + 1) * h) as usize);
     for y in 0..h {
         raw.push(0);

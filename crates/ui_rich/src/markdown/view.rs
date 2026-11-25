@@ -2,13 +2,14 @@
 //! link clicks and code-block copy buttons.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, ClipboardItem, Context, FocusHandle, Focusable, Hsla, IntoElement, KeyBinding, Render,
-    SharedString, Task, Window, actions, prelude::*,
+    App, ClipboardItem, Context, FocusHandle, Focusable, Hsla, ImgResourceLoader, IntoElement,
+    KeyBinding, Render, Resource, SharedString, Task, Window, actions, prelude::*,
 };
 use ui::layout::col;
 use ui::theme::{BODY, SPACE_3, TEXT, TypeStyle};
@@ -16,9 +17,11 @@ use ui::theme::{BODY, SPACE_3, TEXT, TypeStyle};
 use super::cache::parse_cached;
 use super::element::{Shared, Tracker};
 use super::group::SelectionGroup;
+use super::image::{Gallery, Images, Probe, targets};
 use super::parse::Document;
 use super::render::Renderer;
-use super::rich::{Unit, UnitKind, units, verbatim_unit};
+use super::rich::{Unit, UnitKind, units_with, verbatim_unit};
+use crate::viewer::open_image_viewer;
 
 actions!(
     markdown,
@@ -59,6 +62,20 @@ const COPIED_FOR: Duration = Duration::from_millis(1500);
 /// outputs, log lines): nothing is Markdown, every `\n` breaks the line, spaces are kept,
 /// long lines wrap (between graphemes inside a word too long for the line).
 ///
+/// # Images
+///
+/// An image `![alt](target)` whose target is a local picture file (see
+/// [`local_image`](super::local_image); a relative target needs
+/// [`image_base`](Self::image_base)) is drawn as a thumbnail once the file has been read off
+/// the UI thread: in a paragraph (also inside lists and quotes) it leaves the running text
+/// and joins a strip of thumbnails under the paragraph, at most 520 × 220 px, captioned with
+/// its alt text. In headings and table cells it stays link text (its alt, or its file name).
+/// A click on a thumbnail, on such link text or on a plain link to a local picture opens the
+/// image viewer on every local picture of the text, in source order. Anything else (a remote
+/// URL, a relative target without a base, a missing or undecodable file, another file type)
+/// is link text handled by [`on_link`](Self::on_link), as any link. Thumbnails are not text:
+/// a selection across one copies the text around it.
+///
 /// Either way the text can be selected with the mouse and copied with Cmd/Ctrl+C, or
 /// selected whole with Cmd/Ctrl+A (after [`bind_keys`]); a press anywhere else in the
 /// window drops the selection, so only one view shows one. [`type_style`](Self::type_style)
@@ -94,6 +111,12 @@ pub struct Markdown {
     copied: Option<usize>,
     copied_reset: Option<Task<()>>,
     group: Option<(SelectionGroup, usize)>,
+    /// The local image files of the text and what is known about them.
+    pub(crate) images: Images,
+    /// The viewer's list of this text's readable local images.
+    pub(crate) gallery: Rc<Gallery>,
+    /// The text or the image folder changed: look for image files not asked for yet.
+    scan_images: bool,
 }
 
 impl Markdown {
@@ -101,7 +124,7 @@ impl Markdown {
     pub fn new(text: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let text = text.into();
         let doc = parse_cached(&text, None);
-        let units = Rc::new(units(&doc, &[]));
+        let units = Rc::new(units_with(&doc, &[], &Images::default()));
         Self::with(text, doc, units, false, cx)
     }
 
@@ -137,6 +160,9 @@ impl Markdown {
             copied: None,
             copied_reset: None,
             group: None,
+            images: Images::default(),
+            gallery: Rc::default(),
+            scan_images: !verbatim,
         }
     }
 
@@ -206,8 +232,29 @@ impl Markdown {
         if self.verbatim {
             return self;
         }
-        self.units = Rc::new(units(&self.doc, &self.mentions));
+        self.rebuild();
         self
+    }
+
+    /// The folder a relative image target (`renders/before.png`) is resolved against: the
+    /// agent's worktree. Without one only absolute, `file://` and `~/` targets are local
+    /// images.
+    pub fn image_base(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.images.base = Some(dir.into());
+        self.scan_images = !self.verbatim;
+        self.rebuild();
+        self
+    }
+
+    /// Change the image folder (see [`image_base`](Self::image_base)); `None` drops it.
+    pub fn set_image_base(&mut self, dir: Option<PathBuf>, cx: &mut Context<Self>) {
+        if self.images.base == dir {
+            return;
+        }
+        self.images.base = dir;
+        self.scan_images = !self.verbatim;
+        self.rebuild();
+        cx.notify();
     }
 
     /// Called with the URL when a link is clicked.
@@ -253,7 +300,8 @@ impl Markdown {
         }
         self.doc = parse_cached(&text, Some((&self.text, &self.doc)));
         self.text = text;
-        self.units = Rc::new(units(&self.doc, &self.mentions));
+        self.scan_images = true;
+        self.rebuild();
         cx.notify();
     }
 
@@ -263,8 +311,74 @@ impl Markdown {
         if self.verbatim {
             return;
         }
-        self.units = Rc::new(units(&self.doc, &self.mentions));
+        self.rebuild();
         cx.notify();
+    }
+
+    /// Units and gallery again, after the text, mentions or image files changed.
+    fn rebuild(&mut self) {
+        if self.verbatim {
+            return;
+        }
+        self.units = Rc::new(units_with(&self.doc, &self.mentions, &self.images));
+        self.gallery = Rc::new(Gallery::build(&self.doc, &self.images));
+    }
+
+    /// Start reading every local image file of the text not asked for yet. A file GPUI has
+    /// already decoded (drawn elsewhere, or by an earlier view of the same text) is known at
+    /// once; the others are decoded on the background executor and the view is rebuilt when
+    /// each one is in. Files once known stay known, so a growing text does not reload them.
+    fn scan_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.scan_images = false;
+        let mut changed = false;
+        let paths: Vec<PathBuf> = targets(&self.doc)
+            .into_iter()
+            .filter_map(|t| self.images.path(t))
+            .collect();
+        for path in paths {
+            if self.images.files.contains_key(&path) {
+                continue;
+            }
+            let resource = Resource::Path(path.clone().into());
+            if let Some(result) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
+                self.images.files.insert(path, probe_of(result));
+                changed = true;
+                continue;
+            }
+            let (task, _) = cx.fetch_asset::<ImgResourceLoader>(&resource);
+            self.images.files.insert(path.clone(), Probe::Loading);
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.images.files.insert(path, probe_of(result));
+                    this.rebuild();
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        if changed {
+            self.rebuild();
+        }
+    }
+
+    /// Open the viewer when `url` is a readable local image of the text; else hand it to
+    /// `on_link`.
+    fn link_handler(&self) -> Option<LinkHandler> {
+        if self.gallery.is_empty() {
+            return self.on_link.clone();
+        }
+        let (gallery, on_link) = (self.gallery.clone(), self.on_link.clone());
+        Some(Rc::new(move |url: &str, window: &mut Window, cx: &mut App| {
+            match gallery.index_of_target(url) {
+                Some(ix) => open_image_viewer(gallery.images.clone(), ix, window, cx),
+                None => {
+                    if let Some(f) = &on_link {
+                        f(url, window, cx);
+                    }
+                }
+            }
+        }))
     }
 
     /// The source text.
@@ -357,9 +471,13 @@ impl Render for Markdown {
         if let Some((group, key)) = &self.group {
             group.join(*key, &self.shared, &self.units, cx.entity_id(), &self.focus);
         }
+        if self.scan_images {
+            self.scan_images(window, cx);
+        }
         let focused = self.focus.is_focused(window) || self.group.as_ref().is_some_and(|(g, _)| g.focused(window));
         let doc = self.doc.clone();
         let units = self.units.clone();
+        let gallery = self.gallery.clone();
         let mut r = Renderer::new(
             &units,
             self.shared.clone(),
@@ -367,6 +485,8 @@ impl Render for Markdown {
             self.color,
             self.style,
             self.copied,
+            &self.images,
+            &gallery,
         );
         let blocks: Vec<_> = if self.verbatim {
             vec![r.verbatim()]
@@ -377,7 +497,7 @@ impl Render for Markdown {
             shared: self.shared.clone(),
             view: cx.entity().downgrade(),
             focus: self.focus.clone(),
-            on_link: self.on_link.clone(),
+            on_link: self.link_handler(),
             group: self.group.clone(),
         };
         col()
@@ -391,5 +511,21 @@ impl Render for Markdown {
             .on_action(cx.listener(Self::select_all_action))
             .children(blocks)
             .child(tracker)
+    }
+}
+
+/// What a finished read of an image file says about it.
+fn probe_of<E>(result: Result<Arc<gpui::RenderImage>, E>) -> Probe {
+    match result {
+        Ok(image) if image.frame_count() > 0 => {
+            let size = image.size(0);
+            let (width, height) = (size.width.0 as f32, size.height.0 as f32);
+            if width > 0. && height > 0. {
+                Probe::Ready { width, height }
+            } else {
+                Probe::Failed
+            }
+        }
+        _ => Probe::Failed,
     }
 }

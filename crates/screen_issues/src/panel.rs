@@ -27,6 +27,7 @@ pub(crate) use props::viewer_images;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -360,6 +361,8 @@ impl IssuePanel {
                 if let Ok(agents) = result {
                     this.history.agents = agents;
                     this.sync_mentions(cx);
+                    // Comments drawn before the agents were known get their folders now.
+                    this.sync_bodies(cx);
                 }
             })
             .ok();
@@ -379,29 +382,49 @@ impl IssuePanel {
 
     /// A Markdown view for every comment of the feed, made once per comment.
     fn sync_bodies(&mut self, cx: &mut Context<Self>) {
-        let comments: Vec<(u64, String, bool)> = {
+        let comments: Vec<(u64, String, bool, Option<PathBuf>)> = {
             let model = self.issues.read(cx);
             let Some(feed) = model.activity(&self.issue).and_then(|feed| feed.value()) else { return };
             feed.iter()
                 .filter_map(|event| match &event.kind {
-                    IssueEventKind::Comment { text, .. } => Some((event.seq, text.clone(), event.actor == Actor::Me)),
+                    IssueEventKind::Comment { text, .. } => {
+                        Some((event.seq, text.clone(), event.actor == Actor::Me, self.worktree_of(&event.actor)))
+                    }
                     _ => None,
                 })
                 .collect()
         };
         let names = self.mention_names(cx);
-        for (seq, text, mine) in comments {
+        for (seq, text, mine, worktree) in comments {
             if let Some(body) = self.bodies.get(&seq) {
-                body.update(cx, |md, cx| md.set_text(text, cx));
+                body.update(cx, |md, cx| {
+                    md.set_text(text, cx);
+                    // The run's agents are read after the feed: the folder may come later.
+                    if worktree.is_some() {
+                        md.set_image_base(worktree, cx);
+                    }
+                });
                 continue;
             }
             // A person's words in `text`, an agent's in `text-secondary`, as the mockup draws them.
             let color = if mine { TEXT } else { TEXT_SECONDARY };
             let names = names.clone();
-            let body =
-                cx.new(|cx| Markdown::new(text, cx).color(color).mentions(names).on_link(|url, _, cx| cx.open_url(url)));
+            let body = cx.new(|cx| {
+                let md = Markdown::new(text, cx).color(color).mentions(names).on_link(|url, _, cx| cx.open_url(url));
+                match worktree {
+                    Some(dir) => md.image_base(dir),
+                    None => md,
+                }
+            });
             self.bodies.insert(seq, body);
         }
+    }
+
+    /// Where the agent behind a comment worked: a picture it names by a relative path is
+    /// looked up there.
+    fn worktree_of(&self, actor: &Actor) -> Option<PathBuf> {
+        let Actor::Runnable { session: Some(session), .. } = actor else { return None };
+        self.history.agents.iter().find(|agent| &agent.session == session)?.worktree.clone()
     }
 
     /// The agents of the latest run a comment can mention, with whether their step runs now

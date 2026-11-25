@@ -43,7 +43,7 @@ mod thumb;
 mod view;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

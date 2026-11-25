@@ -1,5 +1,6 @@
-//! Blocks to elements. Walks the document in the same order as [`units`](super::rich::units)
-//! so the n-th text element shows the n-th unit.
+//! Blocks to elements. Walks the document in the same order as
+//! [`units_with`](super::rich::units_with) so the n-th text element shows the n-th unit; a
+//! paragraph of thumbnails only has no text element.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,8 +12,9 @@ use ui::layout::{col, grow, hr, row};
 use ui::theme::*;
 
 use super::element::{Shared, UnitElement};
+use super::image::{self, Gallery, Images};
 use super::layout::{InlineLayout, Look};
-use super::parse::{Align, Block, List, Table};
+use super::parse::{Align, Block, Inline, List, Table};
 #[cfg(test)]
 use super::rich::UnitKind;
 use super::rich::{Unit, shown_marker};
@@ -33,9 +35,13 @@ pub(crate) struct Renderer<'a> {
     copied: Option<usize>,
     codes: usize,
     tables: usize,
+    images: &'a Images,
+    gallery: &'a Gallery,
+    thumbs: usize,
 }
 
 impl<'a> Renderer<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         units: &'a [Unit],
         shared: Rc<RefCell<Shared>>,
@@ -43,6 +49,8 @@ impl<'a> Renderer<'a> {
         color: Hsla,
         body: TypeStyle,
         copied: Option<usize>,
+        images: &'a Images,
+        gallery: &'a Gallery,
     ) -> Self {
         Self {
             units,
@@ -54,6 +62,9 @@ impl<'a> Renderer<'a> {
             copied,
             codes: 0,
             tables: 0,
+            images,
+            gallery,
+            thumbs: 0,
         }
     }
 
@@ -82,7 +93,7 @@ impl<'a> Renderer<'a> {
         cx: &mut Context<Markdown>,
     ) -> AnyElement {
         match block {
-            Block::Paragraph(_) => self.text(Look::text(self.body, self.color)),
+            Block::Paragraph(runs) => self.paragraph(runs),
             Block::Heading { level, .. } => {
                 let t = match level {
                     1 => TITLE,
@@ -112,6 +123,31 @@ impl<'a> Renderer<'a> {
             Block::Table(t) => self.table(t, window),
             Block::Rule => hr().my(px(SPACE_1)).into_any_element(),
         }
+    }
+
+    /// Running text, with its thumbnails in a strip under it.
+    fn paragraph(&mut self, runs: &[Inline]) -> AnyElement {
+        let look = Look::text(self.body, self.color);
+        let thumbs = image::thumbs(runs, self.images);
+        if thumbs.is_empty() {
+            return self.text(look);
+        }
+        let text = (!image::text_runs(runs, self.images, true).is_empty()).then(|| self.text(look));
+        let thumbs = thumbs
+            .iter()
+            .map(|t| {
+                let n = self.thumbs;
+                self.thumbs += 1;
+                image::thumb(n, t, self.gallery)
+            })
+            .collect();
+        col()
+            .w_full()
+            .flex_none()
+            .gap(px(SPACE_2))
+            .children(text)
+            .child(image::strip(thumbs))
+            .into_any_element()
     }
 
     fn list(&mut self, list: &List, window: &mut Window, cx: &mut Context<Markdown>) -> AnyElement {

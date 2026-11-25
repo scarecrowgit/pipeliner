@@ -73,11 +73,21 @@ impl TranscriptView {
         }
         let source = SharedString::from(text.to_string());
         let names = if user { mentions(text) } else { Vec::new() };
+        let base = self.image_base(cx);
         let md = cx.new(|cx| {
-            Markdown::new(source, cx).color(color).mentions(names).on_link(|url, _, cx| cx.open_url(url))
+            let md = Markdown::new(source, cx).color(color).mentions(names).on_link(|url, _, cx| cx.open_url(url));
+            match base {
+                Some(dir) => md.image_base(dir),
+                None => md,
+            }
         });
         self.markdown.insert(id, md.clone());
         md
+    }
+
+    /// The folder a picture named in a message is looked up in: where the session works.
+    pub(crate) fn image_base(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.model.read(cx).session()?.workdir.as_ref().map(|workdir| workdir.path.clone())
     }
 
     /// Who answers in this session, as the header names it: "Build".

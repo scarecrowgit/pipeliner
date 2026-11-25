@@ -67,6 +67,8 @@ pub struct InboxView {
     pub(crate) inbox: Entity<InboxModel>,
     catalog: Entity<CatalogModel>,
     runs: Entity<RunsModel>,
+    /// The chats, for the folder of the one a report came from.
+    chats: Entity<hub::ChatIndex>,
     pub(crate) archived: Archived,
     pub(crate) review: Option<OpenReview>,
     /// The selectable texts of the open item or review.
@@ -100,7 +102,9 @@ impl InboxView {
         let catalog = hub::catalog(cx);
         let runs = hub::runs(cx);
         let issues = hub::issues(cx);
+        let chats = hub::chat_index(cx);
         let subscriptions = vec![
+            cx.observe(&chats, |_, _, cx| cx.notify()),
             cx.observe(&issues, |_, _, cx| cx.notify()),
             cx.observe(&inbox, |this, _, cx| this.inbox_changed(cx)),
             cx.observe(&catalog, |_, _, cx| cx.notify()),
@@ -125,6 +129,7 @@ impl InboxView {
             inbox,
             catalog,
             runs,
+            chats,
             archived: Archived::default(),
             review: None,
             texts: Texts::default(),
@@ -343,6 +348,19 @@ impl InboxView {
             .name
             .clone();
         Some(name.into())
+    }
+
+    /// Where the agent behind `item` worked: the worktree of the run's step that wrote it
+    /// (or of the run's last step that had one), or the folder of the chat it reports from.
+    pub(crate) fn item_folder(&self, item: &InboxItem, cx: &App) -> Option<std::path::PathBuf> {
+        let Some(run) = item.run.as_ref() else {
+            let session = self.chats.read(cx).session(item.session.as_ref()?)?.clone();
+            return session.workdir.as_ref().map(|workdir| workdir.path.clone());
+        };
+        let run = self.runs.read(cx).find(run)?.clone();
+        let own = run.nodes.iter().rev().find(|node| item.session.is_some() && node.session == item.session);
+        own.and_then(|node| node.worktree.clone())
+            .or_else(|| run.nodes.iter().rev().find_map(|node| node.worktree.clone()))
     }
 
     /// The name of the pipeline a run went through, when the runs model knows the run.

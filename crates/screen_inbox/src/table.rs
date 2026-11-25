@@ -177,11 +177,12 @@ impl InboxView {
     ) -> AnyElement {
         match row_ix {
             0 => {
-                let approach = self.texts.get(
+                let approach = self.texts.get_in(
                     format!("approach-{}", variant.index),
                     variant.approach.clone(),
                     // Written by the variant's agent, as Markdown.
                     Look::markdown(BODY, TEXT_SECONDARY),
+                    variant.worktree.clone(),
                     cx,
                 );
                 cell("review-approach", approach).into_any_element()
