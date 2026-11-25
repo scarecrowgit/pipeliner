@@ -467,6 +467,7 @@ impl ChatHistory {
             n => format!("{n} chats archived"),
         };
         self.save_flags(cx);
+        close_inbox_items(&ids, cx);
         self.show_toast(text, ids, cx);
     }
 
@@ -547,7 +548,15 @@ impl ChatHistory {
             (n, f) => format!("Deleted {n}, {f} could not be removed"),
         };
         self.save_flags(cx);
+        close_inbox_items(&ids, cx);
         self.show_toast(text, Vec::new(), cx);
+    }
+}
+
+/// Archived or deleted chats: their Inbox reports are done too.
+fn close_inbox_items<T>(ids: &[String], cx: &mut Context<T>) {
+    if crate::inbox::archive_for_chats(ids) {
+        cx.defer(ui::nav::inbox_changed);
     }
 }
 

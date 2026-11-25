@@ -3,6 +3,7 @@
 //! `report_to_inbox` tool; pull requests opened during a run without a report are captured
 //! automatically. Stored in `$XDG_DATA_HOME/harness/inbox.json`, shown on the Inbox screen.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -228,6 +229,87 @@ pub fn update(id: &str, f: impl FnOnce(&mut InboxItem)) -> std::io::Result<bool>
     f(item);
     save(&items)?;
     Ok(true)
+}
+
+/// Archive every item of the chats in `ids`. Whether anything changed.
+pub fn archive_chats_in(items: &mut [InboxItem], ids: &[String]) -> bool {
+    let mut changed = false;
+    for i in items
+        .iter_mut()
+        .filter(|i| !i.archived && ids.contains(&i.chat_id))
+    {
+        i.archived = true;
+        changed = true;
+    }
+    changed
+}
+
+/// The user viewed a chat: its items count as read, and those without a pull request
+/// are done (archived). Items with pull requests stay until the PRs close.
+pub fn close_viewed_in(items: &mut [InboxItem], chat_id: &str) -> bool {
+    let mut changed = false;
+    for i in items
+        .iter_mut()
+        .filter(|i| !i.archived && i.chat_id == chat_id)
+    {
+        if !i.read {
+            i.read = true;
+            changed = true;
+        }
+        if i.prs().next().is_none() {
+            i.archived = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// A pull request state (`OPEN`, `MERGED`, `CLOSED`) that ends the work on it.
+pub fn pr_finished(state: &str) -> bool {
+    matches!(state, "MERGED" | "CLOSED")
+}
+
+/// Whether the item has pull requests and all of them are known (`states`: URL → state)
+/// to be merged or closed. Unknown states never count.
+pub fn prs_finished(item: &InboxItem, states: &HashMap<String, String>) -> bool {
+    item.prs().next().is_some()
+        && item
+            .prs()
+            .all(|l| states.get(&l.url).is_some_and(|s| pr_finished(s)))
+}
+
+/// Archive the items whose pull requests are all merged or closed. Whether anything changed.
+pub fn archive_finished_in(items: &mut [InboxItem], states: &HashMap<String, String>) -> bool {
+    let mut changed = false;
+    for i in items
+        .iter_mut()
+        .filter(|i| !i.archived && prs_finished(i, states))
+    {
+        i.archived = true;
+        changed = true;
+    }
+    changed
+}
+
+fn modify(f: impl FnOnce(&mut [InboxItem]) -> bool) -> bool {
+    let mut items = load();
+    f(&mut items) && save(&items).is_ok()
+}
+
+/// Archive all items of the chats `ids` (archived or deleted chats). Whether anything changed.
+pub fn archive_for_chats(ids: &[String]) -> bool {
+    modify(|items| archive_chats_in(items, ids))
+}
+
+/// The user opened the chat: see [`close_viewed_in`]. Whether anything changed.
+pub fn close_viewed_chat(chat_id: &str) -> bool {
+    modify(|items| close_viewed_in(items, chat_id))
+}
+
+/// Archive items whose pull requests are all merged or closed (`states`: URL → state).
+/// Whether anything changed.
+pub fn archive_closed_prs(states: &HashMap<String, String>) -> bool {
+    modify(|items| archive_finished_in(items, states))
 }
 
 /// Unread, not archived items.
@@ -631,5 +713,78 @@ mod tests {
         let p = pr_info_from_json(&v);
         assert_eq!((p.checks_passed, p.checks_failed, p.checks_pending), (2, 1, 1));
         assert_eq!(p.state_label(), "open");
+    }
+
+    fn item(id: &str, chat: &str, links: &[&str]) -> InboxItem {
+        InboxItem {
+            id: id.into(),
+            created: 1,
+            chat_id: chat.into(),
+            chat_title: String::new(),
+            agent: "Build".into(),
+            workdir: None,
+            wd_label: String::new(),
+            title: id.into(),
+            summary: String::new(),
+            outcome: Outcome::Done,
+            links: links.iter().map(|u| Link::new(u, None)).collect(),
+            read: false,
+            archived: false,
+            auto: false,
+        }
+    }
+
+    const PR1: &str = "https://github.com/a/b/pull/1";
+    const PR2: &str = "https://github.com/a/b/pull/2";
+
+    #[test]
+    fn archives_for_chats() {
+        let mut items = vec![item("1", "c1", &[PR1]), item("2", "c2", &[]), item("3", "c1", &[])];
+        assert!(archive_chats_in(&mut items, &["c1".into()]));
+        assert!(items[0].archived && !items[1].archived && items[2].archived);
+        assert!(!archive_chats_in(&mut items, &["c1".into()]));
+        assert!(!archive_chats_in(&mut items, &[]));
+    }
+
+    #[test]
+    fn viewing_a_chat_closes_items_without_prs() {
+        let mut items = vec![
+            item("1", "c1", &[PR1]),
+            item("2", "c1", &["https://github.com/a/b/commit/abc"]),
+            item("3", "c2", &[]),
+        ];
+        assert!(close_viewed_in(&mut items, "c1"));
+        assert!(items[0].read && !items[0].archived);
+        assert!(items[1].read && items[1].archived);
+        assert!(!items[2].read && !items[2].archived);
+        assert!(!close_viewed_in(&mut items, "c1"));
+        assert!(!close_viewed_in(&mut items, "nope"));
+    }
+
+    #[test]
+    fn closed_prs_archive_items() {
+        let mut items = vec![
+            item("1", "c", &[PR1]),
+            item("2", "c", &[PR1, PR2]),
+            item("3", "c", &[]),
+            item("4", "c", &[PR2]),
+        ];
+        let st = |l: &[(&str, &str)]| -> HashMap<String, String> {
+            l.iter().map(|(u, s)| (u.to_string(), s.to_string())).collect()
+        };
+        // Unknown and open states keep items.
+        assert!(!archive_finished_in(&mut items, &st(&[])));
+        assert!(!archive_finished_in(&mut items, &st(&[(PR1, "OPEN"), (PR2, "OPEN")])));
+        // Only PR 1 closed: the item with both PRs stays.
+        assert!(archive_finished_in(&mut items, &st(&[(PR1, "MERGED")])));
+        assert_eq!(
+            items.iter().map(|i| i.archived).collect::<Vec<_>>(),
+            [true, false, false, false]
+        );
+        assert!(archive_finished_in(&mut items, &st(&[(PR1, "CLOSED"), (PR2, "CLOSED")])));
+        assert_eq!(
+            items.iter().map(|i| i.archived).collect::<Vec<_>>(),
+            [true, true, false, true]
+        );
     }
 }
