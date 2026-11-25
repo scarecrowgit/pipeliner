@@ -1290,10 +1290,14 @@ impl ChatScreen {
                 }
                 match saved {
                     Some(saved) => {
+                        let id = saved.id.clone();
                         this.reset_session_state();
                         this.restore(saved, cx);
                         if fork {
                             this.fork_chat(this.workspace.root.clone(), cx);
+                        } else if inbox::close_viewed_chat(&id) {
+                            // Looked at the chat: its reports are read, finished ones close.
+                            cx.defer(ui::nav::inbox_changed);
                         }
                     }
                     None => this.notice("That session could not be loaded.", cx),

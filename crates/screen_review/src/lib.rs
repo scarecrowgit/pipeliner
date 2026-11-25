@@ -120,6 +120,11 @@ impl ReviewScreen {
         let reports = screen_chat::inbox::load();
         let unread = screen_chat::inbox::unread(&reports) + ISSUES.len();
         cx.defer(move |cx| ui::nav::set_inbox_count(unread, cx));
+        // Reports whose pull requests are all merged or closed are done: check them.
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, cx| this.fetch_prs(false, cx)).ok();
+        })
+        .detach();
 
         Self {
             focus,

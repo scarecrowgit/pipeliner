@@ -30,6 +30,16 @@ pub(crate) fn outcome_look(o: Outcome) -> (Status, Hsla, Tone) {
     }
 }
 
+/// The entry after `id` in `order` that passes `keep`, else the nearest one before it.
+fn neighbor(order: &[String], id: &str, keep: impl Fn(&String) -> bool) -> Option<String> {
+    let i = order.iter().position(|r| r == id)?;
+    order[i + 1..]
+        .iter()
+        .find(|o| keep(o))
+        .or_else(|| order[..i].iter().rev().find(|o| keep(o)))
+        .cloned()
+}
+
 /// `12m`, `3h`, `Sat`, `Nov 9`.
 fn ago(t: u64) -> String {
     let now = ui::time::now_secs();
@@ -55,6 +65,8 @@ impl ReviewScreen {
             self.report = None;
         }
         self.publish_count(cx);
+        self.fetch_prs(false, cx);
+        self.archive_finished(cx);
         cx.notify();
     }
 
@@ -82,14 +94,25 @@ impl ReviewScreen {
         cx.notify();
     }
 
-    /// Ask `gh` for the status of the shown report's pull requests (cached unless `force`).
+    /// Ask `gh` for the status of the pull requests of every report in the queue. Cached
+    /// (loading or ready) ones are skipped; `force` re-fetches those of the shown report.
     pub(crate) fn fetch_prs(&mut self, force: bool, cx: &mut Context<Self>) {
-        let urls: Vec<String> = self
+        let shown: Vec<String> = self
             .report()
             .map(|r| r.prs().map(|l| l.url.clone()).collect())
             .unwrap_or_default();
+        let mut urls: Vec<String> = Vec::new();
+        for l in self.visible_reports().flat_map(|r| r.prs()) {
+            if !urls.contains(&l.url) {
+                urls.push(l.url.clone());
+            }
+        }
         for url in urls {
-            if !force && self.prs.contains_key(&url) {
+            let cached = matches!(
+                self.prs.get(&url),
+                Some(PrState::Loading | PrState::Ready(_))
+            );
+            if cached && !(force && shown.contains(&url)) {
                 continue;
             }
             self.prs.insert(url.clone(), PrState::Loading);
@@ -106,11 +129,47 @@ impl ReviewScreen {
                             Err(e) => PrState::Failed(e),
                         },
                     );
+                    this.archive_finished(cx);
                     cx.notify();
                 })
                 .ok();
             })
             .detach();
+        }
+    }
+
+    /// Archive the reports whose pull requests are all merged or closed.
+    fn archive_finished(&mut self, cx: &mut Context<Self>) {
+        let states: HashMap<String, String> = self
+            .prs
+            .iter()
+            .filter_map(|(url, s)| match s {
+                PrState::Ready(p) => Some((url.clone(), p.state.clone())),
+                _ => None,
+            })
+            .collect();
+        let order: Vec<String> = self.visible_reports().map(|r| r.id.clone()).collect();
+        if !inbox::archive_finished_in(&mut self.reports, &states) {
+            return;
+        }
+        let _ = inbox::archive_closed_prs(&states);
+        self.publish_count(cx);
+        if let Some(open) = self.report.clone()
+            && self.report().is_some_and(|r| r.archived)
+        {
+            let next = neighbor(&order, &open, |id| {
+                self.reports.iter().any(|r| r.id == *id && !r.archived)
+            });
+            self.show_after_archive(next, cx);
+        }
+        cx.notify();
+    }
+
+    /// Open `next`, or the pipeline reviews when there is none.
+    fn show_after_archive(&mut self, next: Option<String>, cx: &mut Context<Self>) {
+        match next {
+            Some(n) => self.open_report(n, cx),
+            None => self.report = None,
         }
     }
 
@@ -126,23 +185,26 @@ impl ReviewScreen {
         cx.notify();
     }
 
-    fn archive_report(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.report.clone() else {
-            return;
-        };
-        // Select the next report (or the first pipeline review).
+    /// Archive report `id` (not necessarily the open one). When it is open, the next
+    /// report (or the first pipeline review) gets selected.
+    fn archive_report(&mut self, id: &str, cx: &mut Context<Self>) {
         let order: Vec<String> = self.visible_reports().map(|r| r.id.clone()).collect();
-        let next = order
-            .iter()
-            .position(|r| *r == id)
-            .and_then(|i| order.get(i + 1).or(i.checked_sub(1).and_then(|j| order.get(j))))
-            .cloned();
-        self.set_flag(|r| r.archived = true, cx);
-        match next {
-            Some(n) => self.open_report(n, cx),
-            None => self.report = None,
+        let _ = inbox::update(id, |r| r.archived = true);
+        if let Some(r) = self.reports.iter_mut().find(|r| r.id == id) {
+            r.archived = true;
+        }
+        self.publish_count(cx);
+        if self.report.as_deref() == Some(id) {
+            let next = neighbor(&order, id, |o| o != id);
+            self.show_after_archive(next, cx);
         }
         cx.notify();
+    }
+
+    fn archive_open_report(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.report.clone() {
+            self.archive_report(&id, cx);
+        }
     }
 
     // ── Queue rows ──────────────────────────────────────────────────────
@@ -159,6 +221,7 @@ impl ReviewScreen {
                     .map(|l| l.label.clone())
                     .unwrap_or_else(|| r.wd_label.clone());
                 let id = r.id.clone();
+                let archive_id = r.id.clone();
                 let key = gpui::ElementId::Name(format!("inbox-report-{}", r.id).into());
                 let (rest, hover) = if current {
                     let l = ui::motion::Look::bg(SURFACE_HOVER).border(LINE_STRONG);
@@ -242,6 +305,17 @@ impl ReviewScreen {
                                 .bg(ACCENT),
                         )
                     })
+                    // Close without opening: the click must not reach the row.
+                    .child(
+                        Button::new(("inbox-report-archive", i), "")
+                            .small()
+                            .ghost()
+                            .icon("check")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.archive_report(&archive_id, cx)
+                            })),
+                    )
                     .into_any_element()
             })
             .collect()
@@ -436,7 +510,7 @@ impl ReviewScreen {
             .child(
                 Button::new("report-archive", "Archive")
                     .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| this.archive_report(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.archive_open_report(cx))),
             )
             .child(div().flex_1())
             .when_some(first_pr, |d, url| {
