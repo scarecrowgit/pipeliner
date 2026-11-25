@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<meta name="design:size" content="1440x960">
+<title>Where you change what</title>
+<style>
+/* Design tokens (keep in sync with design/tokens.css). */
+:root{
+  --bg:#08090a;
+  --bg-sidebar:#0b0c0d;
+  --surface:#0f1011;
+  --surface-raised:#141518;
+  --surface-hover:#1c1d21;
+  --line-subtle:#16171a;
+  --line:#1c1d21;
+  --line-strong:#2e3035;
+  --text:#f7f8f8;
+  --text-secondary:#d0d6e0;
+  --text-muted:#8a8f98;
+  --text-disabled:#62666d;
+  --accent:#7170ff;
+  --accent-strong:#5e6ad2;
+  --accent-strong-hover:#5561c9;
+  --accent-text:#a5a4ff;
+  --accent-soft:#1e1e3f;
+  --accent-ring:#3a3a7a;
+  --accent-glow:#15152b;
+  --on-accent:#ffffff;
+  --success:#4cb782;
+  --warning:#f2c94c;
+  --warning-soft:#2a2410;
+  --danger:#eb5757;
+  --danger-soft:#2a1416;
+  --info:#4ea7fc;
+  --info-soft:#13203a;
+  --info-text:#6fa8ff;
+  --spawn:#a78bfa;
+  --spawn-bar:#8b7fe8;
+  --spawn-text:#c4b5fd;
+  --spawn-soft:#171329;
+  --spawn-line:#3b3463;
+  --diff-add-bg:#10261c;
+  --diff-add-text:#8fddb5;
+  --diff-del-bg:#2a1416;
+  --diff-del-text:#f3a6a6;
+  --scrim:rgba(8, 9, 10, 0.72);
+  --focus-ring:0 0 0 2px #08090a, 0 0 0 4px #7170ff;
+  --selected-glow:0 0 0 3px #15152b;
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --space-6:24px;
+  --space-8:32px;
+  --radius-sm:4px;
+  --radius-md:6px;
+  --radius-lg:8px;
+  --radius-xl:10px;
+  --radius-full:999px;
+  --control-height:40px;
+  --control-height-sm:28px;
+  --row-height:40px;
+  --nav-item-height:32px;
+  --tab-height:44px;
+  --sidebar-width:232px;
+  --duration-exit:100ms;
+  --duration-state:150ms;
+  --duration-enter:180ms;
+  --duration-overlay:220ms;
+  --duration-toast:240ms;
+  --ease-out:cubic-bezier(0.2, 0, 0, 1);
+  --ease-in:cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard:ease;
+  --z-popover:20;
+  --z-overlay:40;
+  --z-dialog:50;
+  --z-toast:60;
+  --font-sans:Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-title-lg:600 22px/28px var(--font-sans);
+  --text-title:600 20px/28px var(--font-sans);
+  --text-stat:600 28px/32px var(--font-sans);
+  --text-stat-sm:500 18px/24px var(--font-sans);
+  --text-heading:500 14px/20px var(--font-sans);
+  --text-body:400 13px/20px var(--font-sans);
+  --text-body-strong:500 13px/20px var(--font-sans);
+  --text-label:400 12px/18px var(--font-sans);
+  --text-mono:400 12px/20px var(--font-mono);
+  --text-mono-sm:400 11px/16px var(--font-mono);
+}
+/* Screen-specific styles. */
+body{margin:0;background:#08090a}
+a{color:#a5a4ff}a:hover{color:#f7f8f8}
+</style>
+</head>
+<body>
+<div id="dc-root"><div style="width: 1440px; height: 960px; box-sizing: border-box; padding: 56px 64px 64px; display: flex; flex-direction: column; gap: 8px; background: rgb(8, 9, 10); font-family: Inter, system-ui, -apple-system, &quot;Segoe UI&quot;, sans-serif; color: rgb(247, 248, 248); overflow: hidden;"><h1 style="margin: 0px; font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; color: rgb(247, 248, 248);">Where you change what</h1><p style="margin: 0px 0px 16px; font-size: 13px; line-height: 20px; color: rgb(208, 214, 224);">Every lever in one list. Design-time edits make a new version; run-time edits touch only the run in front of you until you save them back.</p><div style="border: 1px solid rgb(28, 29, 33); border-radius: 10px; overflow: hidden; background: rgb(15, 16, 17);"><table style="width: 100%; border-collapse: collapse; font-size: 13px; line-height: 20px;"><thead><tr style="background: rgb(11, 12, 13);"><th style="width: 280px; text-align: left; padding: 9px 16px; font-size: 12px; line-height: 18px; font-weight: 400; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(28, 29, 33);">What you change</th><th style="width: 260px; text-align: left; padding: 9px 16px; font-size: 12px; line-height: 18px; font-weight: 400; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(28, 29, 33);">Where</th><th style="width: 380px; text-align: left; padding: 9px 16px; font-size: 12px; line-height: 18px; font-weight: 400; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(28, 29, 33);">How</th><th style="text-align: left; padding: 9px 16px; font-size: 12px; line-height: 18px; font-weight: 400; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(28, 29, 33);">Takes effect</th></tr></thead><tbody><tr><td colspan="4" style="padding: 14px 16px 6px; font-size: 12px; line-height: 18px; letter-spacing: 0.06em; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(22, 23, 26);"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: rgb(138, 143, 152); margin-right: 8px;"></span>DESIGN TIME — SET UP ONCE, VERSIONED</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">Rules, voice, language</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Settings › Rules</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">edit text · prompt layer 1</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">next call of every agent</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">An agent's role, model, tools</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Agents › Fixer</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">role prompt · model picker · tool list · layer 2</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">new tasks; running ones keep their version</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">The graph and routing rules</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Pipeline editor</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">drag nodes and edges; rules run top to bottom</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">new runs; a paused run can switch over</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">A step's prompt, schema, variants</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Pipeline editor › node</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">node inspector · prompt layer 3 · N = 1–5</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">that node and everything after it</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">Budgets, spawn depth, tool access</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Policies</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">per workspace, agent or node; value shown next to its limit</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">checked before every call and spawn</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">Memory</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Memory</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">pin · forget · scope to agent or project · layer 5</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">next retrieval</td></tr><tr><td colspan="4" style="padding: 14px 16px 6px; font-size: 12px; line-height: 18px; letter-spacing: 0.06em; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(22, 23, 26);"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: rgb(78, 167, 252); margin-right: 8px;"></span>RUN TIME — WHILE IT RUNS</td></tr><tr style="height: 46px; background: rgb(42, 36, 16);"><td style="padding: 0px 16px; font-weight: 500; color: rgb(242, 201, 76); border-bottom: 1px solid rgb(22, 23, 26);">A variant</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Review queue</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">pick · edit · send back <span style="font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(138, 143, 152);">J/K · 1–3 · R</span></td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">run goes on, or the step retries with your note</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">An agent's direction</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Task thread</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">message it · prompt layer 6</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">its next turn</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">Order and pace</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Board · Timeline</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">drag to reprioritise · pause · retry · re-run from a node</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">the engine reschedules at once</td></tr><tr style="height: 46px; background: rgb(42, 36, 16);"><td style="padding: 0px 16px; font-weight: 500; color: rgb(242, 201, 76); border-bottom: 1px solid rgb(22, 23, 26);">A spawn or a limit</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Inbox</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">allow once · always · deny</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">that request; “always” edits the policy</td></tr><tr><td colspan="4" style="padding: 14px 16px 6px; font-size: 12px; line-height: 18px; letter-spacing: 0.06em; color: rgb(138, 143, 152); border-bottom: 1px solid rgb(22, 23, 26);"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: rgb(76, 183, 130); margin-right: 8px;"></span>AFTER A RUN — KEEP WHAT WORKED</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248); border-bottom: 1px solid rgb(22, 23, 26);">The template itself</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255); border-bottom: 1px solid rgb(22, 23, 26);">Run › Save to pipeline</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">review the diff of your run-time edits, then save</td><td style="padding: 0px 16px; color: rgb(208, 214, 224); border-bottom: 1px solid rgb(22, 23, 26);">becomes the next pipeline version</td></tr><tr style="height: 46px;"><td style="padding: 0px 16px; font-weight: 500; color: rgb(247, 248, 248);">A chat that worked</td><td style="padding: 0px 16px; font-family: &quot;JetBrains Mono&quot;, ui-monospace, monospace; font-size: 12px; color: rgb(165, 164, 255);">Chat › Save as…</td><td style="padding: 0px 16px; color: rgb(208, 214, 224);">as an agent, or an orchestrator plan as a pipeline</td><td style="padding: 0px 16px; color: rgb(208, 214, 224);">a new item in the library</td></tr></tbody></table></div></div></div>
+</body>
+</html>

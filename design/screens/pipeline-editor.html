@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<meta name="design:size" content="1440x1720">
+<title>Pipeline editor · Bug triage</title>
+<style>
+/* Design tokens (keep in sync with design/tokens.css). */
+:root{
+  --bg:#08090a;
+  --bg-sidebar:#0b0c0d;
+  --surface:#0f1011;
+  --surface-raised:#141518;
+  --surface-hover:#1c1d21;
+  --line-subtle:#16171a;
+  --line:#1c1d21;
+  --line-strong:#2e3035;
+  --text:#f7f8f8;
+  --text-secondary:#d0d6e0;
+  --text-muted:#8a8f98;
+  --text-disabled:#62666d;
+  --accent:#7170ff;
+  --accent-strong:#5e6ad2;
+  --accent-strong-hover:#5561c9;
+  --accent-text:#a5a4ff;
+  --accent-soft:#1e1e3f;
+  --accent-ring:#3a3a7a;
+  --accent-glow:#15152b;
+  --on-accent:#ffffff;
+  --success:#4cb782;
+  --warning:#f2c94c;
+  --warning-soft:#2a2410;
+  --danger:#eb5757;
+  --danger-soft:#2a1416;
+  --info:#4ea7fc;
+  --info-soft:#13203a;
+  --info-text:#6fa8ff;
+  --spawn:#a78bfa;
+  --spawn-bar:#8b7fe8;
+  --spawn-text:#c4b5fd;
+  --spawn-soft:#171329;
+  --spawn-line:#3b3463;
+  --diff-add-bg:#10261c;
+  --diff-add-text:#8fddb5;
+  --diff-del-bg:#2a1416;
+  --diff-del-text:#f3a6a6;
+  --scrim:rgba(8, 9, 10, 0.72);
+  --focus-ring:0 0 0 2px #08090a, 0 0 0 4px #7170ff;
+  --selected-glow:0 0 0 3px #15152b;
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --space-6:24px;
+  --space-8:32px;
+  --radius-sm:4px;
+  --radius-md:6px;
+  --radius-lg:8px;
+  --radius-xl:10px;
+  --radius-full:999px;
+  --control-height:40px;
+  --control-height-sm:28px;
+  --row-height:40px;
+  --nav-item-height:32px;
+  --tab-height:44px;
+  --sidebar-width:232px;
+  --duration-exit:100ms;
+  --duration-state:150ms;
+  --duration-enter:180ms;
+  --duration-overlay:220ms;
+  --duration-toast:240ms;
+  --ease-out:cubic-bezier(0.2, 0, 0, 1);
+  --ease-in:cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard:ease;
+  --z-popover:20;
+  --z-overlay:40;
+  --z-dialog:50;
+  --z-toast:60;
+  --font-sans:Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-title-lg:600 22px/28px var(--font-sans);
+  --text-title:600 20px/28px var(--font-sans);
+  --text-stat:600 28px/32px var(--font-sans);
+  --text-stat-sm:500 18px/24px var(--font-sans);
+  --text-heading:500 14px/20px var(--font-sans);
+  --text-body:400 13px/20px var(--font-sans);
+  --text-body-strong:500 13px/20px var(--font-sans);
+  --text-label:400 12px/18px var(--font-sans);
+  --text-mono:400 12px/20px var(--font-mono);
+  --text-mono-sm:400 11px/16px var(--font-mono);
+}
+/* Graphite — component styles. Every value comes from tokens.css custom properties. */
+body { margin: 0; font-family: var(--font-sans); font-size: 13px; line-height: 20px; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+.gr-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-4); }
+.gr-col { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
+.gr-mono { font-family: var(--font-mono); font-size: 12px; }
+.gr-muted { color: var(--text-muted); }
+.gr-icon { flex: 0 0 auto; }
+
+/* Focus: one ring everywhere */
+.gr-btn:focus-visible, .gr-tab:focus-visible, .gr-nav-item:focus-visible, .gr-stepper button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Button */
+.gr-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: var(--control-height); padding: 0 14px; box-sizing: border-box; border-radius: var(--radius-lg); border: 1px solid transparent; font: inherit; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
+.gr-btn--sm { height: var(--control-height-sm); padding: 0 10px; font-size: 12px; border-radius: var(--radius-md); }
+.gr-btn--primary { background: var(--accent-strong); color: var(--on-accent); padding: 0 16px; }
+.gr-btn--primary:hover { background: var(--accent-strong-hover); }
+.gr-btn--secondary { background: var(--surface-raised); border-color: var(--line-strong); color: var(--text); }
+.gr-btn--secondary:hover { background: var(--surface-hover); }
+.gr-btn--ghost { background: transparent; color: var(--text-secondary); padding: 0 12px; }
+.gr-btn--ghost:hover { background: var(--surface-raised); color: var(--text); }
+.gr-btn--danger { background: transparent; color: var(--danger); padding: 0 12px; }
+.gr-btn--danger:hover { background: var(--danger-soft); }
+.gr-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Badge */
+.gr-badge { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; box-sizing: border-box; border-radius: var(--radius-full); border: 1px solid var(--line-strong); font-size: 12px; line-height: 16px; color: var(--text-secondary); white-space: nowrap; }
+.gr-badge--accent { border-color: transparent; background: var(--accent-soft); color: var(--accent-text); }
+.gr-badge--spawn { border-color: transparent; background: var(--spawn-soft); color: var(--spawn-text); }
+.gr-badge--success { color: var(--success); }
+.gr-badge--warning { color: var(--warning); }
+.gr-badge--danger { color: var(--danger); }
+.gr-badge--count { height: 18px; padding: 0 7px; border: 0; background: var(--accent-strong); color: var(--on-accent); font-size: 11px; font-weight: 600; }
+
+/* Status dot */
+.gr-dot { display: inline-block; width: 8px; height: 8px; border-radius: var(--radius-full); flex: 0 0 auto; box-sizing: border-box; }
+.gr-dot--sm { width: 6px; height: 6px; }
+.gr-dot--live { background: var(--success); }
+.gr-dot--running { background: var(--info); }
+.gr-dot--waiting { background: var(--warning); }
+.gr-dot--error { background: var(--danger); }
+.gr-dot--spawn { background: var(--spawn); }
+.gr-dot--draft { border: 1.5px solid var(--text-muted); }
+
+/* Kbd */
+.gr-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 11px; line-height: 16px; color: var(--text-muted); }
+
+/* Nav item */
+.gr-nav { display: flex; flex-direction: column; gap: 2px; width: var(--sidebar-width); padding: var(--space-3); box-sizing: border-box; background: var(--bg-sidebar); }
+.gr-nav-item { display: flex; align-items: center; gap: 10px; height: var(--nav-item-height); padding: 0 8px; border-radius: var(--radius-md); color: var(--text-secondary); text-decoration: none; transition: background-color 150ms ease; }
+.gr-nav-item:hover { background: var(--surface-raised); color: var(--text); }
+.gr-nav-item[aria-current] { background: var(--surface-hover); color: var(--text); }
+.gr-nav-item__label { flex: 1 1 auto; }
+
+/* Tabs */
+.gr-tabs { display: flex; gap: var(--space-5); padding: 0 var(--space-6); border-bottom: 1px solid var(--line); }
+.gr-tab { height: var(--tab-height); padding: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; transition: color 150ms ease; }
+.gr-tab:hover { color: var(--text); }
+.gr-tab[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text); font-weight: 500; }
+.gr-tab__count { color: var(--text-muted); font-weight: 400; }
+
+/* Card */
+.gr-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.gr-card--selected { border-color: var(--accent-ring); box-shadow: var(--selected-glow); }
+.gr-card__head { display: flex; align-items: center; gap: 8px; }
+.gr-card__title { font-weight: 500; }
+.gr-card__meta { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.gr-card__sub { font-size: 12px; color: var(--text-muted); }
+.gr-card__icon { width: 24px; height: 24px; border-radius: var(--radius-md); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.gr-card__icon--accent { background: var(--accent-soft); color: var(--accent-text); }
+.gr-card__icon--info { background: var(--info-soft); color: var(--info-text); }
+.gr-card__icon--spawn { background: var(--spawn-soft); color: var(--spawn-text); }
+
+/* Stat */
+.gr-stat { display: flex; flex-direction: column; gap: 2px; }
+.gr-stat__label { font-size: 12px; color: var(--text-muted); }
+.gr-stat__value { font-size: 18px; line-height: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.gr-stat__sub { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.gr-stat--lg .gr-stat__value { font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; }
+.gr-stat--warning .gr-stat__value { color: var(--warning); }
+.gr-stat--spawn .gr-stat__sub { color: var(--spawn-text); }
+
+/* Rule chip */
+.gr-rule { display: inline-flex; align-items: center; gap: 6px; height: var(--control-height-sm); padding: 0 10px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text); white-space: nowrap; }
+.gr-rule__field { color: var(--text-muted); }
+.gr-rule__value { font-weight: 500; }
+.gr-rule--edited { border-color: var(--accent-strong); background: var(--accent-soft); }
+.gr-rule--edited .gr-rule__field { color: var(--accent-text); }
+
+/* Stepper */
+.gr-stepper { display: inline-flex; align-items: center; height: 32px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); }
+.gr-stepper button { width: 32px; height: 30px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+.gr-stepper button:hover:not(:disabled) { color: var(--text); }
+.gr-stepper button:disabled { opacity: 0.45; cursor: not-allowed; }
+.gr-stepper__value { min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Progress */
+.gr-progress { height: 4px; border-radius: var(--radius-full); background: var(--line); overflow: hidden; }
+.gr-progress__bar { height: 100%; background: var(--accent); }
+.gr-progress--warning .gr-progress__bar { background: var(--warning); }
+.gr-progress--danger .gr-progress__bar { background: var(--danger); }
+
+/* Spawn chip */
+.gr-spawn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: var(--radius-md); background: var(--spawn-soft); color: var(--spawn-text); font-size: 12px; line-height: 16px; }
+
+/* Table */
+.gr-table-wrap { border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--surface); overflow-x: auto; }
+.gr-table { width: 100%; border-collapse: collapse; }
+.gr-table th { padding: 10px 16px; font-weight: 400; font-size: 12px; color: var(--text-muted); text-align: left; white-space: nowrap; }
+.gr-table td { padding: 10px 16px; border-top: 1px solid var(--line); }
+.gr-table tbody tr { transition: background-color 150ms ease; }
+.gr-table tbody tr:hover { background: var(--surface-raised); }
+.gr-table .gr-right { text-align: right; }
+
+/* Motion · popups. Enter decelerates out of the anchor; exit is shorter and accelerates. Opacity and transform only. */
+@keyframes gr-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gr-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes gr-pop-in { from { opacity: 0; transform: translateY(var(--gr-dy, -4px)) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes gr-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(calc(var(--gr-dy, -4px) / 2)) scale(0.99); } }
+@keyframes gr-dialog-in { from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.98); } to { opacity: 1; transform: translateX(-50%); } }
+@keyframes gr-dialog-out { from { opacity: 1; transform: translateX(-50%); } to { opacity: 0; transform: translateX(-50%) scale(0.99); } }
+@keyframes gr-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%); } }
+@keyframes gr-toast-out { from { opacity: 1; transform: translateX(-50%); } to { opacity: 0; transform: translateX(-50%) translateY(2px); } }
+@keyframes gr-reveal-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* Popover: menus, pickers, dropdowns. Grows from the edge that touches its trigger. */
+.gr-anchor { position: relative; display: inline-block; }
+.gr-popover { position: absolute; z-index: var(--z-popover, 20); min-width: 220px; max-width: min(420px, calc(100vw - 32px)); padding: 4px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-xl); background: var(--surface-raised); color: var(--text); }
+.gr-popover[data-side="bottom"] { top: calc(100% + 6px); --gr-dy: -4px; transform-origin: top left; }
+.gr-popover[data-side="top"] { bottom: calc(100% + 6px); --gr-dy: 4px; transform-origin: bottom left; }
+.gr-popover[data-align="start"] { left: 0; }
+.gr-popover[data-align="end"] { right: 0; }
+.gr-popover[data-side="bottom"][data-align="end"] { transform-origin: top right; }
+.gr-popover[data-side="top"][data-align="end"] { transform-origin: bottom right; }
+.gr-pop[data-state="open"] { animation: gr-pop-in var(--duration-enter, 180ms) var(--ease-out, cubic-bezier(0.2, 0, 0, 1)) both; }
+.gr-pop[data-state="closed"] { animation: gr-pop-out var(--duration-exit, 100ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both; pointer-events: none; }
+.gr-popover__label { padding: 8px 10px 4px; font-size: 12px; color: var(--text-muted); }
+
+/* Menu item: one row inside a popover or dialog */
+.gr-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 6px 10px; box-sizing: border-box; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background-color var(--duration-state, 150ms) ease; }
+.gr-menu-item:hover, .gr-menu-item[aria-selected="true"] { background: var(--surface-hover); }
+.gr-menu-item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.gr-menu-item__check { width: 14px; flex: 0 0 auto; display: inline-flex; color: var(--accent-text); }
+.gr-menu-item__label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gr-menu-item__hint { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+/* Dialog and command palette: scrim + centred panel */
+.gr-scrim { position: fixed; inset: 0; z-index: var(--z-overlay, 40); background: var(--scrim, rgba(8, 9, 10, 0.72)); }
+.gr-scrim[data-state="open"] { animation: gr-fade-in var(--duration-overlay, 220ms) var(--ease-out, cubic-bezier(0.2, 0, 0, 1)) both; }
+.gr-scrim[data-state="closed"] { animation: gr-fade-out var(--duration-exit, 100ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both; }
+.gr-dialog { position: fixed; left: 50%; top: 12vh; z-index: var(--z-dialog, 50); width: min(640px, calc(100vw - 32px)); max-height: 76vh; overflow: auto; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text); transform: translateX(-50%); transform-origin: top center; }
+.gr-dialog[data-state="open"] { animation: gr-dialog-in var(--duration-overlay, 220ms) var(--ease-out, cubic-bezier(0.2, 0, 0, 1)) both; }
+.gr-dialog[data-state="closed"] { animation: gr-dialog-out var(--duration-exit, 100ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both; pointer-events: none; }
+
+/* Toast: bottom centre, one at a time */
+.gr-toast { position: fixed; left: 50%; bottom: 24px; z-index: var(--z-toast, 60); display: inline-flex; align-items: center; gap: 12px; padding: 6px 6px 6px 14px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text); transform: translateX(-50%); white-space: nowrap; }
+.gr-toast[data-state="open"] { animation: gr-toast-in var(--duration-toast, 240ms) var(--ease-out, cubic-bezier(0.2, 0, 0, 1)) both; }
+.gr-toast[data-state="closed"] { animation: gr-toast-out var(--duration-exit, 100ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both; }
+
+/* Reveal: a confirm or banner that appears inside an open popup. No exit: it is removed at once. */
+.gr-reveal { animation: gr-reveal-in var(--duration-enter, 180ms) var(--ease-out, cubic-bezier(0.2, 0, 0, 1)) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gr-btn, .gr-tab, .gr-nav-item, .gr-table tbody tr, .gr-menu-item { transition: none; }
+  .gr-pop, .gr-scrim, .gr-dialog, .gr-toast, .gr-reveal { animation: none !important; }
+}
+/* Screen-specific styles. */
+body{margin:0;background:#08090a}
+a{color:#a5a4ff;text-decoration:none}a:hover{color:#f7f8f8}
+a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+.mono{font-family:var(--font-mono);font-size:12px;line-height:20px}
+.lbl{font-size:12px;line-height:18px;color:var(--text-muted)}
+.head{font-size:14px;line-height:20px;font-weight:500;color:var(--text)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.tile{width:24px;height:24px;border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.t-acc{background:var(--accent-soft);color:var(--accent-text)}
+.t-info{background:var(--info-soft);color:var(--info-text)}
+.t-wait{background:var(--warning-soft);color:var(--warning)}
+.t-grey{background:var(--surface-hover);color:var(--text-secondary)}
+.t-spawn{background:var(--spawn-soft);color:var(--spawn-text)}
+.field{height:32px;padding:0 10px;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--surface-raised);color:var(--text);font:inherit;font-size:13px;box-sizing:border-box;width:100%}
+textarea.field{height:auto;padding:8px 10px;line-height:20px;resize:vertical}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--radius-md);background:var(--surface-raised);border:1px solid var(--line-strong);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);white-space:nowrap}
+.search{display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--surface-raised);color:var(--text-muted)}
+.search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:12px;outline:none}
+.pal{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 8px;border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:var(--text-secondary);font:inherit;font-size:13px;text-align:left;cursor:grab}
+.pal:hover{background:var(--surface-raised);border-color:var(--line)}
+.pal .h{margin-left:auto;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)}
+.pal .i{display:inline-flex;color:var(--text-muted)}
+.sect{font-size:11px;line-height:16px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+.canvas{background-color:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:16px 16px}
+.node{display:flex;flex-direction:column;gap:6px;width:100%;max-width:272px;box-sizing:border-box;padding:10px 12px;border-radius:var(--radius-xl);background:var(--surface);border:1px solid var(--line-strong);font:inherit;font-size:12px;line-height:18px;color:var(--text-muted);text-align:left;cursor:pointer}
+.node:hover{border-color:var(--text-disabled)}
+.node.sel{border-color:var(--accent-ring);box-shadow:var(--selected-glow);background:var(--surface-raised)}
+.node.ed{border-color:var(--accent-strong)}
+.node.dim{opacity:.85}
+.nh{display:flex;align-items:center;gap:8px;min-width:0}
+.nh b{font-size:13px;font-weight:500;color:var(--text);white-space:nowrap}
+.nf{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:6px;border-top:1px solid var(--line-subtle);font-size:11px;line-height:16px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.wire{position:relative;width:2px;height:30px;background:var(--line-strong);flex:none}
+.wire span{position:absolute;left:10px;top:6px;font-family:var(--font-mono);font-size:11px;line-height:16px;color:var(--text-muted);white-space:nowrap}
+.lane{display:flex;flex-direction:column;align-items:center;min-width:0}
+.var{flex:1 1 0;min-width:0;padding:4px 6px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--bg-sidebar);font-size:11px;line-height:16px;color:var(--text-secondary);text-align:center}
+.sec{display:flex;flex-direction:column;gap:8px;padding:16px 20px;border-top:1px solid var(--line)}
+.sech{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.sech h3{margin:0;font-size:13px;line-height:20px;font-weight:500;color:var(--text)}
+.diff{font-family:var(--font-mono);font-size:11px;line-height:18px;border:1px solid var(--line);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-sidebar)}
+.diff div{padding:1px 10px;white-space:pre-wrap}
+.diff .add{background:var(--diff-add-bg);color:var(--diff-add-text)}
+.diff .ctx{color:var(--text-muted)}
+pre.schema{margin:0;padding:8px 10px;border-radius:var(--radius-lg);background:var(--bg-sidebar);border:1px solid var(--line);font-family:var(--font-mono);font-size:11px;line-height:18px;color:var(--text-secondary);white-space:pre-wrap}
+.kvrow{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:8px;align-items:center}
+.tool{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:8px;align-items:center;min-height:32px;border-top:1px solid var(--line-subtle);padding-top:4px}
+.tool:first-of-type{border-top:0}
+.acc{height:28px;padding:0 6px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--surface-raised);font:inherit;font-size:12px}
+.acc-allow{color:var(--success)}
+.acc-ask{color:var(--warning)}
+.acc-deny{color:var(--danger)}
+.tbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 16px;border-top:1px solid var(--line);background:var(--bg-sidebar)}
+th{font-weight:400;text-align:left;font-size:12px;line-height:18px;color:var(--text-muted);padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:0 12px;height:44px;border-bottom:1px solid var(--line-subtle);white-space:nowrap;font-variant-numeric:tabular-nums}
+tbody tr:hover{background:var(--surface-raised)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-xl);padding:14px 16px;box-sizing:border-box;min-width:0;display:flex;flex-direction:column;gap:12px}
+</style>
+</head>
+<body>
+<div id="dc-root"><div style="min-height: 1720px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"><div style="flex: 0 0 276px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);"><nav class="gr-nav" aria-label="Main" style="width: 100%; min-height: 800px; gap: 2px; font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"><button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0px 8px; border: 0px; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer; text-align: left;"><span style="width: 24px; height: 24px; border-radius: 6px; background: var(--accent-strong); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">H</span><span style="flex: 1 1 0%;">Harness</span><span style="display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--text-muted);">Personal<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="m6 9 6 6 6-6"></path></svg></span></button><label style="display: flex; align-items: center; gap: 8px; height: 32px; margin: 6px 0px 10px; padding: 0px 8px 0px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); color: var(--text-muted); font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><input type="search" aria-label="Search or jump to" placeholder="Search or jump to…" style="flex: 1 1 0%; min-width: 0px; border: 0px; background: transparent; color: var(--text); font: inherit; outline: none;"><kbd class="gr-kbd">⌘K</kbd></label><a href="home.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M3 3v16a2 2 0 0 0 2 2h16"></path><path d="M8 17v-4M13 17V7M18 17v-7"></path></svg>Home</span><span class="gr-badge gr-badge--count">6</span></a><a href="review.html" class="gr-nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg><span class="gr-nav-item__label">Review</span><span class="gr-badge gr-badge--count">3</span></a><div style="margin: 14px 0px 4px; padding: 0px 8px; font-size: 12px; line-height: 18px; color: var(--text-muted);">Work</div><a href="chat.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>Chat</span></a><a href="board.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M8 7v7M12 7v4M16 7v9"></path></svg>Board</span></a><a href="timeline.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M3 3v18h18"></path><path d="M7 8h7M10 12h8M7 16h5"></path></svg>Timeline</span></a><div style="margin: 14px 0px 4px; padding: 0px 8px; font-size: 12px; line-height: 18px; color: var(--text-muted);">Build</div><a href="pipeline-editor.html" class="gr-nav-item" aria-current="page"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><rect width="8" height="8" x="3" y="3" rx="2"></rect><path d="M7 11v4a2 2 0 0 0 2 2h4"></path><rect width="8" height="8" x="13" y="13" rx="2"></rect></svg><span class="gr-nav-item__label">Pipelines</span></a><a href="agents.html" class="gr-nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg><span class="gr-nav-item__label">Agents</span></a><a href="memory.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"></path><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"></path></svg>Memory</span><span class="gr-badge gr-badge--count">1</span></a><a href="policies.html" class="gr-nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg><span class="gr-nav-item__label">Policies</span></a><div style="display: flex; align-items: center; margin: 14px 0px 4px; padding: 0px 0px 0px 8px; font-size: 12px; line-height: 18px; color: var(--text-muted);"><span style="flex: 1 1 0%;">Pipelines</span><a href="pipeline-editor.html" aria-label="New pipeline" style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--text-muted);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M5 12h14M12 5v14"></path></svg></a></div><a href="pipeline-editor.html" class="gr-nav-item"><span class="gr-dot gr-dot--running" aria-hidden="true"></span><span class="gr-nav-item__label">Bug triage</span></a><a href="pipeline-editor.html" class="gr-nav-item"><span class="gr-dot gr-dot--waiting" aria-hidden="true"></span><span class="gr-nav-item__label">Content drafts</span><span class="gr-badge gr-badge--count">1</span></a><a href="pipeline-editor.html" class="gr-nav-item"><span class="gr-dot gr-dot--live" aria-hidden="true"></span><span class="gr-nav-item__label">Weekly digest</span></a><a href="pipeline-editor.html" class="gr-nav-item"><span class="gr-dot gr-dot--draft" aria-hidden="true"></span><span class="gr-nav-item__label">Hotfix</span></a><div style="flex: 1 1 0%; min-height: 16px;"></div><a href="settings.html" class="gr-nav-item"><span class="gr-nav-item__label"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex: 0 0 auto; margin-right: 10px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"></path></svg>Settings</span></a><div style="margin-top: 8px; padding: 12px 8px 4px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px;"><div style="display: flex; align-items: baseline; justify-content: space-between;"><span style="font-size: 12px; color: var(--text-muted);">Spend today</span><span style="font-size: 13px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums;">$3.81 <span style="font-weight: 400; color: var(--text-muted);">of $6.00</span></span></div><div class="gr-progress" role="progressbar" aria-valuemin="0" aria-valuemax="6" aria-valuenow="3.81" aria-label="Spend today, $3.81 of $6.00"><div class="gr-progress__bar" style="width: 63.5%;"></div></div><div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);"><span>5 running</span><span>month $96.31 of $180</span></div></div></nav></div><main style="flex: 999 1 640px; min-width: 0px; display: flex; flex-direction: column;"><header style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 64px; padding: 12px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line);"><nav aria-label="Breadcrumb" class="lbl" style="display: inline-flex; align-items: center; gap: 2px;">Pipelines<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="m9 18 6-6-6-6"></path></svg></nav><h1 class="head" style="margin: 0px;">Bug triage</h1><span class="gr-badge"><span class="gr-dot gr-dot--live gr-dot--sm" aria-hidden="true"></span>v14 live</span><span class="gr-badge gr-badge--accent">Draft v15</span><span class="lbl">edited by you 1h 12m ago · autosaved</span><div style="flex: 1 1 0%;"></div><button type="button" class="gr-btn gr-btn--ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>History</button><button type="button" class="gr-btn gr-btn--secondary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M6 3l14 9-14 9z" fill="currentColor" stroke="none"></path></svg>Test on PAY-1423</button><button type="button" class="gr-btn gr-btn--primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M20 6 9 17l-5-5"></path></svg>Deploy v15</button></header><div role="tablist" aria-label="Pipeline views" class="gr-tabs"><button type="button" role="tab" aria-selected="true" class="gr-tab">Graph</button><button type="button" role="tab" aria-selected="false" class="gr-tab">Runs<span class="gr-tab__count"> 212</span></button><button type="button" role="tab" aria-selected="false" class="gr-tab">Versions<span class="gr-tab__count"> 15</span></button><button type="button" role="tab" aria-selected="false" class="gr-tab">Trigger &amp; settings</button></div><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 24px; border-bottom: 1px solid var(--line); background: var(--accent-glow);"><span class="tile t-acc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><rect width="8" height="8" x="3" y="3" rx="2"></rect><path d="M7 11v4a2 2 0 0 0 2 2h4"></path><rect width="8" height="8" x="13" y="13" rx="2"></rect></svg></span><span style="flex: 1 1 420px; min-width: 0px;"><b style="color: var(--text); font-weight: 500;">Draft v15 · 2 nodes edited since v14</b><span class="lbl" style="display: block;">Router: rule 2 adds <span class="mono" style="font-size: 12px; color: var(--accent-text);">prio≥High</span> · Fixer ×3: step instructions +2 lines · new runs still use v14 (#128 and #129 too)</span></span><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Compare with v14</button><button type="button" class="gr-btn gr-btn--danger gr-btn--sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M18 6 6 18M6 6l12 12"></path></svg>Discard draft</button></div><div style="flex: 1 1 0%; display: flex; flex-wrap: wrap; min-height: 0px;"><aside aria-label="Add nodes" style="flex: 1 1 200px; min-width: 0px; padding: 16px 12px; box-sizing: border-box; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px;"><label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><span class="sr">Find a node or agent</span><input type="search" placeholder="Find a node or agent"></label><div class="sect">Flow</div><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path></svg></span>Source<span class="h">Jira, Slack</span></button><button type="button" class="pal"><span class="i"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>Schedule<span class="h">cron</span></button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M16 3h5v5"></path><path d="M8 3H3v5"></path><path d="M12 22v-8.3a4 4 0 0 0-1.17-2.87L3 3"></path><path d="m15 9 6-6"></path></svg></span>Router<span class="h">rules</span></button><button type="button" class="pal"><span class="i"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M12 3v6M12 9l-7 6M12 9v12M12 9l7 6"></path></svg></span>Fan-out<span class="h">×N</span></button><button type="button" class="pal"><span class="i"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M5 3v6l7 6 7-6V3M12 15v6"></path></svg></span>Merge<span class="h">wait all</span></button><button type="button" class="pal"><span class="i" style="color: var(--warning);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg></span>Gate<span class="h">you decide</span></button><div class="sect">Steps</div><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Agent step</button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M6 3l14 9-14 9z" fill="currentColor" stroke="none"></path></svg></span>Tool step<span class="h">git.pr</span></button><div class="sect">Agents · drag in</div><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Reproducer<span class="h">Sonnet</span></button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Analyst<span class="h">Opus</span></button><button type="button" class="pal" style="background: var(--surface-raised);"><span class="i" style="color: var(--accent-text);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Fixer<span class="h">Sonnet · v7</span></button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Reviewer<span class="h">Haiku</span></button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Writer<span class="h">Opus</span></button><button type="button" class="pal"><span class="i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>Editor<span class="h">Sonnet</span></button><div class="sect">Made by agents</div><button type="button" class="pal" style="color: var(--spawn-text);"><span class="i" style="color: var(--spawn);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><circle cx="12" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"></path><path d="M12 12v3"></path></svg></span>Load-tester<span class="h">by Fixer</span></button><a href="agents.html" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin: 10px 8px 0px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M5 12h14M12 5v14"></path></svg>New agent</a><p class="lbl" style="margin: 16px 8px 0px;">Drag onto the graph, or onto a wire to insert it there.</p></aside><section aria-label="Pipeline graph" class="canvas" style="flex: 999 1 480px; min-width: 0px; display: flex; flex-direction: column;"><div style="flex: 1 1 0%; overflow-x: auto;"><div style="min-width: 540px; padding: 32px 24px 40px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center;"><button type="button" class="node" aria-label="Source node Jira"><span class="nh"><span class="tile t-info"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path></svg></span><b>Jira</b><span class="lbl" style="margin-left: auto;">source</span></span><span class="mono" style="font-size: 11px; line-height: 16px; color: var(--text-secondary);">project=PAY · status=To Do</span><span class="nf">new issue starts a run · 212 runs in 30 days</span></button><div class="wire" aria-hidden="true"><span>issue</span></div><button type="button" class="node ed" aria-label="Router node, edited in draft"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M16 3h5v5"></path><path d="M8 3H3v5"></path><path d="M12 22v-8.3a4 4 0 0 0-1.17-2.87L3 3"></path><path d="m15 9 6-6"></path></svg></span><b>Router</b><span class="gr-badge gr-badge--accent">edited</span><span class="lbl" style="margin-left: auto;">2 rules</span></span><span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;"><span class="mono lbl" style="font-size: 11px; width: 12px;">1</span><span class="gr-rule"><span class="gr-rule__field">type</span>is<b class="gr-rule__value">Bug</b></span></span><span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;"><span class="mono lbl" style="font-size: 11px; width: 12px;">2</span><span class="gr-rule"><span class="gr-rule__field">type</span>is<b class="gr-rule__value">Incident</b></span><span class="gr-rule gr-rule--edited"><span class="gr-rule__field">prio</span>≥<b class="gr-rule__value">High</b></span></span><span class="nf">no match: comment on the issue and stop</span></button><div style="position: relative; width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0px, 1fr)); column-gap: 24px; padding-top: 56px; box-sizing: border-box;"><span aria-hidden="true" style="position: absolute; top: 0px; left: 50%; width: 2px; height: 20px; margin-left: -1px; background: var(--line-strong);"></span><span aria-hidden="true" style="position: absolute; top: 20px; left: calc(25% - 6px); right: calc(25% - 6px); height: 36px; box-sizing: border-box; border-top-color: ; border-top-style: ; border-top-width: ; border-right-color: ; border-right-style: ; border-right-width: ; border-left-color: ; border-left-style: ; border-left-width: ; border-image-source: ; border-image-slice: ; border-image-width: ; border-image-outset: ; border-image-repeat: ; border-bottom: 0px; border-radius: 8px 8px 0px 0px;"></span><span class="mono" style="position: absolute; top: 28px; left: calc(25% + 4px); font-size: 11px; line-height: 16px; color: var(--text-muted);">rule 1 · type=Bug</span><span class="mono" style="position: absolute; top: 28px; right: calc(25% + 4px); font-size: 11px; line-height: 16px; color: var(--accent-text);">rule 2 · Incident, prio≥High</span><div class="lane"><button type="button" class="node" aria-label="Reproducer step"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><b>Reproducer</b><span class="lbl" style="margin-left: auto;">Sonnet 5.5</span></span><span>Reproduce the bug in the fewest steps.</span><span class="nf"><span class="mono" style="font-size: 11px;">when steps≠∅</span> · avg $0.08 · 1m 30s</span></button><div class="wire" aria-hidden="true"><span>repro.steps</span></div><button type="button" class="node" aria-label="Analyst step"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><b>Analyst</b><span class="lbl" style="margin-left: auto;">Opus 5.5</span></span><span>Find the root cause; name the file and line.</span><span class="nf">avg $0.09 · 1m 10s · 91% picked</span></button><div class="wire" aria-hidden="true"><span>analyst.cause</span></div><button type="button" class="node sel ed" aria-pressed="true" aria-label="Fixer times 3, selected, edited in draft"><span class="nh"><span class="tile t-acc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><b>Fixer ×3</b><span class="gr-badge gr-badge--accent">edited</span><span class="lbl" style="margin-left: auto;">Sonnet 5.5</span></span><span>Fix the cause. Keep the public API. Add a regression test.</span><span style="display: flex; gap: 6px;"><span class="var">Fixer A</span><span class="var">Fixer B</span><span class="var">Fixer C</span></span><span style="display: flex; flex-wrap: wrap; gap: 6px;"><span class="gr-badge"><span class="gr-dot gr-dot--running gr-dot--sm" aria-hidden="true"></span>2 running · #129</span><span class="gr-badge"><span class="gr-dot gr-dot--draft gr-dot--sm" aria-hidden="true"></span>1 queued</span></span><span class="nf">$0.20 per variant · in parallel · 64% picked</span></button><div class="wire" aria-hidden="true"><span>variants[3]</span></div><button type="button" class="node" aria-label="Review gate, waits for you"><span class="nh"><span class="tile t-wait"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg></span><b>Review gate</b><span class="lbl" style="margin-left: auto;">you</span></span><span>Pick 1 of 3, or send back with a note.</span><span style="display: flex;"><span class="gr-badge gr-badge--warning"><span class="gr-dot gr-dot--waiting gr-dot--sm" aria-hidden="true"></span>1 waiting · #128 · 6m</span></span><span class="nf">your median decision 4m 12s</span></button><div class="wire" aria-hidden="true"><span>pick</span></div><button type="button" class="node" aria-label="Reviewer step"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><b>Reviewer</b><span class="lbl" style="margin-left: auto;">Haiku 5.5</span></span><span>Run the tests; write review notes.</span><span class="nf">avg $0.06 · 50s · 88% passed</span></button><div class="wire" aria-hidden="true"><span>review</span></div><button type="button" class="node" aria-label="Open PR tool step"><span class="nh"><span class="tile t-grey"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="18" r="2"></circle><path d="M6 8v8M18 16V9a3 3 0 0 0-3-3h-4"></path><path d="M13 4l-2 2 2 2"></path></svg></span><b>Open PR</b><span class="lbl" style="margin-left: auto;">tool</span></span><span class="mono" style="font-size: 11px; line-height: 16px; color: var(--text-secondary);">git.pr · base=main</span></button></div><div class="lane"><button type="button" class="node dim" aria-label="Analyst triage note step"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><b>Analyst</b><span class="lbl" style="margin-left: auto;">Opus 5.5</span></span><span>Write a triage note: impact, owner, next step.</span><span class="nf">avg $0.05 · 40s</span></button><div class="wire" aria-hidden="true"><span>analyst.note</span></div><button type="button" class="node dim" aria-label="Comment on Jira tool step"><span class="nh"><span class="tile t-grey"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M6 3l14 9-14 9z" fill="currentColor" stroke="none"></path></svg></span><b>Comment on Jira</b><span class="lbl" style="margin-left: auto;">tool</span></span><span class="mono" style="font-size: 11px; line-height: 16px; color: var(--text-secondary);">jira.comment</span></button><div class="lbl" style="margin-top: 24px; padding: 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-xl); max-width: 272px; width: 100%; box-sizing: border-box; text-align: center;">Drop a node here to extend rule 2</div></div></div></div></div><div class="tbar"><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-label="Zoom out">−</button><span class="lbl" style="font-variant-numeric: tabular-nums; min-width: 36px; text-align: center;">100%</span><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-label="Zoom in">+</button><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Fit</button><label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px;"><input type="checkbox" checked=""> Show live runs (v14)</label><div style="flex: 1 1 0%;"></div><span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--success);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M20 6 9 17l-5-5"></path></svg>Checks pass</span><span class="lbl" style="font-variant-numeric: tabular-nums;">10 nodes · all inputs wired · est. $0.92 of $2.00 per run</span></div><div class="tbar" style="padding-top: 8px; padding-bottom: 8px;"><span class="lbl" style="display: inline-flex; align-items: center; gap: 6px;"><kbd class="gr-kbd">Del</kbd> remove</span><span class="lbl" style="display: inline-flex; align-items: center; gap: 6px;"><kbd class="gr-kbd">⌘D</kbd> duplicate</span><span class="lbl" style="display: inline-flex; align-items: center; gap: 6px;"><kbd class="gr-kbd">⌘Z</kbd> undo</span><span class="lbl">Drag from a node’s edge to connect</span></div></section><aside aria-label="Node inspector" style="flex: 1 1 360px; min-width: 0px; box-sizing: border-box; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg-sidebar);"><div style="display: flex; flex-direction: column; gap: 4px; padding: 16px 20px;"><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"><span class="tile t-acc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span><h2 class="head" style="margin: 0px;">Fixer ×3</h2><span class="gr-badge gr-badge--accent">edited in v15</span><div style="flex: 1 1 0%;"></div><button type="button" aria-label="Close inspector" class="gr-btn gr-btn--ghost gr-btn--sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M18 6 6 18M6 6l12 12"></path></svg></button></div><span class="lbl">Agent step · fan-out ×3 · node 5 of 10 · rule 1 branch</span></div><div class="sec"><div class="sech"><h3><label for="pe-agent">Agent</label></h3><span class="lbl">role = prompt layer 2</span></div><select id="pe-agent" class="field"><option>Fixer · Sonnet 5.5 · v7 live</option><option>Analyst · Opus 5.5</option><option>Reviewer · Haiku 5.5</option><option>Reproducer · Sonnet 5.5</option></select><span class="lbl">Draft v8 of Fixer exists; this step keeps v7 until you deploy it in Agents.</span><a href="agents.html" style="display: inline-flex; align-items: center; gap: 2px; font-size: 12px;">Edit Fixer’s role in Agents<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="m9 18 6-6-6-6"></path></svg></a></div><div class="sec"><div class="sech"><h3><label for="pe-prompt">Step instructions</label></h3><span class="gr-badge">layer 3</span><span class="gr-badge gr-badge--accent">edited</span><div style="flex: 1 1 0%;"></div><span class="lbl" style="font-variant-numeric: tabular-nums;">58 tokens</span></div><textarea id="pe-prompt" rows="4" class="field">Fix the cause Analyst found. Keep the public API.
+Add a regression test that fails before your fix.
+Don’t add tables or migrations; ask first.</textarea><div class="diff" aria-label="Changes from v14"><div class="ctx">  Fix the cause Analyst found. Keep the public API.</div><div class="add">+ Add a regression test that fails before your fix.</div><div class="add">+ Don’t add tables or migrations; ask first.</div></div><span class="lbl">From Fixer’s send-backs: added a new table 9×, no regression test 5×.</span></div><div class="sec"><div class="sech"><h3>Output schema</h3><span class="lbl">checked before the gate</span><div style="flex: 1 1 0%;"></div><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Edit</button></div><pre class="schema">{
+  summary: string,
+  diff: patch,
+  tests: { passed: int, total: int },
+  needs_migration: bool
+}</pre></div><div class="sec"><div class="sech"><h3>Variants</h3><span class="lbl">each gets its own strategy hint</span></div><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;"><span class="gr-stepper" role="group" aria-label="variants"><button type="button" aria-label="Decrease variants">−</button><span class="gr-stepper__value" aria-live="polite">3</span><button type="button" aria-label="Increase variants">+</button></span><label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px;"><input type="checkbox" checked=""> Run in parallel</label></div><span class="lbl" style="font-variant-numeric: tabular-nums;">Up to $0.60 per run · 3 × $0.20 · parallel variants use 3 of 6 slots</span></div><div class="sec"><div class="sech"><h3>Inputs</h3><span class="lbl">run context = layer 4, filled from the wires</span></div><div style="display: flex; flex-wrap: wrap; gap: 6px;"><span class="chip">jira.issue</span><span class="chip">repro.steps</span><span class="chip">analyst.cause</span></div><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 18px;"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="flex: 0 0 auto; color: var(--text-muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"></path><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"></path></svg><span style="flex: 1 1 0%;">Memory · layer 5: 2 pinned notes match <span class="lbl">≤ 400 tokens</span></span><a href="memory.html">View</a></div></div><div class="sec"><div class="sech"><h3>Node policy</h3><span class="lbl">tighter than the workspace, never looser</span></div><div class="kvrow"><label for="pe-budget">Budget per variant <span class="lbl">workspace $0.20</span></label><input id="pe-budget" class="field mono" value="$0.20" style="height: 28px; text-align: right;"></div><div class="kvrow"><label for="pe-depth">Spawn depth <span class="lbl">workspace 2</span></label><input id="pe-depth" class="field mono" value="2" style="height: 28px; text-align: right;"></div><div class="kvrow"><label for="pe-hit">When a limit is hit</label><select id="pe-hit" class="field" style="height: 28px; font-size: 12px;"><option>Pause and ask me</option><option>Stop the variant</option></select></div></div><div class="sec"><div class="sech"><h3>Tools</h3><div style="flex: 1 1 0%;"></div><a href="policies.html" style="font-size: 12px;">Workspace matrix</a></div><div class="tool"><span class="mono">repo.read</span><select class="acc acc-allow" aria-label="repo.read access"><option>allow</option><option>ask</option><option>deny</option></select></div><div class="tool"><span class="mono">repo.write</span><select class="acc acc-allow" aria-label="repo.write access"><option>allow</option><option>ask</option><option>deny</option></select></div><div class="tool"><span class="mono">test.run</span><select class="acc acc-allow" aria-label="test.run access"><option>allow</option><option>ask</option><option>deny</option></select></div><div class="tool"><span><span class="mono">shell.run</span><span class="lbl" style="display: block;">standing approval since Nov 20 · used 14×</span></span><select class="acc acc-ask" aria-label="shell.run access"><option>ask</option><option>allow</option><option>deny</option></select></div><div class="tool"><span><span class="mono">git.push</span><span class="lbl" style="display: block;">Open PR does this after you pick</span></span><select class="acc acc-deny" aria-label="git.push access"><option>deny</option><option>ask</option><option>allow</option></select></div></div><div class="sec" style="flex-flow: wrap; align-items: center;"><button type="button" class="gr-btn gr-btn--secondary gr-btn--sm">Preview prompt</button><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"><path d="M6 3l14 9-14 9z" fill="currentColor" stroke="none"></path></svg>Test this node</button><div style="flex: 1 1 0%;"></div><button type="button" class="gr-btn gr-btn--danger gr-btn--sm">Remove</button><span class="lbl" style="flex: 1 1 100%;">Preview shows all 6 layers as Fixer would get them · about 2,140 tokens</span></div></aside></div></main></div></div>
+</body>
+</html>

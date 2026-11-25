@@ -1,0 +1,19 @@
+[package]
+name = "pipeliner"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "pipeliner"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+anyhow.workspace = true
+smol.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+harness-core.workspace = true
+harness-engine.workspace = true

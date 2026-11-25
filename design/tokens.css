@@ -1,0 +1,119 @@
+/* Pipeliner design tokens ("Graphite", dark). Single source of truth for the mockups in screens/ and explanation/.
+ * Every screen inlines a copy of this :root block (the screens must stay self-contained); keep them in sync.
+ * Engineers: these map 1:1 to the GPUI theme.
+ * Note: --sidebar-width is the spec value; the mockups render the sidebar column at ~277px (pinned in screens/*.html). */
+:root {
+  /* Fonts */
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Surfaces */
+  --bg: #08090a;
+  --bg-sidebar: #0b0c0d;
+  --surface: #0f1011;
+  --surface-raised: #141518;
+  --surface-hover: #1c1d21;
+
+  /* Lines */
+  --line-subtle: #16171a;
+  --line: #1c1d21;
+  --line-strong: #2e3035;
+
+  /* Text */
+  --text: #f7f8f8;
+  --text-secondary: #d0d6e0;
+  --text-muted: #8a8f98;
+  --text-disabled: #62666d;
+
+  /* Accent */
+  --accent: #7170ff;
+  --accent-strong: #5e6ad2;
+  --accent-strong-hover: #5561c9;
+  --accent-text: #a5a4ff;
+  --accent-soft: #1e1e3f;
+  --accent-ring: #3a3a7a;
+  --accent-glow: #15152b;
+  --on-accent: #ffffff;
+
+  /* Status */
+  --success: #4cb782;
+  --warning: #f2c94c;
+  --warning-soft: #2a2410;
+  --danger: #eb5757;
+  --danger-soft: #2a1416;
+  --info: #4ea7fc;
+  --info-soft: #13203a;
+  --info-text: #6fa8ff;
+
+  /* Spawned by an agent */
+  --spawn: #a78bfa;
+  --spawn-bar: #8b7fe8;
+  --spawn-text: #c4b5fd;
+  --spawn-soft: #171329;
+  --spawn-line: #3b3463;
+
+  /* Diff */
+  --diff-add-bg: #10261c;
+  --diff-add-text: #8fddb5;
+  --diff-del-bg: #2a1416;
+  --diff-del-text: #f3a6a6;
+
+  /* Overlay */
+  --scrim: rgba(8, 9, 10, 0.72);
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-full: 999px;
+
+  /* Sizes */
+  --control-height: 40px;
+  --control-height-sm: 28px;
+  --row-height: 40px;
+  --nav-item-height: 32px;
+  --tab-height: 44px;
+  --sidebar-width: 232px;
+
+  /* Focus and selection */
+  --focus-ring: 0 0 0 2px #08090a, 0 0 0 4px #7170ff;
+  --selected-glow: 0 0 0 3px #15152b;
+
+  /* Motion */
+  --duration-exit: 100ms;
+  --duration-state: 150ms;
+  --duration-enter: 180ms;
+  --duration-overlay: 220ms;
+  --duration-toast: 240ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard: ease;
+
+  /* Layering */
+  --z-popover: 20;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+
+  /* Type scale (font shorthand: weight size/line-height family) */
+  --text-title-lg: 600 22px/28px var(--font-sans);
+  --text-title: 600 20px/28px var(--font-sans);
+  --text-stat: 600 28px/32px var(--font-sans);
+  --text-stat-sm: 500 18px/24px var(--font-sans);
+  --text-heading: 500 14px/20px var(--font-sans);
+  --text-body: 400 13px/20px var(--font-sans);
+  --text-body-strong: 500 13px/20px var(--font-sans);
+  --text-label: 400 12px/18px var(--font-sans);
+  --text-mono: 400 12px/20px var(--font-mono);
+  --text-mono-sm: 400 11px/16px var(--font-mono);
+}
