@@ -8,7 +8,7 @@ use anyhow::Result;
 use gpui::{App, AppContext as _, Task};
 
 use crate::api::{
-    Api, BlobId, ChildDir, Estimate, FolderInfo, GraphChange, GraphDef, InboxItem, Issue, IssueEvent, IssueKey, PermissionRule,
+    Api, BlobId, ChildDir, DescriptionDraftRequest, Estimate, FolderInfo, GraphChange, GraphDef, InboxItem, Issue, IssueEvent, IssueKey, PermissionRule,
     PipelineId, Problem, ProviderModels, PullRequest, RepoFacts, ReviewId, Run, RunId, RunLogLine, RunStats,
     RunWait, RunnableRef, Session, SessionFilter, SweptWorktree, SessionId, SlashCommand, StartFrom, Template, UsedBy, WorkdirEntry,
 };
@@ -34,6 +34,13 @@ impl Queries {
     /// pipeline nodes and sub-agents started.
     pub fn sessions(&self, filter: SessionFilter, cx: &App) -> Task<Result<Vec<Session>>> {
         self.ask(cx, move |api| api.sessions(&filter))
+    }
+
+    /// Writes an issue description in Markdown from the title, note and images with the
+    /// default model ("Write with AI"). Takes seconds; the error is for the dialog to show in
+    /// place.
+    pub fn draft_description(&self, request: DescriptionDraftRequest, cx: &App) -> Task<Result<String>> {
+        self.ask(cx, move |api| api.draft_description(request))
     }
 
     /// Providers and their live model lists. Reaches the network.

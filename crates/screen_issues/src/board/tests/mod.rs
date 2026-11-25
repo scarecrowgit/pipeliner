@@ -1,5 +1,6 @@
 //! The issues screen in a test window over the fixture backend.
 
+mod ai;
 mod autopilot;
 mod board;
 mod dialog;

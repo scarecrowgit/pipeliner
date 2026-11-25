@@ -18,6 +18,9 @@ use ui_rich::viewer::ImageThumb;
 use ui_rich::{SubmitOn, TextArea, TextAreaEvent, TextInput, TextInputEvent};
 
 use super::card::runner_kind;
+use crate::panel::Named as _;
+
+mod ai;
 
 /// The dialog's id.
 pub(crate) const DIALOG: &str = "new-issue";
@@ -85,6 +88,8 @@ pub(crate) struct NewIssueForm {
     pub(crate) create_more: bool,
     pub(crate) error: Option<SharedString>,
     busy: bool,
+    /// "Write with AI": the draft under review and the "Ask for changes" field.
+    ai: ai::Ai,
     /// The title takes focus on the first frame, after the dialog focused its first control.
     focus_pending: bool,
     _subs: Vec<Subscription>,
@@ -100,18 +105,23 @@ impl NewIssueForm {
             cx.subscribe_in(&title, window, |this: &mut Self, _, event: &TextInputEvent, window, cx| match event {
                 TextInputEvent::Changed => {
                     this.error = None;
+                    this.ai.error = None;
                     cx.notify();
                 }
                 TextInputEvent::Submit => this.submit(this.primary_starts(), window, cx),
                 _ => {}
             }),
-            cx.subscribe(&body, |this: &mut Self, _, event: &TextAreaEvent, cx| {
-                if let TextAreaEvent::PasteImage(item) = event {
-                    this.paste_images(item, cx);
+            cx.subscribe(&body, |this: &mut Self, _, event: &TextAreaEvent, cx| match event {
+                TextAreaEvent::PasteImage(item) => this.paste_images(item, cx),
+                TextAreaEvent::Changed => {
+                    this.ai.error = None;
+                    cx.notify();
                 }
+                _ => {}
             }),
         ];
         let owner = seed.owners.first().cloned().unwrap_or_else(|| "You".to_string());
+        let ai = ai::Ai::new(window, cx);
         Self {
             repo: seed.repos.first().cloned(),
             status: seed.status,
@@ -128,6 +138,7 @@ impl NewIssueForm {
             create_more: false,
             error: None,
             busy: false,
+            ai,
             focus_pending: true,
             _subs: subs,
         }
@@ -158,7 +169,12 @@ impl NewIssueForm {
         Ok(NewIssue {
             project,
             title,
-            body: self.body.read(cx).text().trim().to_string(),
+            // A draft under review is filed as it stands: that is an implicit "Keep".
+            body: if self.ai.reviewing {
+                self.ai.draft.trim().to_string()
+            } else {
+                self.body.read(cx).text().trim().to_string()
+            },
             status: self.status,
             priority: self.priority,
             kind: self.kind,
@@ -206,6 +222,7 @@ impl NewIssueForm {
                     this.title.update(cx, |input, cx| input.set_text("", cx));
                     this.body.update(cx, |area, cx| area.set_text("", cx));
                     this.images.clear();
+                    this.ai.reset(cx);
                     this.focus_title(window, cx);
                     cx.notify();
                 } else {
@@ -374,7 +391,8 @@ impl NewIssueForm {
             .children(start)
     }
 
-    fn thumbs(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The attached images as thumbnails, or nothing when there are none.
+    fn thumbs(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let shown = crate::panel::viewer_images(&self.images, cx);
         let thumbs: Vec<AnyElement> = self
             .images
@@ -423,13 +441,7 @@ impl NewIssueForm {
                     .into_any_element()
             })
             .collect();
-        let hint = if self.uploading > 0 { "Attaching…".to_string() } else { "Paste or drop images".to_string() };
-        row()
-            .mt(px(SPACE_2_5))
-            .gap(px(SPACE_2))
-            .items_end()
-            .children(thumbs)
-            .child(div().flex_none().type_style(LABEL).text_color(TEXT_MUTED).child(hint))
+        (!thumbs.is_empty()).then(|| row().mt(px(SPACE_2_5)).gap(px(SPACE_2)).items_end().children(thumbs))
     }
 }
 
@@ -595,20 +607,12 @@ impl Render for NewIssueForm {
                     .child(div().w_full().type_style(TITLE_SM).child(self.title.clone())),
             )
             .probe(TITLE);
-        let body_focused = self.body.read(cx).is_focused(window);
-        let body_area = self.body.clone();
-        let body = div()
+        let body = self
+            .description_box(window, cx)
             .id("new-issue-body")
-            .w_full()
-            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| body_area.read(cx).focus(window))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.drop_files(paths.paths().to_vec(), cx)))
-            .child(
-                InputFrame::new("new-issue-body-frame")
-                    .multiline()
-                    .focused(body_focused)
-                    .child(col().w_full().child(self.body.clone()).child(self.thumbs(cx))),
-            )
             .probe("new-issue-body");
+        let ai_error = self.ai.error.clone();
         let status = self.select("new-issue-status", self.status.label(), None, cx);
         let priority = self.select("new-issue-priority", format!("{} priority", self.priority.label()), None, cx);
         let owner_label = if self.owner.is_empty() { "No owner".to_string() } else { self.owner.clone() };
@@ -617,11 +621,24 @@ impl Render for NewIssueForm {
         let repo = self.select("new-issue-repo", self.repo.clone().unwrap_or_else(|| "No repo".into()), Some(IconName::Folder), cx);
         // The dialog wraps its body children in a box that sizes to them: fill it, or the
         // fields measure at the width of their text.
+        let writes = cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+            let (key, mods) = (event.keystroke.key.as_str(), event.keystroke.modifiers);
+            if key == "j" && (mods.platform || mods.control) && !mods.shift && !mods.alt {
+                this.draft(None, window, cx);
+                cx.stop_propagation();
+            }
+        });
         col()
             .flex_1()
             .w_full()
             .min_w_0()
             .gap(px(DIALOG_GAP))
+            .key_context("NewIssueForm")
+            .track_focus(&self.ai.focus)
+            .on_key_down(writes)
+            .when(self.ai.reviewing, |d| {
+                d.on_action(cx.listener(|this, _: &keys::Undo, window, cx| this.undo_draft(window, cx)))
+            })
             .child(
                 col()
                     .w_full()
@@ -630,7 +647,10 @@ impl Render for NewIssueForm {
                     .when_some(error, |d, error| {
                         d.child(div().type_style(LABEL).text_color(DANGER).child(error).probe("new-issue-error"))
                     })
-                    .child(body),
+                    .child(body)
+                    .when_some(ai_error, |d, error| {
+                        d.child(div().type_style(LABEL).text_color(DANGER).child(error).named(ai::ERROR))
+                    }),
             )
             .child(row().gap(px(SPACE_1_5)).child(status).child(priority).child(owner).child(kind).child(repo))
             .child(self.runs_with(cx))

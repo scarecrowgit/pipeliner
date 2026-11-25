@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow, bail};
 use issues::Happening;
 use model::{Actor, Autopilot, AutopilotId, AutopilotTrigger, Event, Issue, IssueEvent, IssueEventKind, IssueKey, ProjectId, RunAgent, RunnableRef};
 
-use crate::api::{Attachment, IssueApi, IssuePatch, NewIssue};
+use crate::api::{Attachment, DescriptionDraftRequest, IssueApi, IssuePatch, NewIssue};
 use crate::engine::{Engine, Inner};
 
 impl Inner {
@@ -29,6 +29,10 @@ impl Inner {
 }
 
 impl IssueApi for Engine {
+    fn draft_description(&self, request: DescriptionDraftRequest) -> Result<String> {
+        self.write_description(request)
+    }
+
     fn issues(&self, project: &ProjectId) -> Result<Vec<Issue>> {
         self.inner.store.issues(project)
     }

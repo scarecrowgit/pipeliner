@@ -3,7 +3,7 @@
 use anyhow::{Result, anyhow, bail};
 
 use crate::api::{
-    Actor, Attachment, Autopilot, AutopilotId, Estimate, Event, FileDiff, InboxApi, InboxId, InboxItem, Issue, IssueApi,
+    Actor, Attachment, Autopilot, AutopilotId, DescriptionDraftRequest, Estimate, Event, FileDiff, InboxApi, InboxId, InboxItem, Issue, IssueApi,
     IssueEvent, IssueEventKind, IssueKey, IssuePatch, NewIssue, PipelineId, ProjectId, PullRequest, Review,
     ReviewDecision, ReviewId, ReviewState, Run, RunApi, RunId, RunInput, RunLogLine, RunState, RunStats, RunWait,
     RunnableRef, StartFrom,
@@ -293,6 +293,27 @@ impl IssueApi for FixtureApi {
 
     fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, i64)>> {
         Ok(crate::api::next_scheduled_runs_of(&self.world().autopilots))
+    }
+
+    fn draft_description(&self, request: DescriptionDraftRequest) -> Result<String> {
+        self.record("draft_description", request.title.clone())?;
+        let title = request.title.trim();
+        let note = request.note.trim();
+        let summary = match (title.is_empty(), note.is_empty()) {
+            (_, false) => format!("{title}. {note}").trim_start_matches(". ").to_string(),
+            (false, true) => format!("{title}."),
+            (true, true) => "Describe the change.".to_string(),
+        };
+        if request.instruction.as_deref().is_some_and(|i| !i.trim().is_empty()) {
+            return Ok(format!("{summary}\n\n### Done when\n\n- The change is in and covered by a test"));
+        }
+        let looked_at = request.images.first().map_or_else(
+            || "Look at what happens".to_string(),
+            |image| format!("Look at what `{}` shows", image.name),
+        );
+        Ok(format!(
+            "{summary}\n\n### Steps to reproduce\n\n1. Open the project\n2. {looked_at}\n3. Compare it with what you expect\n\n### Done when\n\n- The behaviour matches what the note describes\n- A test covers it"
+        ))
     }
 
     fn autopilots(&self, project: &ProjectId) -> Result<Vec<Autopilot>> {

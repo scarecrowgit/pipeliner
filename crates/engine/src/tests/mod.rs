@@ -4,6 +4,7 @@
 mod cancel;
 mod chat;
 mod contract;
+mod describe;
 mod legacy;
 mod ops;
 mod other;

@@ -253,6 +253,21 @@ pub struct IssuePatch {
     pub triggers: Option<StartTriggers>,
 }
 
+/// What "Write with AI" works from in the new-issue dialog.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DescriptionDraftRequest {
+    pub title: String,
+    /// The person's own note (may be empty).
+    pub note: String,
+    pub images: Vec<Attachment>,
+    /// The repo the issue is for, if any (context only).
+    pub repo: Option<String>,
+    /// The draft shown so far, when asking for changes or trying again.
+    pub previous: Option<String>,
+    /// "Ask for changes" text, e.g. "shorter, add logs".
+    pub instruction: Option<String>,
+}
+
 pub trait IssueApi {
     fn issues(&self, project: &ProjectId) -> Result<Vec<Issue>>;
     fn issue(&self, key: &IssueKey) -> Result<Option<Issue>>;
@@ -290,6 +305,10 @@ pub trait IssueApi {
     /// When each runnable runs next on a schedule: the earliest `next_run` of the enabled
     /// schedule autopilots that target it, across projects. Changes with `AutopilotsChanged`.
     fn next_scheduled_runs(&self) -> Result<Vec<(RunnableRef, Millis)>>;
+
+    /// Writes an issue description in Markdown from the title, the note and the images with
+    /// the default model. Blocks until the model answers.
+    fn draft_description(&self, request: DescriptionDraftRequest) -> Result<String>;
 }
 
 /// [`IssueApi::next_scheduled_runs`] over a list of autopilots.

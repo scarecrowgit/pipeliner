@@ -17,6 +17,7 @@
 //! | `pipelines` | Pipeline runs: drivers, the node runner's services, the observer, recovery |
 //! | `runs`, `reviews` | [`api::RunApi`] and [`api::InboxApi`] over the drivers and the store |
 //! | `issues`, `catalog`, `ops` | The other parts of the API |
+//! | `describe` | "Write with AI": an issue description drafted by the default model |
 //! | `autopilots` | Firing an autopilot: its target starts on its prompt |
 //! | `scheduler` | The thread that fires due autopilots and sweeps old worktrees |
 //! | `sweep` | Removing worktrees of runs that finished long ago and were merged or shipped |
@@ -26,6 +27,7 @@ mod autopilots;
 mod bus;
 mod catalog;
 mod chat;
+mod describe;
 mod engine;
 mod gate;
 mod host;

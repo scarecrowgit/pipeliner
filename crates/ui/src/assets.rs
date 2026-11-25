@@ -101,6 +101,7 @@ icon_names! {
     Settings => "settings",
     Share => "share",
     Source => "source",
+    Sparkles => "sparkles",
     Spawn => "spawn",
     Stop => "stop",
     Terminal => "terminal",
