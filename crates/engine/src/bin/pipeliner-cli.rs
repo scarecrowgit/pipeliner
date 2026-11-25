@@ -11,6 +11,7 @@
 //!   pipeliner-cli decide <task id> pick <n> | approve | back <note...> | reject
 //!   pipeliner-cli chat <text...>          (direct chat, prints the reply)
 //!   pipeliner-cli watch <run number>      (drives the run in this process until it waits or ends)
+//!   pipeliner-cli serve                   (executes all runs until none is running)
 
 use anyhow::{bail, Context, Result};
 use harness_core::*;
@@ -70,6 +71,25 @@ fn main() -> Result<()> {
         "watch" => {
             let r = find_run(&store, rest.first().context("run number")?)?;
             drive_until_idle(&engine, &r.id)?;
+        }
+        "serve" => {
+            // Headless owner: executes runs until none is running (waiting ones stay for the app).
+            if !engine.is_owner() {
+                bail!("another Pipeliner process owns the engine");
+            }
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let busy = store
+                    .runs()
+                    .into_iter()
+                    .any(|r| r.status == Status::Running);
+                if !busy {
+                    for r in store.runs() {
+                        println!("#{} {} {}", r.number, r.status.as_str(), r.title);
+                    }
+                    break;
+                }
+            }
         }
         "runs" => {
             for r in store.runs() {
