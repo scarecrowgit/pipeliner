@@ -106,7 +106,19 @@ impl Route {
 
     /// Parses a screen name (`board`, `review`, ...) into its list route. Used by the
     /// `PIPELINER_ROUTE` environment variable to open the app on a given screen.
+    /// Accepts `screen` or `screen:<id>` (pipelines, review, chat, agents, task).
     pub fn from_name(name: &str) -> Option<Route> {
+        if let Some((screen, id)) = name.trim().split_once(':') {
+            let id = Some(id.trim().to_string());
+            return Some(match screen.to_lowercase().as_str() {
+                "pipelines" => Route::Pipelines { pipeline: id },
+                "review" => Route::Review { task: id },
+                "chat" => Route::Chat { chat: id },
+                "agents" => Route::Agents { agent: id },
+                "task" => Route::Task { task: id? },
+                _ => return None,
+            });
+        }
         Some(match name.trim().to_lowercase().as_str() {
             "home" => Route::Home,
             "review" => Route::Review { task: None },

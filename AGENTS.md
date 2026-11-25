@@ -32,7 +32,7 @@ nix-shell shell.nix --run 'cargo clippy --workspace -- -D warnings'
 nix-shell shell.nix --run 'cargo build --release -p pipeliner'
 ```
 
-Set `CARGO_TARGET_DIR` to a shared folder (pipelines do: `~/.cache/pipeliner/cargo-target-agents`)
+Set `CARGO_TARGET_DIR` to a shared folder (pipelines do: `~/.cache/pipeliner/cargo-target`)
 so worktrees don't rebuild GPUI from scratch. Don't run the GUI from an agent; check logic with
 tests or the CLI (`cargo run -p harness-engine --bin pipeliner-cli -- help`).
 

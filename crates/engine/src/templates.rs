@@ -79,7 +79,7 @@ pub fn all(config: &Config) -> Vec<Template> {
     let mut env = std::collections::BTreeMap::new();
     env.insert(
         "CARGO_TARGET_DIR".to_string(),
-        "~/.cache/pipeliner/cargo-target-agents".to_string(),
+        "~/.cache/pipeliner/cargo-target".to_string(),
     );
     let app = Workdir {
         id: "app".into(),
