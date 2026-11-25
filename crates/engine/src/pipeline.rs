@@ -153,18 +153,6 @@ fn run_title(first_line: &str) -> String {
     t
 }
 
-#[cfg(test)]
-mod title_tests {
-    #[test]
-    fn first_sentence() {
-        assert_eq!(
-            super::run_title("Timeline hides queued work. Tasks that…"),
-            "Timeline hides queued work"
-        );
-        assert_eq!(super::run_title("# Fix crash"), "Fix crash");
-    }
-}
-
 enum Step {
     /// Node finished; follow edges on this port (None = default port).
     Next(Option<String>),
@@ -1807,4 +1795,16 @@ fn pr_body(run: &Run, pipeline: &str) -> String {
     }
     s.push_str("\n🤖 Generated with Pipeliner\n");
     s
+}
+
+#[cfg(test)]
+mod title_tests {
+    #[test]
+    fn first_sentence() {
+        assert_eq!(
+            super::run_title("Timeline hides queued work. Tasks that…"),
+            "Timeline hides queued work"
+        );
+        assert_eq!(super::run_title("# Fix crash"), "Fix crash");
+    }
 }
