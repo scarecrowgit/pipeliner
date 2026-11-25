@@ -24,7 +24,11 @@ use crate::theme;
 pub use gpui_component::input::InputEvent;
 
 /// Single-line input state.
-pub fn text_input(placeholder: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> Entity<InputState> {
+pub fn text_input(
+    placeholder: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
     let placeholder = placeholder.into();
     cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
 }
@@ -38,12 +42,20 @@ pub fn text_input_with(
 ) -> Entity<InputState> {
     let placeholder = placeholder.into();
     let value = value.into();
-    cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).default_value(value))
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(placeholder)
+            .default_value(value)
+    })
 }
 
 /// Multi-line composer that grows from `min_rows` to `max_rows`, then scrolls.
 /// Enter inserts a newline; ctrl/cmd-Enter emits `InputEvent::PressEnter { secondary: true }`.
-pub fn composer(placeholder: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> Entity<InputState> {
+pub fn composer(
+    placeholder: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
     composer_rows(placeholder, 2, 10, window, cx)
 }
 
@@ -55,13 +67,27 @@ pub fn composer_rows(
     cx: &mut App,
 ) -> Entity<InputState> {
     let placeholder = placeholder.into();
-    cx.new(|cx| InputState::new(window, cx).auto_grow(min_rows, max_rows).placeholder(placeholder))
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .auto_grow(min_rows, max_rows)
+            .placeholder(placeholder)
+    })
 }
 
 /// Multi-line editor for long text (prompts, rules) with a fixed number of rows.
-pub fn text_area(placeholder: impl Into<SharedString>, rows: usize, window: &mut Window, cx: &mut App) -> Entity<InputState> {
+pub fn text_area(
+    placeholder: impl Into<SharedString>,
+    rows: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
     let placeholder = placeholder.into();
-    cx.new(|cx| InputState::new(window, cx).multi_line(true).rows(rows).placeholder(placeholder))
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .multi_line(true)
+            .rows(rows)
+            .placeholder(placeholder)
+    })
 }
 
 /// Renders a single-line input: 40px, raised surface, strong border, accent focus ring.

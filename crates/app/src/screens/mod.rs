@@ -129,19 +129,33 @@ pub fn create(kind: ScreenKind, window: &mut Window, cx: &mut gpui::App) -> AnyV
         ScreenKind::Review => cx.new(|cx| review::ReviewScreen::new(window, cx)).into(),
         ScreenKind::Chat => cx.new(|cx| chat::ChatScreen::new(window, cx)).into(),
         ScreenKind::Board => cx.new(|cx| board::BoardScreen::new(window, cx)).into(),
-        ScreenKind::Timeline => cx.new(|cx| timeline::TimelineScreen::new(window, cx)).into(),
-        ScreenKind::Pipelines => cx.new(|cx| pipelines::PipelinesScreen::new(window, cx)).into(),
+        ScreenKind::Timeline => cx
+            .new(|cx| timeline::TimelineScreen::new(window, cx))
+            .into(),
+        ScreenKind::Pipelines => cx
+            .new(|cx| pipelines::PipelinesScreen::new(window, cx))
+            .into(),
         ScreenKind::Agents => cx.new(|cx| agents::AgentsScreen::new(window, cx)).into(),
         ScreenKind::Memory => cx.new(|cx| memory::MemoryScreen::new(window, cx)).into(),
-        ScreenKind::Policies => cx.new(|cx| policies::PoliciesScreen::new(window, cx)).into(),
-        ScreenKind::Settings => cx.new(|cx| settings::SettingsScreen::new(window, cx)).into(),
+        ScreenKind::Policies => cx
+            .new(|cx| policies::PoliciesScreen::new(window, cx))
+            .into(),
+        ScreenKind::Settings => cx
+            .new(|cx| settings::SettingsScreen::new(window, cx))
+            .into(),
         ScreenKind::Task => cx.new(|cx| task::TaskScreen::new(window, cx)).into(),
     }
 }
 
 /// The root of every screen: a full-size column on the app background.
 pub fn screen() -> Div {
-    div().size_full().flex().flex_col().bg(theme::BG).text_color(theme::TEXT).overflow_hidden()
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .bg(theme::BG)
+        .text_color(theme::TEXT)
+        .overflow_hidden()
 }
 
 /// The scrolling content area under the page header (24px padding, 24px gap).

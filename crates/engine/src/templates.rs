@@ -40,22 +40,47 @@ fn model(config: &Config, hint: &str) -> String {
 }
 
 fn node(id: &str, name: &str, kind: NodeKind, x: f32, y: f32) -> Node {
-    Node { id: id.into(), name: name.into(), kind, x, y }
+    Node {
+        id: id.into(),
+        name: name.into(),
+        kind,
+        x,
+        y,
+    }
 }
 
 fn edge(from: &str, to: &str, port: Option<&str>) -> Edge {
-    Edge { from: from.into(), to: to.into(), port: port.map(String::from) }
+    Edge {
+        from: from.into(),
+        to: to.into(),
+        port: port.map(String::from),
+    }
 }
 
-const GPUI_SKILLS: [&str; 6] =
-    ["gpui-elements", "gpui-styling", "gpui-entities", "gpui-fundamentals", "gpui-patterns", "gpui-troubleshooting"];
+const GPUI_SKILLS: [&str; 6] = [
+    "gpui-elements",
+    "gpui-styling",
+    "gpui-entities",
+    "gpui-fundamentals",
+    "gpui-patterns",
+    "gpui-troubleshooting",
+];
 
 pub fn all(config: &Config) -> Vec<Template> {
     let repo = self_repo(config);
-    let repo_path = repo.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-    let has_nix = repo.as_ref().map(|p| p.join("shell.nix").exists()).unwrap_or(false);
+    let repo_path = repo
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let has_nix = repo
+        .as_ref()
+        .map(|p| p.join("shell.nix").exists())
+        .unwrap_or(false);
     let mut env = std::collections::BTreeMap::new();
-    env.insert("CARGO_TARGET_DIR".to_string(), "~/.cache/pipeliner/cargo-target-agents".to_string());
+    env.insert(
+        "CARGO_TARGET_DIR".to_string(),
+        "~/.cache/pipeliner/cargo-target-agents".to_string(),
+    );
     let app = Workdir {
         id: "app".into(),
         name: "App repo".into(),
@@ -64,13 +89,21 @@ pub fn all(config: &Config) -> Vec<Template> {
         base_branch: "main".into(),
         branch_prefix: "pipeliner/".into(),
         setup: String::new(),
-        shell: if has_nix { "nix-shell shell.nix --run".into() } else { String::new() },
+        shell: if has_nix {
+            "nix-shell shell.nix --run".into()
+        } else {
+            String::new()
+        },
         env,
     };
     let gpui_skills: Vec<String> = GPUI_SKILLS.iter().map(|s| s.to_string()).collect();
     let skills = harness_core::skills::list(config);
     let have = |n: &str| skills.iter().any(|s| s.name == n);
-    let design_skills: Vec<String> = ["ui-ux-pro-max"].iter().filter(|s| have(s)).map(|s| s.to_string()).collect();
+    let design_skills: Vec<String> = ["ui-ux-pro-max"]
+        .iter()
+        .filter(|s| have(s))
+        .map(|s| s.to_string())
+        .collect();
     let gpui_skills: Vec<String> = gpui_skills.into_iter().filter(|s| have(s)).collect();
 
     let design_build = PipelineGraph {
@@ -219,7 +252,13 @@ pub fn all(config: &Config) -> Vec<Template> {
 
     let blank = PipelineGraph {
         workdirs: vec![],
-        nodes: vec![node("source", "Source", NodeKind::Source(SourceNode::default()), 0.0, 0.0)],
+        nodes: vec![node(
+            "source",
+            "Source",
+            NodeKind::Source(SourceNode::default()),
+            0.0,
+            0.0,
+        )],
         edges: vec![],
     };
 
@@ -246,7 +285,11 @@ pub fn all(config: &Config) -> Vec<Template> {
 pub fn instantiate(t: &Template, name: &str) -> Pipeline {
     Pipeline {
         id: new_id(),
-        name: if name.trim().is_empty() { t.name.to_string() } else { name.trim().to_string() },
+        name: if name.trim().is_empty() {
+            t.name.to_string()
+        } else {
+            name.trim().to_string()
+        },
         description: t.description.to_string(),
         color: t.color,
         version: 1,
@@ -263,13 +306,17 @@ mod tests {
     use super::*;
     #[test]
     fn templates_are_valid() {
-        let mut c = Config::default();
-        c.default_model = "nr/cc/claude-opus-5-5".into();
+        let c = Config {
+            default_model: "nr/cc/claude-opus-5-5".into(),
+            ..Config::default()
+        };
         for t in all(&c) {
             crate::pipeline::validate(&t.graph).unwrap_or_else(|e| panic!("{}: {e}", t.name));
         }
         let t = &all(&c)[0];
-        let NodeKind::Decision(d) = &t.graph.node("triage").unwrap().kind else { panic!() };
+        let NodeKind::Decision(d) = &t.graph.node("triage").unwrap().kind else {
+            panic!()
+        };
         assert_eq!(d.model, "nr/cc/claude-haiku-5-5");
     }
 }

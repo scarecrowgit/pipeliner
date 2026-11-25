@@ -22,11 +22,21 @@ pub enum Change {
     Agent(Id),
     Pipeline(Id),
     Run(Id),
-    Task { id: Id, run_id: Option<Id> },
+    Task {
+        id: Id,
+        run_id: Option<Id>,
+    },
     Chat(Id),
-    Message { thread_id: Id, id: Id },
-    Variant { gate_task_id: Id },
-    Decision { task_id: Id },
+    Message {
+        thread_id: Id,
+        id: Id,
+    },
+    Variant {
+        gate_task_id: Id,
+    },
+    Decision {
+        task_id: Id,
+    },
     Artifact,
     Event,
     /// Another process wrote to the database: re-query everything.
@@ -106,7 +116,10 @@ impl Doc for Task {
         ts!(self.created_at)
     }
     fn change(&self) -> Change {
-        Change::Task { id: self.id.clone(), run_id: self.run_id.clone() }
+        Change::Task {
+            id: self.id.clone(),
+            run_id: self.run_id.clone(),
+        }
     }
 }
 impl Doc for Chat {
@@ -133,7 +146,10 @@ impl Doc for Message {
         ts!(self.created_at)
     }
     fn change(&self) -> Change {
-        Change::Message { thread_id: self.thread_id.clone(), id: self.id.clone() }
+        Change::Message {
+            thread_id: self.thread_id.clone(),
+            id: self.id.clone(),
+        }
     }
 }
 impl Doc for Variant {
@@ -148,7 +164,9 @@ impl Doc for Variant {
         self.index as i64
     }
     fn change(&self) -> Change {
-        Change::Variant { gate_task_id: self.gate_task_id.clone() }
+        Change::Variant {
+            gate_task_id: self.gate_task_id.clone(),
+        }
     }
 }
 impl Doc for Decision {
@@ -163,7 +181,9 @@ impl Doc for Decision {
         ts!(self.created_at)
     }
     fn change(&self) -> Change {
-        Change::Decision { task_id: self.task_id.clone() }
+        Change::Decision {
+            task_id: self.task_id.clone(),
+        }
     }
 }
 impl Doc for Artifact {
@@ -224,7 +244,10 @@ impl Store {
              );
              CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
         )?;
-        Ok(Arc::new(Store { conn: Mutex::new(conn), subscribers: Mutex::new(vec![]) }))
+        Ok(Arc::new(Store {
+            conn: Mutex::new(conn),
+            subscribers: Mutex::new(vec![]),
+        }))
     }
 
     /// Receive every change. Dropping the receiver unsubscribes.
@@ -235,7 +258,9 @@ impl Store {
     }
 
     fn notify(&self, change: Change) {
-        self.subscribers.lock().retain(|s| s.try_send(change.clone()).is_ok());
+        self.subscribers
+            .lock()
+            .retain(|s| s.try_send(change.clone()).is_ok());
     }
 
     /// Polls for writes from other processes once a second and emits [`Change::External`].
@@ -245,14 +270,18 @@ impl Store {
             let c = self.conn.lock();
             c.path().map(|p| p.to_string())
         };
-        let Some(path) = path.filter(|p| !p.is_empty()) else { return };
+        let Some(path) = path.filter(|p| !p.is_empty()) else {
+            return;
+        };
         std::thread::Builder::new()
             .name("store-watch".into())
             .spawn(move || {
                 // A separate connection sees other connections' (and processes') commits
                 // through data_version; our own writes also bump it, so compare against the
                 // count of local writes.
-                let Ok(watch) = Connection::open(&path) else { return };
+                let Ok(watch) = Connection::open(&path) else {
+                    return;
+                };
                 let mut last: i64 = -1;
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -285,9 +314,11 @@ impl Store {
     fn get<T: Doc>(&self, id: &str) -> Option<T> {
         let c = self.conn.lock();
         let data: Option<String> = c
-            .query_row("SELECT data FROM docs WHERE kind=?1 AND id=?2", params![T::KIND, id], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT data FROM docs WHERE kind=?1 AND id=?2",
+                params![T::KIND, id],
+                |r| r.get(0),
+            )
             .optional()
             .ok()
             .flatten();
@@ -295,7 +326,10 @@ impl Store {
     }
 
     fn all<T: Doc>(&self) -> Vec<T> {
-        self.query::<T>("SELECT data FROM docs WHERE kind=?1 ORDER BY ts", params![T::KIND])
+        self.query::<T>(
+            "SELECT data FROM docs WHERE kind=?1 ORDER BY ts",
+            params![T::KIND],
+        )
     }
 
     fn by_parent<T: Doc>(&self, parent: &str) -> Vec<T> {
@@ -307,16 +341,24 @@ impl Store {
 
     fn query<T: Doc>(&self, sql: &str, p: impl rusqlite::Params) -> Vec<T> {
         let c = self.conn.lock();
-        let Ok(mut stmt) = c.prepare_cached(sql) else { return vec![] };
+        let Ok(mut stmt) = c.prepare_cached(sql) else {
+            return vec![];
+        };
         let rows = stmt.query_map(p, |r| r.get::<_, String>(0));
         match rows {
-            Ok(rows) => rows.filter_map(|r| r.ok()).filter_map(|d| serde_json::from_str(&d).ok()).collect(),
+            Ok(rows) => rows
+                .filter_map(|r| r.ok())
+                .filter_map(|d| serde_json::from_str(&d).ok())
+                .collect(),
             Err(_) => vec![],
         }
     }
 
     fn delete<T: Doc>(&self, id: &str, change: Change) -> Result<()> {
-        self.conn.lock().execute("DELETE FROM docs WHERE kind=?1 AND id=?2", params![T::KIND, id])?;
+        self.conn.lock().execute(
+            "DELETE FROM docs WHERE kind=?1 AND id=?2",
+            params![T::KIND, id],
+        )?;
         self.notify(change);
         Ok(())
     }
@@ -330,7 +372,9 @@ impl Store {
         self.get(id)
     }
     pub fn agent_by_name(&self, name: &str) -> Option<AgentDef> {
-        self.agents().into_iter().find(|a| a.name.eq_ignore_ascii_case(name))
+        self.agents()
+            .into_iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
     }
     pub fn put_agent(&self, a: &AgentDef) -> Result<()> {
         self.put(a)
@@ -342,7 +386,10 @@ impl Store {
     // ---- pipelines -------------------------------------------------------------
 
     pub fn pipelines(&self) -> Vec<Pipeline> {
-        self.all::<Pipeline>().into_iter().filter(|p| !p.archived).collect()
+        self.all::<Pipeline>()
+            .into_iter()
+            .filter(|p| !p.archived)
+            .collect()
     }
     pub fn pipeline(&self, id: &str) -> Option<Pipeline> {
         self.get(id)
@@ -384,8 +431,12 @@ impl Store {
             "INSERT INTO counters(name,value) VALUES (?1,1) ON CONFLICT(name) DO UPDATE SET value=value+1",
             params![counter],
         );
-        c.query_row("SELECT value FROM counters WHERE name=?1", params![counter], |r| r.get::<_, i64>(0))
-            .unwrap_or(1) as u64
+        c.query_row(
+            "SELECT value FROM counters WHERE name=?1",
+            params![counter],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(1) as u64
     }
 
     // ---- tasks -----------------------------------------------------------------
@@ -400,7 +451,10 @@ impl Store {
         self.get(id)
     }
     pub fn children(&self, parent_id: &str) -> Vec<Task> {
-        self.tasks().into_iter().filter(|t| t.parent_id.as_deref() == Some(parent_id)).collect()
+        self.tasks()
+            .into_iter()
+            .filter(|t| t.parent_id.as_deref() == Some(parent_id))
+            .collect()
     }
     pub fn put_task(&self, t: &Task) -> Result<()> {
         self.put(t)
@@ -415,14 +469,21 @@ impl Store {
     }
     /// Tasks waiting for you (review queue).
     pub fn waiting(&self) -> Vec<Task> {
-        self.tasks().into_iter().filter(|t| t.status == Status::Waiting).collect()
+        self.tasks()
+            .into_iter()
+            .filter(|t| t.status == Status::Waiting)
+            .collect()
     }
 
     // ---- chats & messages ------------------------------------------------------
 
     pub fn chats(&self) -> Vec<Chat> {
-        let mut v: Vec<Chat> = self.all::<Chat>().into_iter().filter(|c| !c.archived).collect();
-        v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        let mut v: Vec<Chat> = self
+            .all::<Chat>()
+            .into_iter()
+            .filter(|c| !c.archived)
+            .collect();
+        v.sort_by_key(|c| std::cmp::Reverse(c.updated_at));
         v
     }
     pub fn chat(&self, id: &str) -> Option<Chat> {
@@ -472,7 +533,10 @@ impl Store {
     }
     /// The oldest unconsumed decision for a task, marking it consumed.
     pub fn take_decision(&self, task_id: &str) -> Option<Decision> {
-        let mut d = self.decisions_for(task_id).into_iter().find(|d| !d.consumed)?;
+        let mut d = self
+            .decisions_for(task_id)
+            .into_iter()
+            .find(|d| !d.consumed)?;
         d.consumed = true;
         self.put(&d).ok()?;
         Some(d)
@@ -489,7 +553,13 @@ impl Store {
 
     // ---- event log -------------------------------------------------------------
 
-    pub fn log(&self, kind: &str, run_id: Option<&str>, task_id: Option<&str>, text: impl Into<String>) {
+    pub fn log(
+        &self,
+        kind: &str,
+        run_id: Option<&str>,
+        task_id: Option<&str>,
+        text: impl Into<String>,
+    ) {
         let text = text.into();
         let _ = self.conn.lock().execute(
             "INSERT INTO events(ts,kind,run_id,task_id,text) VALUES (?1,?2,?3,?4,?5)",
@@ -501,23 +571,26 @@ impl Store {
     /// Most recent events first.
     pub fn events(&self, limit: usize) -> Vec<Event> {
         let c = self.conn.lock();
-        let Ok(mut stmt) =
-            c.prepare("SELECT seq,ts,kind,run_id,task_id,text FROM events ORDER BY seq DESC LIMIT ?1")
-        else {
+        let Ok(mut stmt) = c.prepare(
+            "SELECT seq,ts,kind,run_id,task_id,text FROM events ORDER BY seq DESC LIMIT ?1",
+        ) else {
             return vec![];
         };
         let rows = stmt.query_map(params![limit as i64], |r| {
             let ts: String = r.get(1)?;
             Ok(Event {
                 seq: r.get(0)?,
-                ts: chrono::DateTime::parse_from_rfc3339(&ts).map(|d| d.to_utc()).unwrap_or_else(|_| now()),
+                ts: chrono::DateTime::parse_from_rfc3339(&ts)
+                    .map(|d| d.to_utc())
+                    .unwrap_or_else(|_| now()),
                 kind: r.get(2)?,
                 run_id: r.get(3)?,
                 task_id: r.get(4)?,
                 text: r.get(5)?,
             })
         });
-        rows.map(|r| r.filter_map(|e| e.ok()).collect()).unwrap_or_default()
+        rows.map(|r| r.filter_map(|e| e.ok()).collect())
+            .unwrap_or_default()
     }
 
     pub fn emit(&self, change: Change) {

@@ -63,7 +63,13 @@ impl Engine {
         for t in self.store.tasks() {
             if t.status.is_active() {
                 // Gates of active runs are resumed by their run thread.
-                if t.kind == TaskKind::Gate && t.run_id.as_deref().and_then(|r| self.store.run(r)).map(|r| r.status.is_active()).unwrap_or(false) {
+                if t.kind == TaskKind::Gate
+                    && t.run_id
+                        .as_deref()
+                        .and_then(|r| self.store.run(r))
+                        .map(|r| r.status.is_active())
+                        .unwrap_or(false)
+                {
                     continue;
                 }
                 let _ = self.store.update_task(&t.id, |t| {
@@ -138,7 +144,12 @@ impl Engine {
             updated_at: now(),
         };
         self.store.put_chat(&c)?;
-        self.store.log("chat.created", None, None, format!("New {} chat", mode.label()));
+        self.store.log(
+            "chat.created",
+            None,
+            None,
+            format!("New {} chat", mode.label()),
+        );
         Ok(c)
     }
 
@@ -169,7 +180,8 @@ impl Engine {
                 self.cancel_task(&t.id)?;
             }
         }
-        self.store.log("run.cancelled", Some(run_id), None, "Run cancelled");
+        self.store
+            .log("run.cancelled", Some(run_id), None, "Run cancelled");
         Ok(())
     }
 
@@ -194,7 +206,12 @@ impl Engine {
             t.status = Status::Cancelled;
             t.summary = "Retried".into();
         })?;
-        self.store.log("task.retry", Some(&run_id), Some(task_id), format!("Retrying {}", t.title));
+        self.store.log(
+            "task.retry",
+            Some(&run_id),
+            Some(task_id),
+            format!("Retrying {}", t.title),
+        );
         self.spawn_run_thread(run_id);
         Ok(())
     }
@@ -208,13 +225,23 @@ impl Engine {
         self.store.put_message(&m)?;
         let t = self.store.task(task_id);
         let title = t.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-        self.store.log("task.steer", t.as_ref().and_then(|t| t.run_id.as_deref()), Some(task_id), format!("You steered {title}"));
+        self.store.log(
+            "task.steer",
+            t.as_ref().and_then(|t| t.run_id.as_deref()),
+            Some(task_id),
+            format!("You steered {title}"),
+        );
         Ok(())
     }
 
     /// Cancels a task and every sub-task it spawned.
     pub fn cancel_task(&self, task_id: &str) -> Result<()> {
-        if self.store.task(task_id).map(|t| t.status.is_active()).unwrap_or(false) {
+        if self
+            .store
+            .task(task_id)
+            .map(|t| t.status.is_active())
+            .unwrap_or(false)
+        {
             self.cancel_flag(task_id).store(true, Ordering::SeqCst);
         }
         self.store.update_task(task_id, |t| {
@@ -243,11 +270,23 @@ impl Engine {
         if t.status != Status::Waiting {
             bail!("this item is no longer waiting for you");
         }
-        if self.store.decisions_for(task_id).iter().any(|d| !d.consumed) {
+        if self
+            .store
+            .decisions_for(task_id)
+            .iter()
+            .any(|d| !d.consumed)
+        {
             // Already decided (double click); the run will pick it up.
             return Ok(());
         }
-        let d = Decision { id: new_id(), task_id: task_id.into(), run_id: t.run_id.clone(), kind: kind.clone(), created_at: now(), consumed: false };
+        let d = Decision {
+            id: new_id(),
+            task_id: task_id.into(),
+            run_id: t.run_id.clone(),
+            kind: kind.clone(),
+            created_at: now(),
+            consumed: false,
+        };
         self.store.put_decision(&d)?;
         let what = match &kind {
             DecisionKind::Pick { index } => format!("Picked {}", variant_letter(*index)),
@@ -256,7 +295,12 @@ impl Engine {
             DecisionKind::Reject { .. } => "Rejected".into(),
             DecisionKind::Reply { .. } => "Replied".into(),
         };
-        self.store.log("decision", t.run_id.as_deref(), Some(task_id), format!("{what} · {}", t.title));
+        self.store.log(
+            "decision",
+            t.run_id.as_deref(),
+            Some(task_id),
+            format!("{what} · {}", t.title),
+        );
         // Runs waiting in this process are polling; a run whose thread is gone resumes now.
         if let Some(run_id) = t.run_id {
             self.spawn_run_thread(run_id);
@@ -273,13 +317,21 @@ impl Engine {
     pub fn create_pipeline(&self, template: &Template, name: &str) -> Result<Pipeline> {
         let p = templates::instantiate(template, name);
         self.store.put_pipeline(&p)?;
-        self.store.log("pipeline.created", None, None, format!("Pipeline {} created", p.name));
+        self.store.log(
+            "pipeline.created",
+            None,
+            None,
+            format!("Pipeline {} created", p.name),
+        );
         Ok(p)
     }
 
     /// Saves edits as the pipeline's draft (runs keep using the live version).
     pub fn save_draft(&self, pipeline_id: &str, graph: PipelineGraph) -> Result<()> {
-        let mut p = self.store.pipeline(pipeline_id).context("pipeline not found")?;
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
         p.draft = if graph == p.graph { None } else { Some(graph) };
         p.updated_at = now();
         self.store.put_pipeline(&p)
@@ -287,19 +339,32 @@ impl Engine {
 
     /// Makes the draft live as a new version.
     pub fn deploy(&self, pipeline_id: &str) -> Result<u32> {
-        let mut p = self.store.pipeline(pipeline_id).context("pipeline not found")?;
-        let Some(d) = p.draft.take() else { return Ok(p.version) };
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
+        let Some(d) = p.draft.take() else {
+            return Ok(p.version);
+        };
         pipeline::validate(&d)?;
         p.graph = d;
         p.version += 1;
         p.updated_at = now();
         self.store.put_pipeline(&p)?;
-        self.store.log("pipeline.deployed", None, None, format!("{} v{} deployed", p.name, p.version));
+        self.store.log(
+            "pipeline.deployed",
+            None,
+            None,
+            format!("{} v{} deployed", p.name, p.version),
+        );
         Ok(p.version)
     }
 
     pub fn discard_draft(&self, pipeline_id: &str) -> Result<()> {
-        let mut p = self.store.pipeline(pipeline_id).context("pipeline not found")?;
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
         p.draft = None;
         self.store.put_pipeline(&p)
     }
@@ -314,7 +379,12 @@ impl Engine {
 
     /// Turns an approved orchestrator plan into a pipeline: one agent step per plan step,
     /// working in `cwd` (a git repo gets worktrees), ending with a review gate.
-    pub fn pipeline_from_plan(&self, name: &str, steps: &[String], cwd: Option<&str>) -> Result<Pipeline> {
+    pub fn pipeline_from_plan(
+        &self,
+        name: &str,
+        steps: &[String],
+        cwd: Option<&str>,
+    ) -> Result<Pipeline> {
         let mut g = PipelineGraph::default();
         let wd = cwd.filter(|c| !c.is_empty()).map(|c| {
             let path = harness_core::config::expand_tilde(c);
@@ -323,7 +393,8 @@ impl Engine {
                 name: "Work".into(),
                 path: c.to_string(),
                 worktree: git::is_repo(&path),
-                base_branch: git::git(&path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "main".into()),
+                base_branch: git::git(&path, &["rev-parse", "--abbrev-ref", "HEAD"])
+                    .unwrap_or_else(|_| "main".into()),
                 branch_prefix: "pipeliner/".into(),
                 setup: String::new(),
                 shell: String::new(),
@@ -333,25 +404,61 @@ impl Engine {
         if let Some(w) = &wd {
             g.workdirs.push(w.clone());
         }
-        g.nodes.push(Node { id: "source".into(), name: "Task".into(), kind: NodeKind::Source(SourceNode::default()), x: 0.0, y: 0.0 });
+        g.nodes.push(Node {
+            id: "source".into(),
+            name: "Task".into(),
+            kind: NodeKind::Source(SourceNode::default()),
+            x: 0.0,
+            y: 0.0,
+        });
         let mut prev = "source".to_string();
         for (i, step) in steps.iter().enumerate() {
             let id = format!("step{}", i + 1);
-            let title: String = step.split(['.', ':', '\n']).next().unwrap_or(step).chars().take(40).collect();
+            let title: String = step
+                .split(['.', ':', '\n'])
+                .next()
+                .unwrap_or(step)
+                .chars()
+                .take(40)
+                .collect();
             g.nodes.push(Node {
                 id: id.clone(),
                 name: title,
-                kind: NodeKind::Agent(AgentNode { instructions: step.clone(), workdir: wd.as_ref().map(|w| w.id.clone()), ..Default::default() }),
+                kind: NodeKind::Agent(AgentNode {
+                    instructions: step.clone(),
+                    workdir: wd.as_ref().map(|w| w.id.clone()),
+                    ..Default::default()
+                }),
                 x: 0.0,
                 y: (i + 1) as f32,
             });
-            g.edges.push(Edge { from: prev.clone(), to: id.clone(), port: None });
+            g.edges.push(Edge {
+                from: prev.clone(),
+                to: id.clone(),
+                port: None,
+            });
             prev = id;
         }
-        g.nodes.push(Node { id: "review".into(), name: "Review".into(), kind: NodeKind::Gate(GateNode::default()), x: 0.0, y: (steps.len() + 1) as f32 });
-        g.edges.push(Edge { from: prev, to: "review".into(), port: None });
+        g.nodes.push(Node {
+            id: "review".into(),
+            name: "Review".into(),
+            kind: NodeKind::Gate(GateNode::default()),
+            x: 0.0,
+            y: (steps.len() + 1) as f32,
+        });
+        g.edges.push(Edge {
+            from: prev,
+            to: "review".into(),
+            port: None,
+        });
         pipeline::validate(&g)?;
-        let t = Template { id: "plan", name: "Plan", description: "Saved from an orchestrator plan.", graph: g, color: 0xa78bfa };
+        let t = Template {
+            id: "plan",
+            name: "Plan",
+            description: "Saved from an orchestrator plan.",
+            graph: g,
+            color: 0xa78bfa,
+        };
         self.create_pipeline(&t, name)
     }
 
@@ -365,42 +472,48 @@ impl Engine {
             }
         }
         let engine = self.clone();
-        let spawned = std::thread::Builder::new().name(format!("run-{run_id}")).spawn({
-            let run_id = run_id.clone();
-            move || {
-                struct Guard(Engine, Id);
-                impl Drop for Guard {
-                    fn drop(&mut self) {
-                        self.0.active_runs.lock().remove(&self.1);
-                        // A retry/decision may have arrived while this thread was exiting.
-                        if let Some(r) = self.0.store.run(&self.1) {
-                            if r.status == Status::Running && !std::thread::panicking() {
-                                self.0.spawn_run_thread(self.1.clone());
+        let spawned = std::thread::Builder::new()
+            .name(format!("run-{run_id}"))
+            .spawn({
+                let run_id = run_id.clone();
+                move || {
+                    struct Guard(Engine, Id);
+                    impl Drop for Guard {
+                        fn drop(&mut self) {
+                            self.0.active_runs.lock().remove(&self.1);
+                            // A retry/decision may have arrived while this thread was exiting.
+                            if let Some(r) = self.0.store.run(&self.1) {
+                                if r.status == Status::Running && !std::thread::panicking() {
+                                    self.0.spawn_run_thread(self.1.clone());
+                                }
                             }
                         }
                     }
+                    let _guard = Guard(engine.clone(), run_id.clone());
+                    if let Err(e) = pipeline::drive(&engine, &run_id) {
+                        let msg = format!("{e:#}");
+                        let _ = engine.store.update_run(&run_id, |r| {
+                            if r.status.is_active() {
+                                r.status = Status::Failed;
+                                r.error = Some(msg.clone());
+                                r.finished_at = Some(now());
+                            }
+                        });
+                        engine.store.log("run.failed", Some(&run_id), None, msg);
+                    }
                 }
-                let _guard = Guard(engine.clone(), run_id.clone());
-                if let Err(e) = pipeline::drive(&engine, &run_id) {
-                    let msg = format!("{e:#}");
-                    let _ = engine.store.update_run(&run_id, |r| {
-                        if r.status.is_active() {
-                            r.status = Status::Failed;
-                            r.error = Some(msg.clone());
-                            r.finished_at = Some(now());
-                        }
-                    });
-                    engine.store.log("run.failed", Some(&run_id), None, msg);
-                }
-            }
-        });
+            });
         if spawned.is_err() {
             self.active_runs.lock().remove(&run_id);
         }
     }
 
     pub(crate) fn cancel_flag(&self, task_id: &str) -> Arc<AtomicBool> {
-        self.cancels.lock().entry(task_id.to_string()).or_insert_with(|| Arc::new(AtomicBool::new(false))).clone()
+        self.cancels
+            .lock()
+            .entry(task_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
     }
 
     pub(crate) fn drop_cancel_flag(&self, task_id: &str) {
@@ -420,7 +533,10 @@ pub struct Semaphore {
 
 impl Semaphore {
     pub fn new(n: usize) -> Self {
-        Semaphore { count: Mutex::new(n), cv: parking_lot::Condvar::new() }
+        Semaphore {
+            count: Mutex::new(n),
+            cv: parking_lot::Condvar::new(),
+        }
     }
     fn acquire(self: &Arc<Self>) -> SlotGuard {
         let mut c = self.count.lock();
@@ -439,4 +555,3 @@ impl Drop for SlotGuard {
         self.0.cv.notify_one();
     }
 }
-

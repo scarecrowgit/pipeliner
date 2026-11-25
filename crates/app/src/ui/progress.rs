@@ -18,7 +18,10 @@ impl BarMemory {
     fn current(&self) -> (f32, bool) {
         let dur = theme::DUR_OVERLAY.as_secs_f32() * 1.5;
         let t = (self.start.elapsed().as_secs_f32() / dur).min(1.0);
-        (self.from + (self.to - self.from) * theme::ease_out(t), t >= 1.0)
+        (
+            self.from + (self.to - self.from) * theme::ease_out(t),
+            t >= 1.0,
+        )
     }
 }
 
@@ -40,7 +43,11 @@ impl ProgressBar {
     pub fn new(id: impl Into<ElementId>, value: f64) -> Self {
         ProgressBar {
             id: id.into(),
-            value: if value.is_finite() { value.clamp(0.0, 1.0) as f32 } else { 0.0 },
+            value: if value.is_finite() {
+                value.clamp(0.0, 1.0) as f32
+            } else {
+                0.0
+            },
             color: None,
             height: px(4.),
             auto_tone: false,
@@ -104,7 +111,13 @@ impl RenderOnce for ProgressBar {
             .rounded(theme::RADIUS_FULL)
             .bg(theme::LINE)
             .overflow_hidden()
-            .child(div().h_full().w(relative(shown)).rounded(theme::RADIUS_FULL).bg(color))
+            .child(
+                div()
+                    .h_full()
+                    .w(relative(shown))
+                    .rounded(theme::RADIUS_FULL)
+                    .bg(color),
+            )
     }
 }
 
@@ -119,8 +132,19 @@ pub struct MeterRow {
 }
 
 impl MeterRow {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, fraction: f64, value_text: impl Into<SharedString>) -> Self {
-        MeterRow { id: id.into(), label: label.into(), value: fraction, value_text: value_text.into(), color: None }
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        fraction: f64,
+        value_text: impl Into<SharedString>,
+    ) -> Self {
+        MeterRow {
+            id: id.into(),
+            label: label.into(),
+            value: fraction,
+            value_text: value_text.into(),
+            color: None,
+        }
     }
     pub fn color(mut self, c: Hsla) -> Self {
         self.color = Some(c);
@@ -139,8 +163,24 @@ impl RenderOnce for MeterRow {
             .items_center()
             .gap(theme::S4)
             .h(px(30.))
-            .child(div().w(px(150.)).flex_none().text_body().fg_secondary().truncate().child(self.label))
+            .child(
+                div()
+                    .w(px(150.))
+                    .flex_none()
+                    .text_body()
+                    .fg_secondary()
+                    .truncate()
+                    .child(self.label),
+            )
             .child(div().flex_1().child(bar))
-            .child(div().w(px(64.)).flex_none().text_mono().fg().text_right().child(self.value_text))
+            .child(
+                div()
+                    .w(px(64.))
+                    .flex_none()
+                    .text_mono()
+                    .fg()
+                    .text_right()
+                    .child(self.value_text),
+            )
     }
 }

@@ -8,7 +8,8 @@ mod theme;
 mod ui;
 
 use gpui::{
-    px, size, App, AppContext as _, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
+    px, size, App, AppContext as _, Application, Bounds, TitlebarOptions, WindowBounds,
+    WindowOptions,
 };
 use gpui_component::Root;
 use harness_core::{Config, Store};

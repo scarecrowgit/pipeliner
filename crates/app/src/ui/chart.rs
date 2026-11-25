@@ -79,7 +79,12 @@ impl BarChart {
         self.limit = limit.filter(|l| *l > 0.0).map(|l| (l, label.into()));
         self
     }
-    pub fn x_labels(mut self, start: impl Into<SharedString>, mid: impl Into<SharedString>, end: impl Into<SharedString>) -> Self {
+    pub fn x_labels(
+        mut self,
+        start: impl Into<SharedString>,
+        mid: impl Into<SharedString>,
+        end: impl Into<SharedString>,
+    ) -> Self {
         self.x_labels = Some([start.into(), mid.into(), end.into()]);
         self
     }
@@ -112,9 +117,33 @@ impl RenderOnce for BarChart {
             .flex_1()
             .h(self.height)
             // grid
-            .child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(theme::LINE_SUBTLE))
-            .child(div().absolute().top(relative(0.5)).left_0().right_0().h(px(1.)).bg(theme::LINE_SUBTLE))
-            .child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(theme::LINE))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(theme::LINE_SUBTLE),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(relative(0.5))
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(theme::LINE_SUBTLE),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(theme::LINE),
+            )
             // bars
             .child(
                 div()
@@ -141,7 +170,11 @@ impl RenderOnce for BarChart {
                             .rounded_t(px(2.))
                             .bg(color)
                             .hover(|s| s.opacity(0.8))
-                            .when_some(tip, |d, t| d.tooltip(move |window, cx| Tooltip::new(t.clone()).build(window, cx)))
+                            .when_some(tip, |d, t| {
+                                d.tooltip(move |window, cx| {
+                                    Tooltip::new(t.clone()).build(window, cx)
+                                })
+                            })
                             .with_animation(
                                 ElementId::NamedInteger(format!("{id}-grow").into(), i as u64),
                                 Animation::new(theme::DUR_OVERLAY * 2).with_easing(theme::ease_out),
@@ -228,7 +261,14 @@ pub struct Sparkline {
 
 impl Sparkline {
     pub fn new(id: impl Into<ElementId>, values: Vec<f64>) -> Self {
-        Sparkline { id: id.into(), values, color: theme::ACCENT, height: px(120.), stroke: px(1.5), zero_based: true }
+        Sparkline {
+            id: id.into(),
+            values,
+            color: theme::ACCENT,
+            height: px(120.),
+            stroke: px(1.5),
+            zero_based: true,
+        }
     }
     pub fn color(mut self, c: Hsla) -> Self {
         self.color = c;
@@ -262,8 +302,16 @@ impl RenderOnce for Sparkline {
                             return;
                         }
                         let max = values.iter().cloned().fold(f64::MIN, f64::max);
-                        let min = if zero { 0.0 } else { values.iter().cloned().fold(f64::MAX, f64::min) };
-                        let span = if (max - min).abs() < 1e-12 { 1.0 } else { max - min };
+                        let min = if zero {
+                            0.0
+                        } else {
+                            values.iter().cloned().fold(f64::MAX, f64::min)
+                        };
+                        let span = if (max - min).abs() < 1e-12 {
+                            1.0
+                        } else {
+                            max - min
+                        };
                         let inset = stroke;
                         let h = bounds.size.height - inset * 2.;
                         let w = bounds.size.width;
@@ -285,8 +333,10 @@ impl RenderOnce for Sparkline {
                 )
                 .size_full(),
             )
-            .with_animation(self.id, Animation::new(theme::DUR_OVERLAY * 2).with_easing(theme::ease_out), |d, t| {
-                d.opacity(t)
-            })
+            .with_animation(
+                self.id,
+                Animation::new(theme::DUR_OVERLAY * 2).with_easing(theme::ease_out),
+                |d, t| d.opacity(t),
+            )
     }
 }

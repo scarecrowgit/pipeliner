@@ -46,7 +46,10 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
         let p = store
             .pipelines()
             .into_iter()
-            .find(|p| p.name.eq_ignore_ascii_case(name) || crate::git::slug(&p.name) == crate::git::slug(name))
+            .find(|p| {
+                p.name.eq_ignore_ascii_case(name)
+                    || crate::git::slug(&p.name) == crate::git::slug(name)
+            })
             .with_context(|| format!("no pipeline named `{name}`"))?;
         return start_pipeline(engine, &mut chat, &p.id, input);
     }
@@ -63,7 +66,10 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
     store.put_chat(&chat)?;
 
     if chat.mode == ChatMode::Pipeline {
-        let pid = chat.pipeline_id.clone().context("pick a pipeline for this chat")?;
+        let pid = chat
+            .pipeline_id
+            .clone()
+            .context("pick a pipeline for this chat")?;
         return start_pipeline(engine, &mut chat, &pid, text);
     }
 
@@ -78,33 +84,35 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
     maybe_title(engine, &chat, text);
     let engine = engine.clone();
     let chat_id = chat_id.to_string();
-    std::thread::Builder::new().name(format!("chat-{chat_id}")).spawn(move || {
-        // Chats are interactive: they don't take pipeline agent slots.
-        let res = reply(&engine, &chat_id, &task_id);
-        engine.drop_cancel_flag(&task_id);
-        let _ = engine.store().update_task(&task_id, |t| {
-            if t.status == Status::Cancelled {
-                return;
-            }
-            match &res {
-                Ok(s) => {
-                    t.status = Status::Done;
-                    t.summary = s.chars().take(300).collect();
+    std::thread::Builder::new()
+        .name(format!("chat-{chat_id}"))
+        .spawn(move || {
+            // Chats are interactive: they don't take pipeline agent slots.
+            let res = reply(&engine, &chat_id, &task_id);
+            engine.drop_cancel_flag(&task_id);
+            let _ = engine.store().update_task(&task_id, |t| {
+                if t.status == Status::Cancelled {
+                    return;
                 }
-                Err(e) => {
-                    t.status = Status::Failed;
-                    t.error = Some(format!("{e:#}"));
+                match &res {
+                    Ok(s) => {
+                        t.status = Status::Done;
+                        t.summary = s.chars().take(300).collect();
+                    }
+                    Err(e) => {
+                        t.status = Status::Failed;
+                        t.error = Some(format!("{e:#}"));
+                    }
+                }
+                t.finished_at = Some(now());
+            });
+            if let Err(e) = res {
+                if format!("{e:#}") != "cancelled" {
+                    let m = Message::new(&chat_id, Role::System, format!("Failed: {e:#}"));
+                    let _ = engine.store().put_message(&m);
                 }
             }
-            t.finished_at = Some(now());
-        });
-        if let Err(e) = res {
-            if format!("{e:#}") != "cancelled" {
-                let m = Message::new(&chat_id, Role::System, format!("Failed: {e:#}"));
-                let _ = engine.store().put_message(&m);
-            }
-        }
-    })?;
+        })?;
     Ok(())
 }
 
@@ -113,8 +121,14 @@ fn start_pipeline(engine: &Engine, chat: &mut Chat, pipeline_id: &str, input: &s
         bail!("describe the task after the pipeline name");
     }
     let run = engine.start_run(pipeline_id, input, Some(&chat.id))?;
-    let mut m = Message::new(&chat.id, Role::System, format!("Started run #{} · {}", run.number, run.title));
-    m.card = Some(Card::Run { run_id: run.id.clone() });
+    let mut m = Message::new(
+        &chat.id,
+        Role::System,
+        format!("Started run #{} · {}", run.number, run.title),
+    );
+    m.card = Some(Card::Run {
+        run_id: run.id.clone(),
+    });
     engine.store().put_message(&m)?;
     if chat.title == "New chat" {
         chat.title = run.title.chars().take(60).collect();
@@ -150,7 +164,9 @@ fn ensure_task(engine: &Engine, chat: &mut Chat) -> Result<Id> {
 
 fn actor_for(chat: &Chat, agent: Option<&AgentDef>) -> String {
     match chat.mode {
-        ChatMode::Agent => agent.map(|a| a.name.clone()).unwrap_or_else(|| "Agent".into()),
+        ChatMode::Agent => agent
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "Agent".into()),
         ChatMode::Orchestrator => "Orchestrator".into(),
         _ => Config::short_model(&chat.model),
     }
@@ -158,7 +174,11 @@ fn actor_for(chat: &Chat, agent: Option<&AgentDef>) -> String {
 
 fn model_for(engine: &Engine, chat: &Chat) -> String {
     if chat.mode == ChatMode::Agent {
-        if let Some(a) = chat.agent_id.as_deref().and_then(|a| engine.store().agent(a)) {
+        if let Some(a) = chat
+            .agent_id
+            .as_deref()
+            .and_then(|a| engine.store().agent(a))
+        {
             return a.model;
         }
     }
@@ -179,7 +199,13 @@ fn maybe_title(engine: &Engine, chat: &Chat, text: &str) {
     let text = text.chars().take(1500).collect::<String>();
     std::thread::spawn(move || {
         let config = engine.config();
-        let fallback: String = text.lines().next().unwrap_or("Chat").chars().take(48).collect();
+        let fallback: String = text
+            .lines()
+            .next()
+            .unwrap_or("Chat")
+            .chars()
+            .take(48)
+            .collect();
         let title = config
             .resolve(config.fast())
             .and_then(|(p, m)| {
@@ -203,7 +229,9 @@ fn maybe_title(engine: &Engine, chat: &Chat, text: &str) {
 /// History of the chat as model messages (text only), excluding the newest user turn.
 fn history(store: &Store, chat_id: &str) -> (Vec<Msg>, String) {
     let mut msgs = store.messages(chat_id);
-    msgs.retain(|m| !m.partial && matches!(m.role, Role::User | Role::Assistant) && !m.content.trim().is_empty());
+    msgs.retain(|m| {
+        !m.partial && matches!(m.role, Role::User | Role::Assistant) && !m.content.trim().is_empty()
+    });
     let last_user = msgs.iter().rposition(|m| m.role == Role::User);
     let mut out = vec![];
     let mut latest = String::new();
@@ -214,7 +242,10 @@ fn history(store: &Store, chat_id: &str) -> (Vec<Msg>, String) {
         }
         out.push(match m.role {
             Role::User => Msg::User(m.content.clone()),
-            _ => Msg::Assistant { content: m.content.clone(), tool_calls: vec![] },
+            _ => Msg::Assistant {
+                content: m.content.clone(),
+                tool_calls: vec![],
+            },
         });
     }
     (out, latest)
@@ -225,10 +256,18 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let chat = store.chat(chat_id).context("chat not found")?;
     let config = engine.config();
     let (hist, latest) = history(&store, chat_id);
-    let cwd = chat.cwd.as_ref().map(|c| harness_core::config::expand_tilde(c)).filter(|p| p.is_dir());
+    let cwd = chat
+        .cwd
+        .as_ref()
+        .map(|c| harness_core::config::expand_tilde(c))
+        .filter(|p| p.is_dir());
     let cancel = engine.cancel_flag(task_id);
 
-    let mut stack = Stack { rules: config.rules.clone(), message: latest, ..Default::default() };
+    let mut stack = Stack {
+        rules: config.rules.clone(),
+        message: latest,
+        ..Default::default()
+    };
     let mut tool_ctx = ToolContext {
         cwd: cwd.clone(),
         shell: shell_for(cwd.as_deref()),
@@ -254,7 +293,11 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
             }
         }
         ChatMode::Agent => {
-            let a = chat.agent_id.as_deref().and_then(|a| store.agent(a)).context("pick an agent for this chat")?;
+            let a = chat
+                .agent_id
+                .as_deref()
+                .and_then(|a| store.agent(a))
+                .context("pick an agent for this chat")?;
             stack.role = a.role.clone();
             stack.skills = a.skills.clone();
             stack.skills_on_demand = a.skills_on_demand.clone();
@@ -300,7 +343,15 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let mut handler = |run: &AgentRun, call: &llm::Call, args: &Value| -> Option<Handled> {
         match call.name.as_str() {
             "propose_plan" => Some(propose_plan(run, args)),
-            "delegate" => Some(delegate(run, args, &run.model, "Worker", DELEGATE_ROLE, &[], 60)),
+            "delegate" => Some(delegate(
+                run,
+                args,
+                &run.model,
+                "Worker",
+                DELEGATE_ROLE,
+                &[],
+                60,
+            )),
             _ => None,
         }
     };
@@ -327,13 +378,22 @@ and reply with a short report: what you changed (files), how you checked it, any
 
 fn propose_plan(run: &AgentRun, args: &Value) -> Handled {
     let store = run.engine.store();
-    let steps: Vec<String> =
-        args["steps"].as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect()).unwrap_or_default();
+    let steps: Vec<String> = args["steps"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     if steps.is_empty() {
         return Handled::Continue("Error: steps is empty".into());
     }
     let mut m = Message::new(&run.thread_id, Role::System, "Plan ready for your approval");
-    m.card = Some(Card::Plan { task_id: run.task_id.clone(), steps: steps.clone() });
+    m.card = Some(Card::Plan {
+        task_id: run.task_id.clone(),
+        steps: steps.clone(),
+    });
     let _ = store.put_message(&m);
     // Stale decisions (e.g. a double click on an earlier plan) must not answer this one.
     while store.take_decision(&run.task_id).is_some() {}
@@ -341,7 +401,12 @@ fn propose_plan(run: &AgentRun, args: &Value) -> Handled {
         t.status = Status::Waiting;
         t.summary = "Plan waiting for your approval".into();
     });
-    store.log("plan.proposed", None, Some(&run.task_id), format!("Plan with {} steps waiting for you", steps.len()));
+    store.log(
+        "plan.proposed",
+        None,
+        Some(&run.task_id),
+        format!("Plan with {} steps waiting for you", steps.len()),
+    );
     let cancel = run.tools.cancel.clone();
     let decision = loop {
         if cancel.load(std::sync::atomic::Ordering::SeqCst) {
@@ -359,11 +424,17 @@ fn propose_plan(run: &AgentRun, args: &Value) -> Handled {
     // Free-text feedback was already posted as a chat message; don't repeat it as steering.
     let _ = store.take_undelivered(&run.thread_id);
     match decision.kind {
-        DecisionKind::Approve | DecisionKind::Pick { .. } => Handled::Continue("approved — carry out the plan".into()),
-        DecisionKind::Reply { text } | DecisionKind::SendBack { note: text, .. } => {
-            Handled::Continue(format!("not approved yet; user feedback: {text}\nRevise and propose again."))
+        DecisionKind::Approve | DecisionKind::Pick { .. } => {
+            Handled::Continue("approved — carry out the plan".into())
         }
-        DecisionKind::Reject { reason } => Handled::Stop(format!("rejected: {reason}"), json!({"rejected": true})),
+        DecisionKind::Reply { text } | DecisionKind::SendBack { note: text, .. } => {
+            Handled::Continue(format!(
+                "not approved yet; user feedback: {text}\nRevise and propose again."
+            ))
+        }
+        DecisionKind::Reject { reason } => {
+            Handled::Stop(format!("rejected: {reason}"), json!({"rejected": true}))
+        }
     }
 }
 
@@ -398,7 +469,12 @@ pub fn delegate(
     if store.put_task(&t).is_err() {
         return Handled::Continue("Error: could not create the sub-task".into());
     }
-    store.log("task.spawned", t.run_id.as_deref(), Some(&t.id), format!("{} spawned {title}", run.actor));
+    store.log(
+        "task.spawned",
+        t.run_id.as_deref(),
+        Some(&t.id),
+        format!("{} spawned {title}", run.actor),
+    );
     let mut first = Message::new(&t.id, Role::User, task_text.clone());
     first.author = run.actor.clone();
     first.delivered = true;

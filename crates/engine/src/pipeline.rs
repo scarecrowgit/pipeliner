@@ -25,7 +25,11 @@ use crate::Engine;
 
 /// Checks a graph before it is deployed or run.
 pub fn validate(g: &PipelineGraph) -> Result<()> {
-    let sources = g.nodes.iter().filter(|n| matches!(n.kind, NodeKind::Source(_))).count();
+    let sources = g
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Source(_)))
+        .count();
     if sources != 1 {
         bail!("a pipeline needs exactly one Source node (found {sources})");
     }
@@ -39,9 +43,8 @@ pub fn validate(g: &PipelineGraph) -> Result<()> {
             NodeKind::Agent(a) => a.workdir.clone(),
             NodeKind::Render(r) => r.workdir.clone(),
             NodeKind::Decision(d) => d.workdir.clone(),
-            NodeKind::Tool(ToolNode::Command { workdir, .. }) | NodeKind::Tool(ToolNode::PullRequest { workdir, .. }) => {
-                workdir.clone()
-            }
+            NodeKind::Tool(ToolNode::Command { workdir, .. })
+            | NodeKind::Tool(ToolNode::PullRequest { workdir, .. }) => workdir.clone(),
             _ => None,
         };
         if let Some(w) = wd {
@@ -50,7 +53,10 @@ pub fn validate(g: &PipelineGraph) -> Result<()> {
             }
         }
         if let NodeKind::Tool(ToolNode::PullRequest { workdir: None, .. }) = &n.kind {
-            bail!("node “{}” needs a workdir to open a pull request from", n.name);
+            bail!(
+                "node “{}” needs a workdir to open a pull request from",
+                n.name
+            );
         }
         if let NodeKind::Agent(a) = &n.kind {
             if a.variants > 1 {
@@ -68,17 +74,39 @@ pub fn validate(g: &PipelineGraph) -> Result<()> {
     Ok(())
 }
 
-pub fn start(engine: &Engine, pipeline_id: &str, input: &str, chat_id: Option<&str>) -> Result<Run> {
+pub fn start(
+    engine: &Engine,
+    pipeline_id: &str,
+    input: &str,
+    chat_id: Option<&str>,
+) -> Result<Run> {
     let store = engine.store();
     let p = store.pipeline(pipeline_id).context("pipeline not found")?;
     validate(&p.graph)?;
     if !engine.config().is_configured() {
         bail!("add a model provider in Settings first");
     }
-    let source = p.graph.nodes.iter().find(|n| matches!(n.kind, NodeKind::Source(_))).unwrap().id.clone();
+    let source = p
+        .graph
+        .nodes
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::Source(_)))
+        .unwrap()
+        .id
+        .clone();
     let number = store.next_number("run");
-    let first: String = input.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Run").to_string();
-    let title: String = first.trim_start_matches('#').trim().chars().take(80).collect();
+    let first: String = input
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("Run")
+        .to_string();
+    let title: String = first
+        .trim_start_matches('#')
+        .trim()
+        .chars()
+        .take(80)
+        .collect();
     let run = Run {
         id: new_id(),
         number,
@@ -102,7 +130,15 @@ pub fn start(engine: &Engine, pipeline_id: &str, input: &str, chat_id: Option<&s
         finished_at: None,
     };
     store.put_run(&run)?;
-    store.log("run.started", Some(&run.id), None, format!("Run #{} of {} v{} started: {}", number, p.name, p.version, run.title));
+    store.log(
+        "run.started",
+        Some(&run.id),
+        None,
+        format!(
+            "Run #{} of {} v{} started: {}",
+            number, p.name, p.version, run.title
+        ),
+    );
     engine.spawn_run_thread(run.id.clone());
     Ok(run)
 }
@@ -128,14 +164,22 @@ pub fn drive(engine: &Engine, run_id: &str) -> Result<()> {
         let pick = run
             .frontier
             .iter()
-            .find(|f| !run.frontier.iter().any(|o| o != *f && reaches(&run.graph, o, f)))
+            .find(|f| {
+                !run.frontier
+                    .iter()
+                    .any(|o| o != *f && reaches(&run.graph, o, f))
+            })
             .or(run.frontier.first())
             .cloned();
         let Some(node_id) = pick else {
             finish(engine, &run, Status::Done, None)?;
             return Ok(());
         };
-        let node = run.graph.node(&node_id).cloned().ok_or_else(|| anyhow!("node {node_id} is missing"))?;
+        let node = run
+            .graph
+            .node(&node_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("node {node_id} is missing"))?;
         if run.status != Status::Running {
             store.update_run(run_id, |r| {
                 if r.status.is_active() {
@@ -147,7 +191,11 @@ pub fn drive(engine: &Engine, run_id: &str) -> Result<()> {
             Ok(s) => s,
             Err(e) => {
                 // Cancelled runs stop quietly.
-                if store.run(run_id).map(|r| r.status == Status::Cancelled).unwrap_or(true) {
+                if store
+                    .run(run_id)
+                    .map(|r| r.status == Status::Cancelled)
+                    .unwrap_or(true)
+                {
                     return Ok(());
                 }
                 let msg = format!("{} failed: {e:#}", node.name);
@@ -157,11 +205,19 @@ pub fn drive(engine: &Engine, run_id: &str) -> Result<()> {
                     r.finished_at = Some(now());
                 })?;
                 store.log("run.failed", Some(run_id), None, msg.clone());
-                post_to_chat(engine, &run, &format!("Run #{} failed at {}: {e:#}", run.number, node.name));
+                post_to_chat(
+                    engine,
+                    &run,
+                    &format!("Run #{} failed at {}: {e:#}", run.number, node.name),
+                );
                 return Ok(());
             }
         };
-        if store.run(run_id).map(|r| r.status == Status::Cancelled).unwrap_or(true) {
+        if store
+            .run(run_id)
+            .map(|r| r.status == Status::Cancelled)
+            .unwrap_or(true)
+        {
             return Ok(());
         }
         match step {
@@ -196,7 +252,11 @@ pub fn drive(engine: &Engine, run_id: &str) -> Result<()> {
 
 fn finish(engine: &Engine, run: &Run, status: Status, error: Option<String>) -> Result<()> {
     let store = engine.store();
-    let cost: f64 = store.tasks_for_run(&run.id).iter().map(|t| t.cost_usd).sum();
+    let cost: f64 = store
+        .tasks_for_run(&run.id)
+        .iter()
+        .map(|t| t.cost_usd)
+        .sum();
     let run = store.update_run(&run.id, |r| {
         if r.status == Status::Cancelled && status != Status::Cancelled {
             return;
@@ -208,7 +268,10 @@ fn finish(engine: &Engine, run: &Run, status: Status, error: Option<String>) -> 
         r.cost_usd = cost;
     })?;
     let text = match (&status, &run.pr_url) {
-        (Status::Done, Some(pr)) => format!("Run #{} finished · {} · ${:.2}", run.number, pr, run.cost_usd),
+        (Status::Done, Some(pr)) => format!(
+            "Run #{} finished · {} · ${:.2}",
+            run.number, pr, run.cost_usd
+        ),
         (Status::Done, None) => format!("Run #{} finished · ${:.2}", run.number, run.cost_usd),
         _ => format!("Run #{} {}", run.number, status.label().to_lowercase()),
     };
@@ -220,7 +283,9 @@ fn finish(engine: &Engine, run: &Run, status: Status, error: Option<String>) -> 
 fn post_to_chat(engine: &Engine, run: &Run, text: &str) {
     if let Some(chat) = &run.chat_id {
         let mut m = Message::new(chat, Role::System, text);
-        m.card = Some(Card::Run { run_id: run.id.clone() });
+        m.card = Some(Card::Run {
+            run_id: run.id.clone(),
+        });
         let _ = engine.store().put_message(&m);
     }
 }
@@ -293,7 +358,12 @@ fn run_context(run: &Run, node: &Node) -> String {
             if o.summary.trim().is_empty() || matches!(n.kind, NodeKind::Source(_)) {
                 continue;
             }
-            parts.push(format!("## {} ({})\n{}", n.name, n.kind.label(), o.summary.trim()));
+            parts.push(format!(
+                "## {} ({})\n{}",
+                n.name,
+                n.kind.label(),
+                o.summary.trim()
+            ));
         }
     }
     if !parts.is_empty() {
@@ -351,24 +421,54 @@ struct Place {
 
 /// Resolves (and creates if needed) the folder a step works in.
 /// `variant`: Some(i) for fan-out variants (each gets its own worktree/branch).
-fn place(engine: &Engine, run: &Run, node: &Node, workdir_id: &str, variant: Option<u32>) -> Result<Place> {
+fn place(
+    engine: &Engine,
+    run: &Run,
+    node: &Node,
+    workdir_id: &str,
+    variant: Option<u32>,
+) -> Result<Place> {
     let store = engine.store();
-    let wd = run.graph.workdir(workdir_id).context("workdir not found")?.clone();
+    let wd = run
+        .graph
+        .workdir(workdir_id)
+        .context("workdir not found")?
+        .clone();
     let root = expand_tilde(&wd.path);
-    let shell = if wd.shell.is_empty() { crate::chat::shell_for(Some(&root)) } else { wd.shell.clone() };
+    let shell = if wd.shell.is_empty() {
+        crate::chat::shell_for(Some(&root))
+    } else {
+        wd.shell.clone()
+    };
     if !wd.worktree || !git::is_repo(&root) {
-        return Ok(Place { cwd: root, branch: None, base: None, shell, env: wd.env.clone() });
+        return Ok(Place {
+            cwd: root,
+            branch: None,
+            base: None,
+            shell,
+            env: wd.env.clone(),
+        });
     }
     let sub = git::subdir(&wd).unwrap_or_default();
     let run_dir = harness_core::paths::worktrees_dir().join(format!("run-{}", run.number));
     let slug = git::slug(&run.title);
-    let head = run.heads.get(workdir_id).cloned().unwrap_or_else(|| wd.base_branch.clone());
+    let head = run
+        .heads
+        .get(workdir_id)
+        .cloned()
+        .unwrap_or_else(|| wd.base_branch.clone());
     let (dest, branch) = match variant {
         Some(i) => {
             let l = variant_letter(i).to_ascii_lowercase();
             (
                 run_dir.join(format!("{}-{}-{l}", workdir_id, git::slug(&node.id))),
-                format!("{}run-{}-{}-{}-{l}", wd.branch_prefix, run.number, slug, git::slug(&node.id)),
+                format!(
+                    "{}run-{}-{}-{}-{l}",
+                    wd.branch_prefix,
+                    run.number,
+                    slug,
+                    git::slug(&node.id)
+                ),
             )
         }
         None => {
@@ -378,37 +478,72 @@ fn place(engine: &Engine, run: &Run, node: &Node, workdir_id: &str, variant: Opt
                     let cwd = p.join(&sub);
                     let branch = git::git(&p, &["rev-parse", "--abbrev-ref", "HEAD"]).ok();
                     let base = git::head(&p).ok();
-                    return Ok(Place { cwd, branch, base, shell, env: wd.env.clone() });
+                    return Ok(Place {
+                        cwd,
+                        branch,
+                        base,
+                        shell,
+                        env: wd.env.clone(),
+                    });
                 }
             }
-            (run_dir.join(workdir_id.to_string()), format!("{}run-{}-{}", wd.branch_prefix, run.number, slug))
+            (
+                run_dir.join(workdir_id),
+                format!("{}run-{}-{}", wd.branch_prefix, run.number, slug),
+            )
         }
     };
     let fresh = !dest.exists();
     git::add_worktree(&wd, &dest, &branch, &head)?;
     if fresh {
-        store.log("worktree.created", Some(&run.id), None, format!("Worktree {} on {}", dest.display(), branch));
+        store.log(
+            "worktree.created",
+            Some(&run.id),
+            None,
+            format!("Worktree {} on {}", dest.display(), branch),
+        );
         if !wd.setup.trim().is_empty() {
             let never = std::sync::atomic::AtomicBool::new(false);
-            let out = tools::run_command(&dest.join(&sub), "", &wd.env, &wd.setup, Duration::from_secs(1800), &never)?;
+            let out = tools::run_command(
+                &dest.join(&sub),
+                "",
+                &wd.env,
+                &wd.setup,
+                Duration::from_secs(1800),
+                &never,
+            )?;
             if !out.starts_with("exit code 0") {
-                store.log("worktree.setup_failed", Some(&run.id), None, tools::truncate_middle(&out, 2000));
+                store.log(
+                    "worktree.setup_failed",
+                    Some(&run.id),
+                    None,
+                    tools::truncate_middle(&out, 2000),
+                );
             }
         }
     }
     if variant.is_none() {
         store.update_run(&run.id, |r| {
-            r.worktrees.insert(workdir_id.to_string(), dest.display().to_string());
+            r.worktrees
+                .insert(workdir_id.to_string(), dest.display().to_string());
             r.heads.insert(workdir_id.to_string(), branch.clone());
         })?;
     }
     // Variants diff against where they forked, so a send-back round still shows the whole change.
     let base = if variant.is_some() {
-        git::git(&dest, &["merge-base", "HEAD", &head]).ok().or_else(|| git::head(&dest).ok())
+        git::git(&dest, &["merge-base", "HEAD", &head])
+            .ok()
+            .or_else(|| git::head(&dest).ok())
     } else {
         git::head(&dest).ok()
     };
-    Ok(Place { cwd: dest.join(&sub), branch: Some(branch), base, shell, env: wd.env.clone() })
+    Ok(Place {
+        cwd: dest.join(&sub),
+        branch: Some(branch),
+        base,
+        shell,
+        env: wd.env.clone(),
+    })
 }
 
 fn other_workdirs(run: &Run, except: Option<&str>) -> Vec<(String, String)> {
@@ -417,7 +552,11 @@ fn other_workdirs(run: &Run, except: Option<&str>) -> Vec<(String, String)> {
         .iter()
         .filter(|w| Some(w.id.as_str()) != except)
         .map(|w| {
-            let p = run.worktrees.get(&w.id).cloned().unwrap_or_else(|| expand_tilde(&w.path).display().to_string());
+            let p = run
+                .worktrees
+                .get(&w.id)
+                .cloned()
+                .unwrap_or_else(|| expand_tilde(&w.path).display().to_string());
             (w.id.clone(), p)
         })
         .collect()
@@ -436,7 +575,11 @@ fn wait_for_decision(engine: &Engine, run_id: &str, task_id: &str) -> Result<Dec
             if !r.status.is_active() {
                 bail!("run is no longer active");
             }
-            if store.task(task_id).map(|t| t.status != Status::Waiting).unwrap_or(true) {
+            if store
+                .task(task_id)
+                .map(|t| t.status != Status::Waiting)
+                .unwrap_or(true)
+            {
                 bail!("cancelled");
             }
         }
@@ -454,15 +597,33 @@ fn exec_source(engine: &Engine, run: &Run, node: &Node, s: &SourceNode) -> Resul
     let mut ext = None;
     // `#123` or an issue URL with a configured repo: fetch the issue with gh.
     if !s.github_repo.is_empty() {
-        let num = input.trim().trim_start_matches('#').rsplit('/').next().unwrap_or("").to_string();
+        let num = input
+            .trim()
+            .trim_start_matches('#')
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
         if num.chars().all(|c| c.is_ascii_digit()) && !num.is_empty() {
             let out = git::run(
                 &std::env::temp_dir(),
                 "gh",
-                &["issue", "view", &num, "--repo", &s.github_repo, "--json", "title,body,url"],
+                &[
+                    "issue",
+                    "view",
+                    &num,
+                    "--repo",
+                    &s.github_repo,
+                    "--json",
+                    "title,body,url",
+                ],
             )?;
             let v: Value = serde_json::from_str(&out)?;
-            input = format!("{}\n\n{}", v["title"].as_str().unwrap_or(""), v["body"].as_str().unwrap_or(""));
+            input = format!(
+                "{}\n\n{}",
+                v["title"].as_str().unwrap_or(""),
+                v["body"].as_str().unwrap_or("")
+            );
             ext = v["url"].as_str().map(String::from);
             let title: String = v["title"].as_str().unwrap_or("").chars().take(80).collect();
             store.update_run(&run.id, |r| {
@@ -477,7 +638,17 @@ fn exec_source(engine: &Engine, run: &Run, node: &Node, s: &SourceNode) -> Resul
     t.status = Status::Done;
     t.finished_at = Some(now());
     store.put_task(&t)?;
-    set_output(store, &run.id, &node.id, NodeOutput { summary: String::new(), port: None, value: json!({"input": input, "ref": ext}), task_id: Some(t.id) })?;
+    set_output(
+        store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary: String::new(),
+            port: None,
+            value: json!({"input": input, "ref": ext}),
+            task_id: Some(t.id),
+        },
+    )?;
     Ok(Step::Next(None))
 }
 
@@ -501,12 +672,21 @@ fn exec_router(engine: &Engine, run: &Run, node: &Node, r: &RouterNode) -> Resul
         let hit = match rule.op {
             RuleOp::Contains => v.to_lowercase().contains(&rule.value.to_lowercase()),
             RuleOp::Equals => v.trim().eq_ignore_ascii_case(rule.value.trim()),
-            RuleOp::StartsWith => v.trim().to_lowercase().starts_with(&rule.value.to_lowercase()),
+            RuleOp::StartsWith => v
+                .trim()
+                .to_lowercase()
+                .starts_with(&rule.value.to_lowercase()),
             RuleOp::Matches => simple_regex(&rule.value, &v),
         };
         if hit {
             port = format!("rule{}", i + 1);
-            why = format!("rule {}: {} {:?} “{}”", i + 1, rule.field, rule.op, rule.value);
+            why = format!(
+                "rule {}: {} {:?} “{}”",
+                i + 1,
+                rule.field,
+                rule.op,
+                rule.value
+            );
             break;
         }
     }
@@ -515,24 +695,45 @@ fn exec_router(engine: &Engine, run: &Run, node: &Node, r: &RouterNode) -> Resul
     t.summary = why.clone();
     t.finished_at = Some(now());
     store.put_task(&t)?;
-    set_output(store, &run.id, &node.id, NodeOutput { summary: why, port: Some(port.clone()), value: Value::Null, task_id: Some(t.id) })?;
+    set_output(
+        store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary: why,
+            port: Some(port.clone()),
+            value: Value::Null,
+            task_id: Some(t.id),
+        },
+    )?;
     Ok(Step::Next(Some(port)))
 }
 
 /// `a|b|c` alternatives, case-insensitive substring (keeps us free of a regex dependency).
 fn simple_regex(pattern: &str, text: &str) -> bool {
     let t = text.to_lowercase();
-    pattern.split('|').any(|p| !p.is_empty() && t.contains(&p.to_lowercase()))
+    pattern
+        .split('|')
+        .any(|p| !p.is_empty() && t.contains(&p.to_lowercase()))
 }
 
 fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> Result<Step> {
     let store = engine.store().clone();
     let config = engine.config();
-    let model = if d.model.is_empty() { config.fast().to_string() } else { d.model.clone() };
+    let model = if d.model.is_empty() {
+        config.fast().to_string()
+    } else {
+        d.model.clone()
+    };
     let mut t = new_task(run, node, TaskKind::Decision, &Config::short_model(&model));
     t.model = model.clone();
     store.put_task(&t)?;
-    store.log("task.started", Some(&run.id), Some(&t.id), format!("{} started", node.name));
+    store.log(
+        "task.started",
+        Some(&run.id),
+        Some(&t.id),
+        format!("{} started", node.name),
+    );
 
     // Decisions only read: use the workdir as it is (or the run's worktree).
     let cwd = d.workdir.as_deref().and_then(|w| {
@@ -585,7 +786,10 @@ fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> R
             let l = o.text.trim().to_lowercase();
             let yes = l.starts_with("yes");
             if !yes && !l.starts_with("no") {
-                bail!("the model did not answer yes or no: {}", o.text.chars().take(200).collect::<String>());
+                bail!(
+                    "the model did not answer yes or no: {}",
+                    o.text.chars().take(200).collect::<String>()
+                );
             }
             Ok(json!({"yes": yes, "reason": o.text}))
         } else {
@@ -595,7 +799,11 @@ fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> R
     let summary_res: Result<String> = match &out {
         Ok(v) => Ok(format!(
             "{} — {}",
-            if v["yes"].as_bool().unwrap_or(false) { "Yes" } else { "No" },
+            if v["yes"].as_bool().unwrap_or(false) {
+                "Yes"
+            } else {
+                "No"
+            },
             v["reason"].as_str().unwrap_or("").trim()
         )),
         Err(e) => Err(anyhow!("{e:#}")),
@@ -603,8 +811,22 @@ fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> R
     close_task(&store, &t.id, &summary_res);
     let v = out?;
     let summary = summary_res.ok();
-    let port = if v["yes"].as_bool().unwrap_or(false) { "yes" } else { "no" };
-    set_output(&store, &run.id, &node.id, NodeOutput { summary: summary.unwrap_or_default(), port: Some(port.into()), value: v, task_id: Some(t.id) })?;
+    let port = if v["yes"].as_bool().unwrap_or(false) {
+        "yes"
+    } else {
+        "no"
+    };
+    set_output(
+        &store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary: summary.unwrap_or_default(),
+            port: Some(port.into()),
+            value: v,
+            task_id: Some(t.id),
+        },
+    )?;
     Ok(Step::Next(Some(port.into())))
 }
 
@@ -685,10 +907,27 @@ fn exec_agent(engine: &Engine, run: &Run, node: &Node, a: &AgentNode) -> Result<
                 let run = &run;
                 let r = &r;
                 let note = note.clone();
-                s.spawn(move || run_variant(engine, run, node, a, r, (n > 1).then_some(i as u32), p, note))
+                s.spawn(move || {
+                    run_variant(
+                        engine,
+                        run,
+                        node,
+                        a,
+                        r,
+                        (n > 1).then_some(i as u32),
+                        p,
+                        note,
+                    )
+                })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("variant thread panicked")))).collect()
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err(anyhow!("variant thread panicked")))
+            })
+            .collect()
     });
 
     let mut variants = vec![];
@@ -705,10 +944,28 @@ fn exec_agent(engine: &Engine, run: &Run, node: &Node, a: &AgentNode) -> Result<
     let summary = if n == 1 {
         variants[0]["summary"].as_str().unwrap_or("").to_string()
     } else {
-        format!("{} variants ready{}", variants.len(), if errors.is_empty() { String::new() } else { format!(" ({} failed)", errors.len()) })
+        format!(
+            "{} variants ready{}",
+            variants.len(),
+            if errors.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} failed)", errors.len())
+            }
+        )
     };
     let task_id = variants[0]["task_id"].as_str().map(String::from);
-    set_output(&store, &run.id, &node.id, NodeOutput { summary, port: None, value: json!({"variants": variants, "workdir": a.workdir}), task_id })?;
+    set_output(
+        &store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary,
+            port: None,
+            value: json!({"variants": variants, "workdir": a.workdir}),
+            task_id,
+        },
+    )?;
     // The send-back note is used up only once the step succeeded.
     store.update_run(&run.id, |r| {
         r.notes.remove(&node.id);
@@ -741,7 +998,12 @@ fn run_variant(
     let cancel = engine.cancel_flag(&t.id);
     store.put_task(&t)?;
     let _slot = engine.acquire_slot();
-    if cancel.load(Ordering::SeqCst) || store.run(&run.id).map(|r| !r.status.is_active()).unwrap_or(true) {
+    if cancel.load(Ordering::SeqCst)
+        || store
+            .run(&run.id)
+            .map(|r| !r.status.is_active())
+            .unwrap_or(true)
+    {
         engine.drop_cancel_flag(&t.id);
         bail!("cancelled");
     }
@@ -756,12 +1018,24 @@ fn run_variant(
         engine.drop_cancel_flag(&t.id);
         bail!("cancelled");
     }
-    store.log("task.started", Some(&run.id), Some(&t.id), format!("{} started", t.title));
+    store.log(
+        "task.started",
+        Some(&run.id),
+        Some(&t.id),
+        format!("{} started", t.title),
+    );
     if let Some(p) = &place {
         system_note(
             &store,
             &t.id,
-            format!("Working in {}{}", p.cwd.display(), p.branch.as_ref().map(|b| format!(" on branch {b}")).unwrap_or_default()),
+            format!(
+                "Working in {}{}",
+                p.cwd.display(),
+                p.branch
+                    .as_ref()
+                    .map(|b| format!(" on branch {b}"))
+                    .unwrap_or_default()
+            ),
         );
     }
 
@@ -797,7 +1071,11 @@ fn run_variant(
             role: r.role.clone(),
             instructions,
             context: run_context(run, node),
-            environment: prompt::environment(place.as_ref().map(|p| p.cwd.as_path()), place.as_ref().map(|p| p.shell.as_str()).unwrap_or(""), &workdirs),
+            environment: prompt::environment(
+                place.as_ref().map(|p| p.cwd.as_path()),
+                place.as_ref().map(|p| p.shell.as_str()).unwrap_or(""),
+                &workdirs,
+            ),
             skills: r.skills.clone(),
             skills_on_demand: r.skills_on_demand.clone(),
             message,
@@ -806,7 +1084,11 @@ fn run_variant(
             cwd: place.as_ref().map(|p| p.cwd.clone()),
             shell: place.as_ref().map(|p| p.shell.clone()).unwrap_or_default(),
             env: place.as_ref().map(|p| p.env.clone()).unwrap_or_default(),
-            access: if place.is_some() { r.tools } else { ToolAccess::None },
+            access: if place.is_some() {
+                r.tools
+            } else {
+                ToolAccess::None
+            },
             workdirs,
             skills_on_demand: r.skills_on_demand.clone(),
             config: config.clone(),
@@ -822,8 +1104,20 @@ fn run_variant(
             return None;
         }
         let d = delegate_cfg.as_ref()?;
-        let role = if d.instructions.is_empty() { crate::chat::DELEGATE_ROLE } else { d.instructions.as_str() };
-        Some(crate::chat::delegate(run, args, &d.model, &d.name, role, &d.skills_on_demand, d.max_steps))
+        let role = if d.instructions.is_empty() {
+            crate::chat::DELEGATE_ROLE
+        } else {
+            d.instructions.as_str()
+        };
+        Some(crate::chat::delegate(
+            run,
+            args,
+            &d.model,
+            &d.name,
+            role,
+            &d.skills_on_demand,
+            d.max_steps,
+        ))
     });
     engine.drop_cancel_flag(&t.id);
     if cancel.load(Ordering::SeqCst) {
@@ -842,8 +1136,20 @@ fn run_variant(
     if let Some(p) = &place {
         if let Some(base) = &p.base {
             diff = git::diff_against(&p.cwd, base);
-            let first = out.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim_start_matches('#').trim();
-            let msg = format!("{}: {}\n\nRun #{} · {}", node.name, first.chars().take(72).collect::<String>(), run.number, run.title);
+            let first = out
+                .text
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim_start_matches('#')
+                .trim();
+            let msg = format!(
+                "{}: {}\n\nRun #{} · {}",
+                node.name,
+                first.chars().take(72).collect::<String>(),
+                run.number,
+                run.title
+            );
             let _ = git::commit_all(&p.cwd, &msg);
         }
     }
@@ -871,14 +1177,20 @@ fn run_variant(
 }
 
 fn worktree_root(cwd: &Path) -> String {
-    git::repo_root(cwd).map(|p| p.display().to_string()).unwrap_or_else(|_| cwd.display().to_string())
+    git::repo_root(cwd)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| cwd.display().to_string())
 }
 
 /// Nearest upstream output that carries variants (agent or render node).
 fn upstream_variants(run: &Run, node_id: &str) -> Option<(Id, Value)> {
     for id in upstream_order(&run.graph, node_id).into_iter().rev() {
         if let Some(o) = run.outputs.get(&id) {
-            if o.value.get("variants").map(|v| v.is_array()).unwrap_or(false) {
+            if o.value
+                .get("variants")
+                .map(|v| v.is_array())
+                .unwrap_or(false)
+            {
                 return Some((id, o.value.clone()));
             }
         }
@@ -898,7 +1210,13 @@ fn exec_render(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode) -> Resu
     res
 }
 
-fn render_inner(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode, mut t: Task) -> Result<Step> {
+fn render_inner(
+    engine: &Engine,
+    run: &Run,
+    node: &Node,
+    rn: &RenderNode,
+    mut t: Task,
+) -> Result<Step> {
     let store = engine.store().clone();
     let config = engine.config();
     let (src_id, mut value) = match upstream_variants(run, &node.id) {
@@ -907,25 +1225,42 @@ fn render_inner(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode, mut t:
             // Nothing upstream: render the run's worktree as a single variant.
             let w = rn.workdir.clone().context("render needs a workdir")?;
             let p = place(engine, run, node, &w, None)?;
-            (String::new(), json!({"variants":[{"index":0,"cwd":p.cwd.display().to_string(),"base":p.base,"summary":"","images":[]}]}))
+            (
+                String::new(),
+                json!({"variants":[{"index":0,"cwd":p.cwd.display().to_string(),"base":p.base,"summary":"","images":[]}]}),
+            )
         }
     };
-    let pattern = glob::Pattern::new(&rn.files).unwrap_or_else(|_| glob::Pattern::new("**/*.html").unwrap());
+    let pattern =
+        glob::Pattern::new(&rn.files).unwrap_or_else(|_| glob::Pattern::new("**/*.html").unwrap());
     let mut total = 0;
     let mut errors = vec![];
-    let cmd = if rn.command.is_empty() { config.render_command.clone() } else { rn.command.clone() };
+    let cmd = if rn.command.is_empty() {
+        config.render_command.clone()
+    } else {
+        rn.command.clone()
+    };
     if let Some(vs) = value["variants"].as_array_mut() {
         for v in vs.iter_mut() {
-            let Some(cwd) = v["cwd"].as_str().map(PathBuf::from) else { continue };
+            let Some(cwd) = v["cwd"].as_str().map(PathBuf::from) else {
+                continue;
+            };
             let base = v["base"].as_str().unwrap_or("HEAD~1").to_string();
             // Changed files relative to the worktree root; keep those matching the glob.
             let root = git::repo_root(&cwd).unwrap_or(cwd.clone());
-            let changed = if v["base"].is_null() { vec![] } else { git::changed_files(&root, &base) };
+            let changed = if v["base"].is_null() {
+                vec![]
+            } else {
+                git::changed_files(&root, &base)
+            };
             let letter = variant_letter(v["index"].as_u64().unwrap_or(0) as u32);
             let mut images = vec![];
             for f in changed {
                 let abs = root.join(&f);
-                let rel_to_cwd = abs.strip_prefix(&cwd).map(|p| p.to_path_buf()).unwrap_or(PathBuf::from(&f));
+                let rel_to_cwd = abs
+                    .strip_prefix(&cwd)
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or(PathBuf::from(&f));
                 if !abs.is_file() || !(pattern.matches_path(&rel_to_cwd) || pattern.matches(&f)) {
                     continue;
                 }
@@ -948,7 +1283,15 @@ fn render_inner(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode, mut t:
     let summary = if total == 0 && errors.is_empty() {
         "No mockup files changed".to_string()
     } else {
-        format!("Rendered {total} screen{}{}", if total == 1 { "" } else { "s" }, if errors.is_empty() { String::new() } else { format!("; {} failed", errors.len()) })
+        format!(
+            "Rendered {total} screen{}{}",
+            if total == 1 { "" } else { "s" },
+            if errors.is_empty() {
+                String::new()
+            } else {
+                format!("; {} failed", errors.len())
+            }
+        )
     };
     if !errors.is_empty() {
         system_note(&store, &t.id, errors.join("\n"));
@@ -958,7 +1301,17 @@ fn render_inner(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode, mut t:
     t.finished_at = Some(now());
     store.put_task(&t)?;
     let _ = src_id;
-    set_output(&store, &run.id, &node.id, NodeOutput { summary: String::new(), port: None, value, task_id: Some(t.id) })?;
+    set_output(
+        &store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary: String::new(),
+            port: None,
+            value,
+            task_id: Some(t.id),
+        },
+    )?;
     Ok(Step::Next(None))
 }
 
@@ -1037,9 +1390,11 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
                         _ => None,
                     })
                 });
-                let chosen = val["variants"]
-                    .as_array()
-                    .and_then(|a| a.iter().find(|v| v["index"].as_u64() == Some(index as u64)).cloned());
+                let chosen = val["variants"].as_array().and_then(|a| {
+                    a.iter()
+                        .find(|v| v["index"].as_u64() == Some(index as u64))
+                        .cloned()
+                });
                 if let (Some(wd), Some(c)) = (wd, chosen) {
                     if let (Some(branch), Some(root)) = (c["branch"].as_str(), c["root"].as_str()) {
                         store.update_run(&run.id, |r| {
@@ -1051,23 +1406,58 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
             }
             let letter = variant_letter(index);
             let summary = match &picked {
-                Some(v) if variants.len() > 1 => format!("You picked {letter}: {}", first_line(&v.summary)),
+                Some(v) if variants.len() > 1 => {
+                    format!("You picked {letter}: {}", first_line(&v.summary))
+                }
                 Some(v) => format!("You approved: {}", first_line(&v.summary)),
                 None => "You approved".into(),
             };
             done(summary.clone());
-            set_output(&store, &run.id, &node.id, NodeOutput { summary, port: None, value: json!({"picked": index}), task_id: Some(task.id.clone()) })?;
+            set_output(
+                &store,
+                &run.id,
+                &node.id,
+                NodeOutput {
+                    summary,
+                    port: None,
+                    value: json!({"picked": index}),
+                    task_id: Some(task.id.clone()),
+                },
+            )?;
             Ok(Step::Next(None))
         }
         D::Accept(_) => {
             // Approve PR: merge it.
-            let url = run.pr_url.clone().context("this run has no pull request to merge")?;
-            let cwd = run.worktrees.values().next().map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+            let url = run
+                .pr_url
+                .clone()
+                .context("this run has no pull request to merge")?;
+            let cwd = run
+                .worktrees
+                .values()
+                .next()
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
             match git::merge_pr(&cwd, &url, "squash") {
                 Ok(_) => {
                     done(format!("You approved; merged {url}"));
-                    store.log("pr.merged", Some(&run.id), Some(&task.id), format!("Merged {url}"));
-                    set_output(&store, &run.id, &node.id, NodeOutput { summary: format!("Merged {url}"), port: None, value: Value::Null, task_id: Some(task.id.clone()) })?;
+                    store.log(
+                        "pr.merged",
+                        Some(&run.id),
+                        Some(&task.id),
+                        format!("Merged {url}"),
+                    );
+                    set_output(
+                        &store,
+                        &run.id,
+                        &node.id,
+                        NodeOutput {
+                            summary: format!("Merged {url}"),
+                            port: None,
+                            value: Value::Null,
+                            task_id: Some(task.id.clone()),
+                        },
+                    )?;
                     Ok(Step::Next(None))
                 }
                 Err(e) => {
@@ -1086,26 +1476,55 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
                 upstream_order(&run.graph, &node.id)
                     .into_iter()
                     .rev()
-                    .find(|id| matches!(run.graph.node(id).map(|n| &n.kind), Some(NodeKind::Agent(_))))
+                    .find(|id| {
+                        matches!(
+                            run.graph.node(id).map(|n| &n.kind),
+                            Some(NodeKind::Agent(_))
+                        )
+                    })
             });
             let target = target.context("nothing upstream to send this back to")?;
             done(format!("Sent back: {}", first_line(&note)));
             store.update_run(&run.id, |r| {
                 r.notes.insert(target.clone(), note.clone());
             })?;
-            let tname = run.graph.node(&target).map(|n| n.name.clone()).unwrap_or_default();
-            store.log("run.sent_back", Some(&run.id), Some(&task.id), format!("Sent back to {tname}"));
+            let tname = run
+                .graph
+                .node(&target)
+                .map(|n| n.name.clone())
+                .unwrap_or_default();
+            store.log(
+                "run.sent_back",
+                Some(&run.id),
+                Some(&task.id),
+                format!("Sent back to {tname}"),
+            );
             Ok(Step::Goto(vec![target]))
         }
         D::Reject(reason) => {
-            done(format!("Rejected{}", if reason.is_empty() { String::new() } else { format!(": {reason}") }));
+            done(format!(
+                "Rejected{}",
+                if reason.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {reason}")
+                }
+            ));
             Ok(Step::Stop(Status::Cancelled))
         }
     }
 }
 
 fn first_line(s: &str) -> String {
-    s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").trim_start_matches('#').trim().chars().take(140).collect()
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_start_matches('#')
+        .trim()
+        .chars()
+        .take(140)
+        .collect()
 }
 
 fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<Task> {
@@ -1141,7 +1560,14 @@ fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<
                         branch: v["branch"].as_str().map(String::from),
                         cwd: v["cwd"].as_str().map(String::from),
                         diff: v["diff"].as_str().unwrap_or("").to_string(),
-                        images: v["images"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+                        images: v["images"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                         picked: false,
                     });
                 }
@@ -1155,7 +1581,10 @@ fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<
                 .next()
                 .and_then(|p| {
                     let wd = run.graph.workdirs.first()?;
-                    Some(git::diff_against(Path::new(p), &format!("origin/{}", wd.base_branch)))
+                    Some(git::diff_against(
+                        Path::new(p),
+                        &format!("origin/{}", wd.base_branch),
+                    ))
                 })
                 .unwrap_or_default();
             let summary = run
@@ -1163,7 +1592,8 @@ fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<
                 .iter()
                 .filter_map(|(id, o)| {
                     let n = run.graph.node(id)?;
-                    matches!(n.kind, NodeKind::Agent(_)).then(|| format!("**{}** — {}", n.name, o.summary.trim()))
+                    matches!(n.kind, NodeKind::Agent(_))
+                        .then(|| format!("**{}** — {}", n.name, o.summary.trim()))
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
@@ -1173,7 +1603,11 @@ fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<
                 run_id: Some(run.id.clone()),
                 source_task_id: None,
                 index: 0,
-                title: if url.is_empty() { "Pull request".into() } else { url.clone() },
+                title: if url.is_empty() {
+                    "Pull request".into()
+                } else {
+                    url.clone()
+                },
                 summary,
                 model: String::new(),
                 cost_usd: run.cost_usd,
@@ -1189,27 +1623,59 @@ fn create_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<
     for v in &variants {
         store.put_variant(v)?;
     }
-    store.log("gate.waiting", Some(&run.id), Some(&t.id), format!("{} is waiting for you", t.title));
+    store.log(
+        "gate.waiting",
+        Some(&run.id),
+        Some(&t.id),
+        format!("{} is waiting for you", t.title),
+    );
     Ok(t)
 }
 
 fn exec_tool(engine: &Engine, run: &Run, node: &Node, tn: &ToolNode) -> Result<Step> {
     let store = engine.store().clone();
-    let mut t = new_task(run, node, TaskKind::Tool, match tn {
-        ToolNode::Command { .. } => "shell",
-        ToolNode::PullRequest { .. } => "git.pr",
-        ToolNode::MergePr { .. } => "git.merge",
-    });
+    let mut t = new_task(
+        run,
+        node,
+        TaskKind::Tool,
+        match tn {
+            ToolNode::Command { .. } => "shell",
+            ToolNode::PullRequest { .. } => "git.pr",
+            ToolNode::MergePr { .. } => "git.merge",
+        },
+    );
     store.put_task(&t)?;
-    store.log("task.started", Some(&run.id), Some(&t.id), format!("{} started", node.name));
+    store.log(
+        "task.started",
+        Some(&run.id),
+        Some(&t.id),
+        format!("{} started", node.name),
+    );
     let res: Result<String> = (|| match tn {
-        ToolNode::Command { workdir, command, allow_failure } => {
+        ToolNode::Command {
+            workdir,
+            command,
+            allow_failure,
+        } => {
             let p = match workdir {
                 Some(w) => place(engine, run, node, w, None)?,
-                None => Place { cwd: std::env::temp_dir(), branch: None, base: None, shell: String::new(), env: Default::default() },
+                None => Place {
+                    cwd: std::env::temp_dir(),
+                    branch: None,
+                    base: None,
+                    shell: String::new(),
+                    env: Default::default(),
+                },
             };
             let cancel = engine.cancel_flag(&t.id);
-            let out = tools::run_command(&p.cwd, &p.shell, &p.env, command, Duration::from_secs(3600), &cancel)?;
+            let out = tools::run_command(
+                &p.cwd,
+                &p.shell,
+                &p.env,
+                command,
+                Duration::from_secs(3600),
+                &cancel,
+            )?;
             engine.drop_cancel_flag(&t.id);
             system_note(&store, &t.id, tools::truncate_middle(&out, 6000));
             if !out.starts_with("exit code 0") && !allow_failure {
@@ -1222,12 +1688,18 @@ fn exec_tool(engine: &Engine, run: &Run, node: &Node, tn: &ToolNode) -> Result<S
             let wd = run.graph.workdir(w).context("workdir not found")?.clone();
             let p = place(engine, run, node, w, None)?;
             let run_now = store.run(&run.id).context("run not found")?;
-            let branch = run_now.heads.get(w).cloned().or(p.branch.clone()).context("this workdir has no run branch (is it a git repo with worktrees on?)")?;
+            let branch =
+                run_now.heads.get(w).cloned().or(p.branch.clone()).context(
+                    "this workdir has no run branch (is it a git repo with worktrees on?)",
+                )?;
             let root = git::repo_root(&p.cwd)?;
             git::commit_all(&root, &format!("{}\n\nRun #{}", run.title, run.number))?;
-            let pipeline_name = store.pipeline(&run.pipeline_id).map(|p| p.name).unwrap_or_default();
+            let pipeline_name = store
+                .pipeline(&run.pipeline_id)
+                .map(|p| p.name)
+                .unwrap_or_default();
             let body = pr_body(&run_now, &pipeline_name);
-            let title = format!("{}", run.title);
+            let title = run.title.to_string();
             let url = git::open_pr(&root, &branch, &wd.base_branch, &title, &body, *draft)?;
             store.update_run(&run.id, |r| r.pr_url = Some(url.clone()))?;
             store.put_artifact(&Artifact {
@@ -1239,32 +1711,66 @@ fn exec_tool(engine: &Engine, run: &Run, node: &Node, tn: &ToolNode) -> Result<S
                 value: url.clone(),
                 created_at: now(),
             })?;
-            store.log("pr.opened", Some(&run.id), Some(&t.id), format!("Opened {url}"));
+            store.log(
+                "pr.opened",
+                Some(&run.id),
+                Some(&t.id),
+                format!("Opened {url}"),
+            );
             Ok(format!("Opened {url}"))
         }
         ToolNode::MergePr { method } => {
-            let url = store.run(&run.id).and_then(|r| r.pr_url).context("no pull request in this run")?;
-            let cwd = run.worktrees.values().next().map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+            let url = store
+                .run(&run.id)
+                .and_then(|r| r.pr_url)
+                .context("no pull request in this run")?;
+            let cwd = run
+                .worktrees
+                .values()
+                .next()
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
             git::merge_pr(&cwd, &url, method)?;
             Ok(format!("Merged {url}"))
         }
     })();
-    let ok = res.as_ref().map(|s| s.clone()).map_err(|e| anyhow!("{e:#}"));
+    let ok = res
+        .as_ref()
+        .map(|s| s.clone())
+        .map_err(|e| anyhow!("{e:#}"));
     close_task(&store, &t.id, &ok);
     let s = res?;
     t.summary = s.clone();
-    set_output(&store, &run.id, &node.id, NodeOutput { summary: s, port: None, value: Value::Null, task_id: Some(t.id) })?;
+    set_output(
+        &store,
+        &run.id,
+        &node.id,
+        NodeOutput {
+            summary: s,
+            port: None,
+            value: Value::Null,
+            task_id: Some(t.id),
+        },
+    )?;
     Ok(Step::Next(None))
 }
 
 fn pr_body(run: &Run, pipeline: &str) -> String {
-    let mut s = format!("Opened by the Pipeliner pipeline “{pipeline}” · run #{}\n\n## Task\n\n{}\n\n## Run\n\n", run.number, run.input.trim());
+    let mut s = format!(
+        "Opened by the Pipeliner pipeline “{pipeline}” · run #{}\n\n## Task\n\n{}\n\n## Run\n\n",
+        run.number,
+        run.input.trim()
+    );
     for n in &run.graph.nodes {
         if let Some(o) = run.outputs.get(&n.id) {
             if o.summary.trim().is_empty() || matches!(n.kind, NodeKind::Source(_)) {
                 continue;
             }
-            s.push_str(&format!("- **{}**: {}\n", n.name, o.summary.trim().replace('\n', " ")));
+            s.push_str(&format!(
+                "- **{}**: {}\n",
+                n.name,
+                o.summary.trim().replace('\n', " ")
+            ));
         }
     }
     s.push_str("\n🤖 Generated with Pipeliner\n");

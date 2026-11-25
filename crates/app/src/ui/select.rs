@@ -29,12 +29,18 @@ pub struct SelectOption {
 
 impl SelectOption {
     pub fn new(value: impl Into<String>, label: impl Into<SharedString>) -> Self {
-        SelectOption { value: value.into(), label: label.into() }
+        SelectOption {
+            value: value.into(),
+            label: label.into(),
+        }
     }
     /// Value and label are the same text.
     pub fn plain(v: impl Into<String>) -> Self {
         let v = v.into();
-        SelectOption { label: v.clone().into(), value: v }
+        SelectOption {
+            label: v.clone().into(),
+            value: v,
+        }
     }
 }
 
@@ -59,8 +65,12 @@ pub fn select_state(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<SelectState<Options>> {
-    let ix = selected.and_then(|v| options.iter().position(|o| o.value == v)).map(IndexPath::new);
-    cx.new(|cx| SelectState::new(SearchableVec::new(options), ix, window, cx).searchable(searchable))
+    let ix = selected
+        .and_then(|v| options.iter().position(|o| o.value == v))
+        .map(IndexPath::new);
+    cx.new(|cx| {
+        SelectState::new(SearchableVec::new(options), ix, window, cx).searchable(searchable)
+    })
 }
 
 /// Replaces the options (e.g. after the store changed), keeping `selected` if present.
@@ -71,7 +81,9 @@ pub fn set_options(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let ix = selected.and_then(|v| options.iter().position(|o| o.value == v)).map(IndexPath::new);
+    let ix = selected
+        .and_then(|v| options.iter().position(|o| o.value == v))
+        .map(IndexPath::new);
     state.update(cx, |s, cx| {
         s.set_items(SearchableVec::new(options), window, cx);
         s.set_selected_index(ix, window, cx);
@@ -80,10 +92,18 @@ pub fn set_options(
 
 /// Renders a 40px select styled like [`super::input::field`].
 pub fn select(state: &Entity<SelectState<Options>>) -> Select<Options> {
-    Select::new(state).h(theme::CONTROL_H).text_size(px(13.)).bg(theme::SURFACE_RAISED).rounded(theme::RADIUS_LG)
+    Select::new(state)
+        .h(theme::CONTROL_H)
+        .text_size(px(13.))
+        .bg(theme::SURFACE_RAISED)
+        .rounded(theme::RADIUS_LG)
 }
 
 /// 28px variant for toolbars and filters.
 pub fn select_sm(state: &Entity<SelectState<Options>>) -> Select<Options> {
-    Select::new(state).h(theme::CONTROL_H_SM).text_size(px(12.)).bg(theme::SURFACE_RAISED).rounded(theme::RADIUS_MD)
+    Select::new(state)
+        .h(theme::CONTROL_H_SM)
+        .text_size(px(12.))
+        .bg(theme::SURFACE_RAISED)
+        .rounded(theme::RADIUS_MD)
 }

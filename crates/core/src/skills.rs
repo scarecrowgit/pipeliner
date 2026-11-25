@@ -16,19 +16,27 @@ pub fn list(config: &Config) -> Vec<Skill> {
     let mut out: Vec<Skill> = vec![];
     for dir in &config.skill_dirs {
         let dir = expand_tilde(dir);
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let file = e.path().join("SKILL.md");
-            let Ok(text) = std::fs::read_to_string(&file) else { continue };
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                continue;
+            };
             let dir_name = e.file_name().to_string_lossy().to_string();
             let (name, description) = front_matter(&text);
             let name = name.unwrap_or(dir_name);
             if out.iter().any(|s| s.name == name) {
                 continue;
             }
-            out.push(Skill { name, description: description.unwrap_or_default(), path: file });
+            out.push(Skill {
+                name,
+                description: description.unwrap_or_default(),
+                path: file,
+            });
         }
     }
     out
@@ -39,7 +47,11 @@ pub fn load(config: &Config, name: &str) -> Option<String> {
     let skill = list(config).into_iter().find(|s| s.name == name)?;
     let text = std::fs::read_to_string(&skill.path).ok()?;
     let body = strip_front_matter(&text);
-    let base = skill.path.parent().map(|p| p.display().to_string()).unwrap_or_default();
+    let base = skill
+        .path
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
     Some(format!("# Skill: {name}\nBase directory: {base}\n\n{body}"))
 }
 

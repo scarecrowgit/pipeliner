@@ -31,7 +31,9 @@ pub fn git(cwd: &Path, args: &[&str]) -> Result<String> {
 }
 
 pub fn is_repo(path: &Path) -> bool {
-    git(path, &["rev-parse", "--is-inside-work-tree"]).map(|s| s == "true").unwrap_or(false)
+    git(path, &["rev-parse", "--is-inside-work-tree"])
+        .map(|s| s == "true")
+        .unwrap_or(false)
 }
 
 pub fn repo_root(path: &Path) -> Result<PathBuf> {
@@ -43,11 +45,23 @@ pub fn subdir(workdir: &Workdir) -> Result<PathBuf> {
     let p = expand_tilde(&workdir.path);
     let root = repo_root(&p)?;
     let canon = p.canonicalize().unwrap_or(p.clone());
-    Ok(canon.strip_prefix(&root).map(|s| s.to_path_buf()).unwrap_or_default())
+    Ok(canon
+        .strip_prefix(&root)
+        .map(|s| s.to_path_buf())
+        .unwrap_or_default())
 }
 
 pub fn branch_exists(repo: &Path, branch: &str) -> bool {
-    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+    git(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
 }
 
 /// Creates a worktree at `dest` on a new branch `branch` starting from `from`.
@@ -71,7 +85,10 @@ pub fn add_worktree(workdir: &Workdir, dest: &Path, branch: &str, from: &str) ->
 
 pub fn remove_worktree(workdir: &Workdir, dest: &Path) {
     if let Ok(repo) = repo_root(&expand_tilde(&workdir.path)) {
-        let _ = git(&repo, &["worktree", "remove", "--force", &dest.to_string_lossy()]);
+        let _ = git(
+            &repo,
+            &["worktree", "remove", "--force", &dest.to_string_lossy()],
+        );
     }
 }
 
@@ -83,7 +100,17 @@ pub fn commit_all(cwd: &Path, message: &str) -> Result<bool> {
     }
     git(
         cwd,
-        &["-c", "user.name=Pipeliner", "-c", "user.email=pipeliner@localhost", "commit", "-q", "--no-verify", "-m", message],
+        &[
+            "-c",
+            "user.name=Pipeliner",
+            "-c",
+            "user.email=pipeliner@localhost",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            message,
+        ],
     )?;
     Ok(true)
 }
@@ -91,8 +118,8 @@ pub fn commit_all(cwd: &Path, message: &str) -> Result<bool> {
 /// Unified diff of the working tree (including untracked files) against `base`.
 pub fn diff_against(cwd: &Path, base: &str) -> String {
     let _ = git(cwd, &["add", "-A", "--intent-to-add"]);
-    let d = git(cwd, &["diff", "--no-color", base]).unwrap_or_default();
-    d
+
+    git(cwd, &["diff", "--no-color", base]).unwrap_or_default()
 }
 
 /// Files changed in the working tree + commits since `base`.
@@ -127,21 +154,51 @@ pub fn diff_stat(diff: &str) -> (usize, usize, usize) {
 }
 
 /// Pushes `branch` and opens a PR with `gh`. Returns the PR URL.
-pub fn open_pr(cwd: &Path, branch: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String> {
+pub fn open_pr(
+    cwd: &Path,
+    branch: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    draft: bool,
+) -> Result<String> {
     git(cwd, &["push", "-u", "--force-with-lease", "origin", branch])?;
     // Reuse an existing PR for this branch.
-    if let Ok(url) = run(cwd, "gh", &["pr", "view", branch, "--json", "url,state", "-q", "select(.state == \"OPEN\") | .url"]) {
+    if let Ok(url) = run(
+        cwd,
+        "gh",
+        &[
+            "pr",
+            "view",
+            branch,
+            "--json",
+            "url,state",
+            "-q",
+            "select(.state == \"OPEN\") | .url",
+        ],
+    ) {
         if url.starts_with("http") {
-            let _ = run(cwd, "gh", &["pr", "edit", branch, "--title", title, "--body", body]);
+            let _ = run(
+                cwd,
+                "gh",
+                &["pr", "edit", branch, "--title", title, "--body", body],
+            );
             return Ok(url);
         }
     }
-    let mut args = vec!["pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body];
+    let mut args = vec![
+        "pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body,
+    ];
     if draft {
         args.push("--draft");
     }
     let out = run(cwd, "gh", &args)?;
-    let url = out.lines().rev().find(|l| l.starts_with("http")).unwrap_or(&out).to_string();
+    let url = out
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("http"))
+        .unwrap_or(&out)
+        .to_string();
     Ok(url)
 }
 
@@ -153,7 +210,11 @@ pub fn merge_pr(cwd: &Path, url: &str, method: &str) -> Result<String> {
     };
     // A draft PR can't be merged; mark it ready first.
     let _ = run(cwd, "gh", &["pr", "ready", url]);
-    run(cwd, "gh", &["pr", "merge", url, flag, "--delete-branch=false"])
+    run(
+        cwd,
+        "gh",
+        &["pr", "merge", url, flag, "--delete-branch=false"],
+    )
 }
 
 pub fn slug(s: &str) -> String {
@@ -176,7 +237,10 @@ mod tests {
     use super::*;
     #[test]
     fn slugs() {
-        assert_eq!(slug("Fix: Counters update chaotically!"), "fix-counters-update-chaotically");
+        assert_eq!(
+            slug("Fix: Counters update chaotically!"),
+            "fix-counters-update-chaotically"
+        );
     }
     #[test]
     fn stats() {

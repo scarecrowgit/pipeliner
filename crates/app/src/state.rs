@@ -26,17 +26,27 @@ use crate::theme;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
     Home,
-    Review { task: Option<Id> },
-    Chat { chat: Option<Id> },
+    Review {
+        task: Option<Id>,
+    },
+    Chat {
+        chat: Option<Id>,
+    },
     Board,
     Timeline,
-    Pipelines { pipeline: Option<Id> },
-    Agents { agent: Option<Id> },
+    Pipelines {
+        pipeline: Option<Id>,
+    },
+    Agents {
+        agent: Option<Id>,
+    },
     Memory,
     Policies,
     Settings,
     /// A task's thread (any task: pipeline step, chat task, spawned sub-agent).
-    Task { task: Id },
+    Task {
+        task: Id,
+    },
 }
 
 /// The screen a route renders; the shell keeps one cached screen entity per kind.
@@ -137,7 +147,10 @@ impl Route {
 pub enum AppEvent {
     /// The store changed (coalesced). `changes` lists what changed since the last event;
     /// it contains [`Change::External`] when another process wrote (re-query everything).
-    StoreChanged { revision: u64, changes: Arc<Vec<Change>> },
+    StoreChanged {
+        revision: u64,
+        changes: Arc<Vec<Change>>,
+    },
     /// The route changed (also emitted when only the route's id changed).
     Navigated(Route),
     /// ctrl/cmd-K: the shell opens (or closes) the command palette.
@@ -257,7 +270,10 @@ impl AppState {
                 let changes = Arc::new(changes);
                 let alive = this.update(cx, |state, cx| {
                     state.revision += 1;
-                    cx.emit(AppEvent::StoreChanged { revision: state.revision, changes });
+                    cx.emit(AppEvent::StoreChanged {
+                        revision: state.revision,
+                        changes,
+                    });
                     cx.notify();
                 });
                 if alive.is_err() {
@@ -265,7 +281,10 @@ impl AppState {
                 }
             }
         });
-        let route = std::env::var("PIPELINER_ROUTE").ok().and_then(|r| Route::from_name(&r)).unwrap_or(Route::Home);
+        let route = std::env::var("PIPELINER_ROUTE")
+            .ok()
+            .and_then(|r| Route::from_name(&r))
+            .unwrap_or(Route::Home);
         AppState {
             engine,
             route,
@@ -352,7 +371,9 @@ impl AppState {
     }
 
     pub fn back(&mut self, cx: &mut Context<Self>) {
-        let Some(route) = self.history.pop() else { return };
+        let Some(route) = self.history.pop() else {
+            return;
+        };
         if route.kind() != self.route.kind() {
             self.nav_seq += 1;
         }
@@ -364,7 +385,9 @@ impl AppState {
 
     fn remember(&mut self, route: &Route) {
         match route {
-            Route::Review { task: Some(t) } | Route::Task { task: t } => self.selection.task = Some(t.clone()),
+            Route::Review { task: Some(t) } | Route::Task { task: t } => {
+                self.selection.task = Some(t.clone())
+            }
             Route::Chat { chat: Some(c) } => self.selection.chat = Some(c.clone()),
             Route::Pipelines { pipeline: Some(p) } => self.selection.pipeline = Some(p.clone()),
             Route::Agents { agent: Some(a) } => self.selection.agent = Some(a.clone()),
@@ -373,10 +396,20 @@ impl AppState {
     }
 
     /// Shows a toast bottom-right; it dismisses itself.
-    pub fn toast(&mut self, kind: ToastKind, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub fn toast(
+        &mut self,
+        kind: ToastKind,
+        text: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         let id = self.next_toast;
         self.next_toast += 1;
-        self.toasts.push(Toast { id, kind, text: text.into(), leaving: false });
+        self.toasts.push(Toast {
+            id,
+            kind,
+            text: text.into(),
+            leaving: false,
+        });
         // Keep the stack short.
         while self.toasts.len() > 4 {
             self.toasts.remove(0);
@@ -392,7 +425,9 @@ impl AppState {
 
     /// Plays the exit animation, then removes the toast.
     pub fn dismiss_toast(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) else { return };
+        let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
         if t.leaving {
             return;
         }

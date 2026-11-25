@@ -22,16 +22,29 @@ pub struct UpdateStatus {
 }
 
 pub fn status(engine: &Engine) -> Result<UpdateStatus> {
-    let repo = templates::self_repo(&engine.config()).context("this build doesn't know its repository; set it in Settings")?;
+    let repo = templates::self_repo(&engine.config())
+        .context("this build doesn't know its repository; set it in Settings")?;
     let branch = git::git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     let _ = git::git(&repo, &["fetch", "--quiet", "origin", &branch]);
-    let behind = git::git(&repo, &["rev-list", "--count", &format!("HEAD..origin/{branch}")])
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let dirty = !git::git(&repo, &["status", "--porcelain"]).unwrap_or_default().trim().is_empty();
+    let behind = git::git(
+        &repo,
+        &["rev-list", "--count", &format!("HEAD..origin/{branch}")],
+    )
+    .ok()
+    .and_then(|s| s.trim().parse().ok())
+    .unwrap_or(0);
+    let dirty = !git::git(&repo, &["status", "--porcelain"])
+        .unwrap_or_default()
+        .trim()
+        .is_empty();
     let head = git::git(&repo, &["log", "-1", "--format=%h %s"]).unwrap_or_default();
-    Ok(UpdateStatus { repo, branch, behind, dirty, head })
+    Ok(UpdateStatus {
+        repo,
+        branch,
+        behind,
+        dirty,
+        head,
+    })
 }
 
 /// Pulls (fast-forward only) and builds `--release`. Returns the new binary's path.
@@ -47,11 +60,20 @@ pub fn update(engine: &Engine, log: &mut dyn FnMut(&str)) -> Result<PathBuf> {
     }
     log("Building release (this can take a few minutes)…");
     let shell = crate::chat::shell_for(Some(&st.repo));
-    let target = std::env::var("CARGO_TARGET_DIR").ok().unwrap_or_else(|| st.repo.join("target").display().to_string());
+    let target = std::env::var("CARGO_TARGET_DIR")
+        .ok()
+        .unwrap_or_else(|| st.repo.join("target").display().to_string());
     let mut env = std::collections::BTreeMap::new();
     env.insert("CARGO_TARGET_DIR".to_string(), target.clone());
     let never = AtomicBool::new(false);
-    let out = tools::run_command(&st.repo, &shell, &env, "cargo build --release -p pipeliner", Duration::from_secs(3600), &never)?;
+    let out = tools::run_command(
+        &st.repo,
+        &shell,
+        &env,
+        "cargo build --release -p pipeliner",
+        Duration::from_secs(3600),
+        &never,
+    )?;
     if !out.starts_with("exit code 0") {
         bail!("build failed:\n{}", tools::truncate_middle(&out, 3000));
     }
@@ -59,7 +81,9 @@ pub fn update(engine: &Engine, log: &mut dyn FnMut(&str)) -> Result<PathBuf> {
     if !bin.exists() {
         bail!("build finished but {} is missing", bin.display());
     }
-    engine.store().log("app.updated", None, None, format!("Built {}", st.head));
+    engine
+        .store()
+        .log("app.updated", None, None, format!("Built {}", st.head));
     log("Built. Restarting…");
     Ok(bin)
 }

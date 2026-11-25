@@ -29,14 +29,43 @@ pub const fn hexa(rgb: u32, a: f32) -> Hsla {
     let r = ((rgb >> 16) & 0xff) as f32 / 255.0;
     let g = ((rgb >> 8) & 0xff) as f32 / 255.0;
     let b = (rgb & 0xff) as f32 / 255.0;
-    let max = if r > g { if r > b { r } else { b } } else if g > b { g } else { b };
-    let min = if r < g { if r < b { r } else { b } } else if g < b { g } else { b };
+    let max = if r > g {
+        if r > b {
+            r
+        } else {
+            b
+        }
+    } else if g > b {
+        g
+    } else {
+        b
+    };
+    let min = if r < g {
+        if r < b {
+            r
+        } else {
+            b
+        }
+    } else if g < b {
+        g
+    } else {
+        b
+    };
     let l = (max + min) / 2.0;
     if max == min {
-        return Hsla { h: 0.0, s: 0.0, l, a };
+        return Hsla {
+            h: 0.0,
+            s: 0.0,
+            l,
+            a,
+        };
     }
     let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
     let h = if max == r {
         (g - b) / d + if g < b { 6.0 } else { 0.0 }
     } else if max == g {
@@ -44,12 +73,22 @@ pub const fn hexa(rgb: u32, a: f32) -> Hsla {
     } else {
         (r - g) / d + 4.0
     };
-    Hsla { h: h / 6.0, s, l, a }
+    Hsla {
+        h: h / 6.0,
+        s,
+        l,
+        a,
+    }
 }
 
 /// Same color with a different alpha.
 pub const fn alpha(c: Hsla, a: f32) -> Hsla {
-    Hsla { h: c.h, s: c.s, l: c.l, a }
+    Hsla {
+        h: c.h,
+        s: c.s,
+        l: c.l,
+        a,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +142,12 @@ pub const DIFF_DEL_TEXT: Hsla = hex(0xf3a6a6);
 
 /// Modal backdrop.
 pub const SCRIM: Hsla = hexa(0x08090a, 0.72);
-pub const TRANSPARENT: Hsla = Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 };
+pub const TRANSPARENT: Hsla = Hsla {
+    h: 0.0,
+    s: 0.0,
+    l: 0.0,
+    a: 0.0,
+};
 
 // ---------------------------------------------------------------------------
 // Spacing, radius, sizes
@@ -202,7 +246,14 @@ pub fn init_fonts(cx: &App) {
     };
     let sans = pick(&["Inter", "Inter Variable"], ".SystemUIFont");
     let mono = pick(
-        &["JetBrains Mono", "JetBrainsMono Nerd Font", "Geist Mono", "DejaVu Sans Mono", "Menlo", "Consolas"],
+        &[
+            "JetBrains Mono",
+            "JetBrainsMono Nerd Font",
+            "Geist Mono",
+            "DejaVu Sans Mono",
+            "Menlo",
+            "Consolas",
+        ],
         "monospace",
     );
     let _ = FONTS.set(Fonts { sans, mono });
@@ -210,12 +261,18 @@ pub fn init_fonts(cx: &App) {
 
 /// UI font family.
 pub fn sans() -> SharedString {
-    FONTS.get().map(|f| f.sans.clone()).unwrap_or_else(|| ".SystemUIFont".into())
+    FONTS
+        .get()
+        .map(|f| f.sans.clone())
+        .unwrap_or_else(|| ".SystemUIFont".into())
 }
 
 /// Monospace font family (ids, code, diffs, numbers in tables).
 pub fn mono() -> SharedString {
-    FONTS.get().map(|f| f.mono.clone()).unwrap_or_else(|| "monospace".into())
+    FONTS
+        .get()
+        .map(|f| f.mono.clone())
+        .unwrap_or_else(|| "monospace".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -336,43 +393,65 @@ pub fn apply_component_theme(cx: &mut App) {
 pub trait TextStyles: Styled + Sized {
     /// 13/20 400.
     fn text_body(self) -> Self {
-        self.text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::NORMAL)
+        self.text_size(px(13.))
+            .line_height(px(20.))
+            .font_weight(FontWeight::NORMAL)
     }
     /// 13/20 500.
     fn text_body_strong(self) -> Self {
-        self.text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::MEDIUM)
+        self.text_size(px(13.))
+            .line_height(px(20.))
+            .font_weight(FontWeight::MEDIUM)
     }
     /// 14/20 500. Card / section headings.
     fn text_heading(self) -> Self {
-        self.text_size(px(14.)).line_height(px(20.)).font_weight(FontWeight::MEDIUM)
+        self.text_size(px(14.))
+            .line_height(px(20.))
+            .font_weight(FontWeight::MEDIUM)
     }
     /// 12/18 400. Labels, captions, meta.
     fn text_label(self) -> Self {
-        self.text_size(px(12.)).line_height(px(18.)).font_weight(FontWeight::NORMAL)
+        self.text_size(px(12.))
+            .line_height(px(18.))
+            .font_weight(FontWeight::NORMAL)
     }
     /// 12/20 mono.
     fn text_mono(self) -> Self {
-        self.font_family(mono()).text_size(px(12.)).line_height(px(20.)).font_weight(FontWeight::NORMAL)
+        self.font_family(mono())
+            .text_size(px(12.))
+            .line_height(px(20.))
+            .font_weight(FontWeight::NORMAL)
     }
     /// 11/16 mono.
     fn text_mono_sm(self) -> Self {
-        self.font_family(mono()).text_size(px(11.)).line_height(px(16.)).font_weight(FontWeight::NORMAL)
+        self.font_family(mono())
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .font_weight(FontWeight::NORMAL)
     }
     /// 28/32 600. Big numbers in stat rows.
     fn text_stat(self) -> Self {
-        self.text_size(px(28.)).line_height(px(32.)).font_weight(FontWeight::SEMIBOLD)
+        self.text_size(px(28.))
+            .line_height(px(32.))
+            .font_weight(FontWeight::SEMIBOLD)
     }
     /// 18/24 500. Small stat values.
     fn text_stat_sm(self) -> Self {
-        self.text_size(px(18.)).line_height(px(24.)).font_weight(FontWeight::MEDIUM)
+        self.text_size(px(18.))
+            .line_height(px(24.))
+            .font_weight(FontWeight::MEDIUM)
     }
     /// 20/28 600. Page / item titles.
     fn text_title(self) -> Self {
-        self.text_size(px(20.)).line_height(px(28.)).font_weight(FontWeight::SEMIBOLD)
+        self.text_size(px(20.))
+            .line_height(px(28.))
+            .font_weight(FontWeight::SEMIBOLD)
     }
     /// 22/28 600.
     fn text_title_lg(self) -> Self {
-        self.text_size(px(22.)).line_height(px(28.)).font_weight(FontWeight::SEMIBOLD)
+        self.text_size(px(22.))
+            .line_height(px(28.))
+            .font_weight(FontWeight::SEMIBOLD)
     }
 
     fn fg(self) -> Self {

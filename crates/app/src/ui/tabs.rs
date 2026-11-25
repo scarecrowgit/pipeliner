@@ -32,7 +32,13 @@ pub struct Tabs {
 
 impl Tabs {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Tabs { id: id.into(), tabs: vec![], selected: 0, on_select: None, style: StyleRefinement::default() }
+        Tabs {
+            id: id.into(),
+            tabs: vec![],
+            selected: 0,
+            on_select: None,
+            style: StyleRefinement::default(),
+        }
     }
     pub fn tab(mut self, label: impl Into<SharedString>) -> Self {
         self.tabs.push((label.into(), None));
@@ -74,41 +80,56 @@ impl RenderOnce for Tabs {
             .border_b_1()
             .border_color(theme::LINE)
             .refine_style(&self.style)
-            .children(self.tabs.into_iter().enumerate().map(|(ix, (label, count))| {
-                let active = ix == selected;
-                let on_select = self.on_select.clone();
-                div()
-                    .id(ix)
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h_full()
-                    .text_body()
-                    .cursor_pointer()
-                    .when(active, |d| d.fg().font_weight(gpui::FontWeight::MEDIUM))
-                    .when(!active, |d| d.fg_muted().hover(|s| s.text_color(theme::TEXT)))
-                    .child(label)
-                    .when_some(count, |d, n| {
-                        d.child(div().fg_muted().font_weight(gpui::FontWeight::NORMAL).child(n.to_string()))
-                    })
-                    .when(active, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .bottom(px(-1.))
-                                .left_0()
-                                .h(px(2.))
-                                .w_full()
-                                .bg(theme::ACCENT)
-                                .with_animation(
-                                    ElementId::Name(format!("{id}-underline-{ix}").into()),
-                                    Animation::new(theme::DUR_STATE).with_easing(theme::ease_out),
-                                    |d, t| d.w(relative(t)).left(relative((1.0 - t) / 2.0)),
-                                ),
-                        )
-                    })
-                    .when_some(on_select, |d, f| d.on_click(move |_, window, cx| f(&ix, window, cx)))
-            }))
+            .children(
+                self.tabs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (label, count))| {
+                        let active = ix == selected;
+                        let on_select = self.on_select.clone();
+                        div()
+                            .id(ix)
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .h_full()
+                            .text_body()
+                            .cursor_pointer()
+                            .when(active, |d| d.fg().font_weight(gpui::FontWeight::MEDIUM))
+                            .when(!active, |d| {
+                                d.fg_muted().hover(|s| s.text_color(theme::TEXT))
+                            })
+                            .child(label)
+                            .when_some(count, |d, n| {
+                                d.child(
+                                    div()
+                                        .fg_muted()
+                                        .font_weight(gpui::FontWeight::NORMAL)
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .when(active, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .bottom(px(-1.))
+                                        .left_0()
+                                        .h(px(2.))
+                                        .w_full()
+                                        .bg(theme::ACCENT)
+                                        .with_animation(
+                                            ElementId::Name(format!("{id}-underline-{ix}").into()),
+                                            Animation::new(theme::DUR_STATE)
+                                                .with_easing(theme::ease_out),
+                                            |d, t| d.w(relative(t)).left(relative((1.0 - t) / 2.0)),
+                                        ),
+                                )
+                            })
+                            .when_some(on_select, |d, f| {
+                                d.on_click(move |_, window, cx| f(&ix, window, cx))
+                            })
+                    }),
+            )
     }
 }

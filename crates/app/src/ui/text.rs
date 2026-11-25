@@ -35,7 +35,11 @@ pub struct CodeBlock {
 
 impl CodeBlock {
     pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
-        CodeBlock { id: id.into(), text: text.into(), max_height: None }
+        CodeBlock {
+            id: id.into(),
+            text: text.into(),
+            max_height: None,
+        }
     }
     /// Scroll vertically beyond this height.
     pub fn max_height(mut self, h: gpui::Pixels) -> Self {
@@ -60,8 +64,17 @@ impl RenderOnce for CodeBlock {
         if let Some(h) = self.max_height {
             d = d.max_h(h).overflow_y_scroll();
         }
-        d.child(div().whitespace_nowrap().flex().flex_col().children(
-            self.text.lines().map(|l| div().min_h(px(20.)).child(SharedString::from(l.replace('\t', "    ")))).collect::<Vec<_>>(),
-        ))
+        d.child(
+            div().whitespace_nowrap().flex().flex_col().children(
+                self.text
+                    .lines()
+                    .map(|l| {
+                        div()
+                            .min_h(px(20.))
+                            .child(SharedString::from(l.replace('\t', "    ")))
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        )
     }
 }

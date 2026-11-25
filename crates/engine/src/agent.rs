@@ -56,8 +56,10 @@ impl<'a> AgentRun<'a> {
         let engine = self.engine;
         let store = engine.store().clone();
         let config = engine.config();
-        let (provider, model_id) =
-            config.resolve(&self.model).map(|(p, m)| (p.clone(), m)).context("no model provider configured (Settings › Models)")?;
+        let (provider, model_id) = config
+            .resolve(&self.model)
+            .map(|(p, m)| (p.clone(), m))
+            .context("no model provider configured (Settings › Models)")?;
         let cancel = self.tools.cancel.clone();
 
         let mut msgs: Vec<Msg> = vec![Msg::System(self.stack.system(&config))];
@@ -99,13 +101,21 @@ impl<'a> AgentRun<'a> {
             // Keep sending tool specs (some gateways reject tool history without them);
             // during wrap-up any calls are ignored.
             let tools_now: &[ToolSpec] = &specs;
-            let reply = llm::complete(&provider, &model_id, &msgs, tools_now, None, &cancel_fn, &mut |delta| {
-                m.content.push_str(delta);
-                if last_flush.elapsed() > Duration::from_millis(120) {
-                    let _ = store.put_message(&m);
-                    last_flush = Instant::now();
-                }
-            });
+            let reply = llm::complete(
+                &provider,
+                &model_id,
+                &msgs,
+                tools_now,
+                None,
+                &cancel_fn,
+                &mut |delta| {
+                    m.content.push_str(delta);
+                    if last_flush.elapsed() > Duration::from_millis(120) {
+                        let _ = store.put_message(&m);
+                        last_flush = Instant::now();
+                    }
+                },
+            );
             let reply = match reply {
                 Ok(r) => r,
                 Err(e) => {
@@ -134,12 +144,23 @@ impl<'a> AgentRun<'a> {
 
             m.content = reply.content.clone();
             m.partial = false;
-            m.tool_calls = reply.calls.iter().map(|c| ToolCall { id: c.id.clone(), name: c.name.clone(), arguments: c.arguments.clone() }).collect();
+            m.tool_calls = reply
+                .calls
+                .iter()
+                .map(|c| ToolCall {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    arguments: c.arguments.clone(),
+                })
+                .collect();
             if m.content.trim().is_empty() && m.tool_calls.is_empty() {
                 m.content = "(no reply)".into();
             }
             store.put_message(&m)?;
-            msgs.push(Msg::Assistant { content: reply.content.clone(), tool_calls: reply.calls.clone() });
+            msgs.push(Msg::Assistant {
+                content: reply.content.clone(),
+                tool_calls: reply.calls.clone(),
+            });
 
             if reply.calls.is_empty() || wrap_up {
                 if wrap_up && !reply.calls.is_empty() {
@@ -167,12 +188,23 @@ impl<'a> AgentRun<'a> {
             let results = self.execute_calls(&reply.calls, handler);
             let mut stop: Option<Value> = None;
             for (call, (text, stop_value)) in reply.calls.iter().zip(results) {
-                let mut tm = Message::new(&self.thread_id, Role::Tool, tools::truncate_middle(&text, 6000));
+                let mut tm = Message::new(
+                    &self.thread_id,
+                    Role::Tool,
+                    tools::truncate_middle(&text, 6000),
+                );
                 tm.author = call.name.clone();
                 tm.tool_call_id = Some(call.id.clone());
-                tm.tool_calls = vec![ToolCall { id: call.id.clone(), name: call.name.clone(), arguments: call.arguments.clone() }];
+                tm.tool_calls = vec![ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                }];
                 store.put_message(&tm)?;
-                msgs.push(Msg::Tool { call_id: call.id.clone(), content: tools::truncate_middle(&text, 20_000) });
+                msgs.push(Msg::Tool {
+                    call_id: call.id.clone(),
+                    content: tools::truncate_middle(&text, 20_000),
+                });
                 if let Some(v) = stop_value {
                     stop = Some(v);
                 }
@@ -198,16 +230,24 @@ impl<'a> AgentRun<'a> {
                 continue;
             }
             let args = parse(c);
-            if c.arguments.trim().is_empty() || args.is_null() && c.arguments.trim() != "null" {
-                if serde_json::from_str::<Value>(&c.arguments).is_err() {
-                    results[i] = Some((format!("Error: arguments are not valid JSON: {}", c.arguments), None));
-                    continue;
-                }
+            if (c.arguments.trim().is_empty() || args.is_null() && c.arguments.trim() != "null")
+                && serde_json::from_str::<Value>(&c.arguments).is_err()
+            {
+                results[i] = Some((
+                    format!("Error: arguments are not valid JSON: {}", c.arguments),
+                    None,
+                ));
+                continue;
             }
-            let r = handler(self, c, &args).map(|h| handled(Some(h))).unwrap_or_else(|| (tools::execute(&self.tools, &c.name, &args), None));
+            let r = handler(self, c, &args)
+                .map(|h| handled(Some(h)))
+                .unwrap_or_else(|| (tools::execute(&self.tools, &c.name, &args), None));
             results[i] = Some(r);
         }
-        results.into_iter().map(|r| r.unwrap_or_else(|| ("Error: tool did not run".into(), None))).collect()
+        results
+            .into_iter()
+            .map(|r| r.unwrap_or_else(|| ("Error: tool did not run".into(), None)))
+            .collect()
     }
 }
 
@@ -226,7 +266,10 @@ fn compact(msgs: &mut [Msg]) {
         .iter()
         .map(|m| match m {
             Msg::System(s) | Msg::User(s) => s.len(),
-            Msg::Assistant { content, tool_calls } => content.len() + tool_calls.iter().map(|c| c.arguments.len()).sum::<usize>(),
+            Msg::Assistant {
+                content,
+                tool_calls,
+            } => content.len() + tool_calls.iter().map(|c| c.arguments.len()).sum::<usize>(),
             Msg::Tool { content, .. } => content.len(),
         })
         .sum();

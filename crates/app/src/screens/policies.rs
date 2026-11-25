@@ -14,6 +14,11 @@ impl Render for PoliciesScreen {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         screen()
             .child(PageHeader::new("Policies").meta(Badge::new("Not in this release")))
-            .child(body().child(EmptyState::not_available("Policies (budgets, approvals and spawn limits)").id("policies-na")))
+            .child(
+                body().child(
+                    EmptyState::not_available("Policies (budgets, approvals and spawn limits)")
+                        .id("policies-na"),
+                ),
+            )
     }
 }

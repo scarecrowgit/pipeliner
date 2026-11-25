@@ -56,12 +56,19 @@ impl ParsedDiff {
         let mut in_hunk = false;
         let strip = |p: &str| -> String {
             let p = p.split('\t').next().unwrap_or(p).trim();
-            p.strip_prefix("a/").or_else(|| p.strip_prefix("b/")).unwrap_or(p).to_string()
+            p.strip_prefix("a/")
+                .or_else(|| p.strip_prefix("b/"))
+                .unwrap_or(p)
+                .to_string()
         };
         for raw in text.lines() {
             if let Some(rest) = raw.strip_prefix("diff --git ") {
                 let path = rest.rsplit(" b/").next().unwrap_or(rest).to_string();
-                files.push(DiffFile { path, status: "modified", ..Default::default() });
+                files.push(DiffFile {
+                    path,
+                    status: "modified",
+                    ..Default::default()
+                });
                 in_hunk = false;
                 continue;
             }
@@ -88,7 +95,11 @@ impl ParsedDiff {
                 if let Some(p) = raw.strip_prefix("--- ") {
                     // A diff without `diff --git` headers starts a file here.
                     if files.last().is_none_or(|f| !f.lines.is_empty()) {
-                        files.push(DiffFile { path: strip(p), status: "modified", ..Default::default() });
+                        files.push(DiffFile {
+                            path: strip(p),
+                            status: "modified",
+                            ..Default::default()
+                        });
                     }
                     if p.trim() == "/dev/null" {
                         if let Some(f) = files.last_mut() {
@@ -116,17 +127,31 @@ impl ParsedDiff {
                 old_left = oc;
                 new_left = nc;
                 if files.is_empty() {
-                    files.push(DiffFile { path: String::new(), status: "modified", ..Default::default() });
+                    files.push(DiffFile {
+                        path: String::new(),
+                        status: "modified",
+                        ..Default::default()
+                    });
                 }
                 if let Some(f) = files.last_mut() {
-                    f.lines.push(DiffLine { kind: DiffLineKind::Hunk, old: None, new: None, text: raw.to_string().into() });
+                    f.lines.push(DiffLine {
+                        kind: DiffLineKind::Hunk,
+                        old: None,
+                        new: None,
+                        text: raw.to_string().into(),
+                    });
                 }
                 continue;
             }
             let Some(f) = files.last_mut() else { continue };
             if !in_hunk {
                 if raw.starts_with("Binary files") {
-                    f.lines.push(DiffLine { kind: DiffLineKind::Meta, old: None, new: None, text: raw.to_string().into() });
+                    f.lines.push(DiffLine {
+                        kind: DiffLineKind::Meta,
+                        old: None,
+                        new: None,
+                        text: raw.to_string().into(),
+                    });
                 }
                 continue;
             }
@@ -147,19 +172,39 @@ impl ParsedDiff {
                 DiffLineKind::Add => {
                     f.added += 1;
                     new_no += 1;
-                    DiffLine { kind, old: None, new: Some(new_no - 1), text }
+                    DiffLine {
+                        kind,
+                        old: None,
+                        new: Some(new_no - 1),
+                        text,
+                    }
                 }
                 DiffLineKind::Del => {
                     f.removed += 1;
                     old_no += 1;
-                    DiffLine { kind, old: Some(old_no - 1), new: None, text }
+                    DiffLine {
+                        kind,
+                        old: Some(old_no - 1),
+                        new: None,
+                        text,
+                    }
                 }
                 DiffLineKind::Context => {
                     old_no += 1;
                     new_no += 1;
-                    DiffLine { kind, old: Some(old_no - 1), new: Some(new_no - 1), text }
+                    DiffLine {
+                        kind,
+                        old: Some(old_no - 1),
+                        new: Some(new_no - 1),
+                        text,
+                    }
                 }
-                _ => DiffLine { kind, old: None, new: None, text },
+                _ => DiffLine {
+                    kind,
+                    old: None,
+                    new: None,
+                    text,
+                },
             };
             match kind {
                 DiffLineKind::Add => new_left = new_left.saturating_sub(1),
@@ -218,7 +263,10 @@ pub struct DiffView {
 
 impl DiffView {
     pub fn new(diff: Arc<ParsedDiff>) -> Self {
-        DiffView { diff, max_lines: 4000 }
+        DiffView {
+            diff,
+            max_lines: 4000,
+        }
     }
     pub fn max_lines(mut self, n: usize) -> Self {
         self.max_lines = n;
@@ -254,9 +302,23 @@ impl RenderOnce for DiffView {
                 .border_color(theme::LINE)
                 .child(icon_sized(AppIcon::File, theme::ICON_SM).text_color(theme::TEXT_MUTED))
                 .child(div().fg().truncate().child(f.path.clone()))
-                .child(div().font_family(theme::sans()).text_label().fg_muted().child(f.status))
-                .child(div().text_color(theme::DIFF_ADD_TEXT).child(format!("+{}", f.added)))
-                .child(div().text_color(theme::DIFF_DEL_TEXT).child(format!("-{}", f.removed)));
+                .child(
+                    div()
+                        .font_family(theme::sans())
+                        .text_label()
+                        .fg_muted()
+                        .child(f.status),
+                )
+                .child(
+                    div()
+                        .text_color(theme::DIFF_ADD_TEXT)
+                        .child(format!("+{}", f.added)),
+                )
+                .child(
+                    div()
+                        .text_color(theme::DIFF_DEL_TEXT)
+                        .child(format!("-{}", f.removed)),
+                );
             out = out.child(header);
             let take = f.lines.len().min(budget);
             budget -= take;
@@ -276,7 +338,14 @@ impl RenderOnce for DiffView {
                     .child(line_no(l.old))
                     .child(line_no(l.new))
                     .child(div().w(px(20.)).flex_none().text_color(fg).child(sign))
-                    .child(div().flex_1().min_w_0().pr(theme::S4).text_color(fg).child(l.text.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .pr(theme::S4)
+                            .text_color(fg)
+                            .child(l.text.clone()),
+                    )
             }));
             if budget == 0 {
                 break;
@@ -316,7 +385,9 @@ mod tests {
 
     #[test]
     fn plain_multi_file() {
-        let d = ParsedDiff::parse("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n--- a/y\n+++ b/y\n@@ -1,2 +1 @@\n ctx\n-z\n");
+        let d = ParsedDiff::parse(
+            "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n--- a/y\n+++ b/y\n@@ -1,2 +1 @@\n ctx\n-z\n",
+        );
         assert_eq!(d.files.len(), 2);
         assert_eq!(d.files[1].path, "y");
         assert_eq!(d.removed(), 2);

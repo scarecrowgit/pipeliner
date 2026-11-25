@@ -185,7 +185,7 @@ impl PipelineGraph {
     pub fn next(&self, id: &str, port: Option<&str>) -> Vec<&Edge> {
         self.edges
             .iter()
-            .filter(|e| e.from == id && port.map_or(true, |p| e.port.as_deref() == Some(p)))
+            .filter(|e| e.from == id && port.is_none_or(|p| e.port.as_deref() == Some(p)))
             .collect()
     }
     pub fn incoming(&self, id: &str) -> Vec<&Edge> {
@@ -207,6 +207,7 @@ pub struct Node {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum NodeKind {
     /// Where a run's input comes from. Every run starts here.
     Source(SourceNode),
@@ -241,8 +242,9 @@ impl NodeKind {
         match self {
             NodeKind::Decision(_) => vec![Some("yes".into()), Some("no".into())],
             NodeKind::Router(r) => {
-                let mut v: Vec<Option<String>> =
-                    (1..=r.rules.len()).map(|i| Some(format!("rule{i}"))).collect();
+                let mut v: Vec<Option<String>> = (1..=r.rules.len())
+                    .map(|i| Some(format!("rule{i}")))
+                    .collect();
                 v.push(Some("else".into()));
                 v
             }
@@ -380,7 +382,13 @@ pub struct RenderNode {
 
 impl Default for RenderNode {
     fn default() -> Self {
-        Self { workdir: None, files: html_glob(), command: String::new(), width: 1440, height: 1600 }
+        Self {
+            workdir: None,
+            files: html_glob(),
+            command: String::new(),
+            width: 1440,
+            height: 1600,
+        }
     }
 }
 fn html_glob() -> String {
@@ -419,11 +427,23 @@ pub struct GateNode {
 #[serde(tag = "tool", rename_all = "snake_case")]
 pub enum ToolNode {
     /// Runs a shell command in a workdir. Fails the run on non-zero exit unless allowed.
-    Command { workdir: Option<Id>, command: String, #[serde(default)] allow_failure: bool },
+    Command {
+        workdir: Option<Id>,
+        command: String,
+        #[serde(default)]
+        allow_failure: bool,
+    },
     /// Commits the workdir's run branch, pushes it and opens a pull request with `gh`.
-    PullRequest { workdir: Option<Id>, #[serde(default)] draft: bool },
+    PullRequest {
+        workdir: Option<Id>,
+        #[serde(default)]
+        draft: bool,
+    },
     /// Merges the run's pull request with `gh pr merge`.
-    MergePr { #[serde(default = "squash")] method: String },
+    MergePr {
+        #[serde(default = "squash")]
+        method: String,
+    },
 }
 fn squash() -> String {
     "squash".into()
@@ -698,12 +718,23 @@ pub struct Variant {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DecisionKind {
-    Pick { index: u32 },
+    Pick {
+        index: u32,
+    },
     Approve,
-    SendBack { note: String, #[serde(default)] target: Option<Id> },
-    Reject { #[serde(default)] reason: String },
+    SendBack {
+        note: String,
+        #[serde(default)]
+        target: Option<Id>,
+    },
+    Reject {
+        #[serde(default)]
+        reason: String,
+    },
     /// Answer to an agent's question (or plan feedback).
-    Reply { text: String },
+    Reply {
+        text: String,
+    },
 }
 
 /// What you decided at a gate. Also the source for "Decided today".
@@ -737,7 +768,12 @@ pub enum ChatMode {
 }
 
 impl ChatMode {
-    pub const ALL: [ChatMode; 4] = [Self::Direct, Self::Agent, Self::Orchestrator, Self::Pipeline];
+    pub const ALL: [ChatMode; 4] = [
+        Self::Direct,
+        Self::Agent,
+        Self::Orchestrator,
+        Self::Pipeline,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             ChatMode::Direct => "Direct",

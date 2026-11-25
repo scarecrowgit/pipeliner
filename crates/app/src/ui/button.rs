@@ -193,7 +193,11 @@ impl RenderOnce for Button {
             (false, ButtonVariant::Secondary) => px(14.),
             (false, _) => px(12.),
         };
-        let h = if small { theme::CONTROL_H_SM } else { theme::CONTROL_H };
+        let h = if small {
+            theme::CONTROL_H_SM
+        } else {
+            theme::CONTROL_H
+        };
         let icon_px = if small { theme::ICON_SM } else { theme::ICON };
         let (bg, fg, border) = if self.selected {
             (theme::SURFACE_HOVER, theme::TEXT, theme::LINE_STRONG)
@@ -213,7 +217,11 @@ impl RenderOnce for Button {
             .when(icon_only, |d| d.w(h))
             .when(!icon_only, |d| d.px(pad))
             .when(self.full_width, |d| d.w_full())
-            .rounded(if small { theme::RADIUS_MD } else { theme::RADIUS_LG })
+            .rounded(if small {
+                theme::RADIUS_MD
+            } else {
+                theme::RADIUS_LG
+            })
             .border_1()
             .border_color(border)
             .bg(bg)
@@ -232,8 +240,12 @@ impl RenderOnce for Button {
             .when_some(self.label, |d, l| d.child(l))
             .children(self.children)
             .when_some(self.kbd, |d, k| d.child(kbd(k)))
-            .when_some(self.icon_right, |d, i| d.child(icon_sized(i, icon_px).text_color(theme::TEXT_MUTED)))
-            .when_some(self.tooltip, |d, t| d.tooltip(move |window, cx| Tooltip::new(t.clone()).build(window, cx)))
+            .when_some(self.icon_right, |d, i| {
+                d.child(icon_sized(i, icon_px).text_color(theme::TEXT_MUTED))
+            })
+            .when_some(self.tooltip, |d, t| {
+                d.tooltip(move |window, cx| Tooltip::new(t.clone()).build(window, cx))
+            })
             .when_some(self.on_click.filter(|_| !disabled), |d, f| {
                 d.on_click(move |e, window, cx| {
                     cx.stop_propagation();
@@ -251,7 +263,9 @@ pub struct IconButton {
 
 impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: AppIcon) -> Self {
-        IconButton { inner: Button::new(id, "").icon(icon).ghost() }
+        IconButton {
+            inner: Button::new(id, "").icon(icon).ghost(),
+        }
     }
     pub fn small(mut self) -> Self {
         self.inner = self.inner.small();
@@ -317,8 +331,13 @@ pub fn segmented(
                 .rounded(theme::RADIUS_MD)
                 .text_body_strong()
                 .cursor_pointer()
-                .when(active, |d| d.bg(theme::SURFACE_HOVER).text_color(theme::TEXT))
-                .when(!active, |d| d.text_color(theme::TEXT_MUTED).hover(|s| s.text_color(theme::TEXT)))
+                .when(active, |d| {
+                    d.bg(theme::SURFACE_HOVER).text_color(theme::TEXT)
+                })
+                .when(!active, |d| {
+                    d.text_color(theme::TEXT_MUTED)
+                        .hover(|s| s.text_color(theme::TEXT))
+                })
                 .child(label.to_string())
                 .on_click(move |_, window, cx| on_select(ix, window, cx))
         }))

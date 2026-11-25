@@ -87,14 +87,35 @@ fn default_slots() -> u32 {
 
 pub fn default_prices() -> BTreeMap<String, Price> {
     let mut m = BTreeMap::new();
-    m.insert("haiku".into(), Price { input: 1.0, output: 5.0 });
-    m.insert("sonnet".into(), Price { input: 3.0, output: 15.0 });
-    m.insert("opus".into(), Price { input: 5.0, output: 25.0 });
+    m.insert(
+        "haiku".into(),
+        Price {
+            input: 1.0,
+            output: 5.0,
+        },
+    );
+    m.insert(
+        "sonnet".into(),
+        Price {
+            input: 3.0,
+            output: 15.0,
+        },
+    );
+    m.insert(
+        "opus".into(),
+        Price {
+            input: 5.0,
+            output: 25.0,
+        },
+    );
     m
 }
 
 pub fn default_skill_dirs() -> Vec<String> {
-    vec!["~/.config/pipeliner/skills".into(), "~/.claude/skills".into()]
+    vec![
+        "~/.config/pipeliner/skills".into(),
+        "~/.claude/skills".into(),
+    ]
 }
 
 impl Default for Config {
@@ -151,7 +172,11 @@ impl Config {
 
     /// Splits `provider/model` into the provider and the model id it serves.
     pub fn resolve(&self, model: &str) -> Option<(&Provider, String)> {
-        let model = if model.is_empty() { self.default_model.as_str() } else { model };
+        let model = if model.is_empty() {
+            self.default_model.as_str()
+        } else {
+            model
+        };
         if let Some((pid, rest)) = model.split_once('/') {
             if let Some(p) = self.providers.iter().find(|p| p.id == pid) {
                 return Some((p, rest.to_string()));
@@ -188,8 +213,12 @@ impl Config {
         let last = model.rsplit('/').next().unwrap_or(model);
         let s = last.strip_prefix("claude-").unwrap_or(last);
         let mut parts = s.split('-');
-        let Some(name) = parts.next() else { return last.to_string() };
-        let ver: Vec<&str> = parts.take_while(|p| p.chars().all(|c| c.is_ascii_digit())).collect();
+        let Some(name) = parts.next() else {
+            return last.to_string();
+        };
+        let ver: Vec<&str> = parts
+            .take_while(|p| p.chars().all(|c| c.is_ascii_digit()))
+            .collect();
         let mut out = String::new();
         let mut cs = name.chars();
         if let Some(f) = cs.next() {
@@ -205,9 +234,13 @@ impl Config {
 
     /// Imports providers and default model from a Harness v1 config (`~/.config/harness/config.toml`).
     pub fn import_harness_v1(&mut self) -> Result<bool> {
-        let Some(home) = dirs::home_dir() else { return Ok(false) };
+        let Some(home) = dirs::home_dir() else {
+            return Ok(false);
+        };
         let p = home.join(".config/harness/config.toml");
-        let Ok(s) = std::fs::read_to_string(&p) else { return Ok(false) };
+        let Ok(s) = std::fs::read_to_string(&p) else {
+            return Ok(false);
+        };
         #[derive(Deserialize)]
         struct V1 {
             #[serde(default)]

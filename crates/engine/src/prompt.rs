@@ -43,7 +43,11 @@ impl Stack {
             let all = skills::list(config);
             let mut lines = vec![];
             for name in &self.skills_on_demand {
-                let d = all.iter().find(|k| &k.name == name).map(|k| k.description.as_str()).unwrap_or("");
+                let d = all
+                    .iter()
+                    .find(|k| &k.name == name)
+                    .map(|k| k.description.as_str())
+                    .unwrap_or("");
                 lines.push(format!("- {name}: {d}"));
             }
             s.push_str(&format!(

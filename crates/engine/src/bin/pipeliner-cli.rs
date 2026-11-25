@@ -25,7 +25,13 @@ fn main() -> Result<()> {
     match cmd {
         "pipelines" => {
             for p in store.pipelines() {
-                println!("{}  v{}{}  {}", p.id, p.version, if p.draft.is_some() { " (draft)" } else { "" }, p.name);
+                println!(
+                    "{}  v{}{}  {}",
+                    p.id,
+                    p.version,
+                    if p.draft.is_some() { " (draft)" } else { "" },
+                    p.name
+                );
             }
         }
         "templates" => {
@@ -35,13 +41,21 @@ fn main() -> Result<()> {
         }
         "create" => {
             let id = rest.first().context("template id")?;
-            let t = engine.templates().into_iter().find(|t| t.id == id).context("unknown template")?;
+            let t = engine
+                .templates()
+                .into_iter()
+                .find(|t| t.id == id)
+                .context("unknown template")?;
             let p = engine.create_pipeline(&t, &rest[1..].join(" "))?;
             println!("created {} ({})", p.name, p.id);
         }
         "run" => {
             let name = rest.first().context("pipeline name")?;
-            let p = store.pipelines().into_iter().find(|p| &p.name == name || &p.id == name).context("no such pipeline")?;
+            let p = store
+                .pipelines()
+                .into_iter()
+                .find(|p| &p.name == name || &p.id == name)
+                .context("no such pipeline")?;
             let input = rest[1..].join(" ");
             let r = engine.start_run(&p.id, &input, None)?;
             println!("run #{} {}", r.number, r.id);
@@ -54,7 +68,14 @@ fn main() -> Result<()> {
         }
         "runs" => {
             for r in store.runs() {
-                println!("#{} {:9} ${:.2} {}  {}", r.number, r.status.as_str(), r.cost_usd, r.title, r.pr_url.unwrap_or_default());
+                println!(
+                    "#{} {:9} ${:.2} {}  {}",
+                    r.number,
+                    r.status.as_str(),
+                    r.cost_usd,
+                    r.title,
+                    r.pr_url.unwrap_or_default()
+                );
             }
         }
         "show" => {
@@ -65,17 +86,30 @@ fn main() -> Result<()> {
             for t in store.waiting() {
                 println!("{}  {}", t.id, t.title);
                 for v in store.variants(&t.id) {
-                    println!("   {} {} images={} diff={}B", variant_letter(v.index), v.title, v.images.len(), v.diff.len());
+                    println!(
+                        "   {} {} images={} diff={}B",
+                        variant_letter(v.index),
+                        v.title,
+                        v.images.len(),
+                        v.diff.len()
+                    );
                 }
             }
         }
         "decide" => {
             let id = rest.first().context("task id")?;
             let kind = match rest.get(1).map(String::as_str) {
-                Some("pick") => DecisionKind::Pick { index: rest.get(2).context("index")?.parse()? },
+                Some("pick") => DecisionKind::Pick {
+                    index: rest.get(2).context("index")?.parse()?,
+                },
                 Some("approve") => DecisionKind::Approve,
-                Some("back") => DecisionKind::SendBack { note: rest[2..].join(" "), target: None },
-                Some("reject") => DecisionKind::Reject { reason: rest[2..].join(" ") },
+                Some("back") => DecisionKind::SendBack {
+                    note: rest[2..].join(" "),
+                    target: None,
+                },
+                Some("reject") => DecisionKind::Reject {
+                    reason: rest[2..].join(" "),
+                },
                 _ => bail!("pick <n> | approve | back <note> | reject"),
             };
             engine.decide(id, kind)?;
@@ -90,7 +124,10 @@ fn main() -> Result<()> {
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let t = store.task(c.task_id.as_deref().unwrap_or("")).or_else(|| {
-                    store.chat(&c.id).and_then(|c| c.task_id).and_then(|t| store.task(&t))
+                    store
+                        .chat(&c.id)
+                        .and_then(|c| c.task_id)
+                        .and_then(|t| store.task(&t))
                 });
                 if let Some(t) = t {
                     if t.status.is_finished() {
@@ -111,7 +148,11 @@ fn main() -> Result<()> {
 
 fn find_run(store: &Store, n: &str) -> Result<Run> {
     let n: u64 = n.trim_start_matches('#').parse()?;
-    store.runs().into_iter().find(|r| r.number == n).context("no such run")
+    store
+        .runs()
+        .into_iter()
+        .find(|r| r.number == n)
+        .context("no such run")
 }
 
 fn drive_until_idle(engine: &Engine, run_id: &str) -> Result<()> {
@@ -139,7 +180,14 @@ fn drive_until_idle(engine: &Engine, run_id: &str) -> Result<()> {
 }
 
 fn print_run(store: &Store, r: &Run) {
-    println!("Run #{} [{}] {}  pr={:?} err={:?}", r.number, r.status.as_str(), r.title, r.pr_url, r.error);
+    println!(
+        "Run #{} [{}] {}  pr={:?} err={:?}",
+        r.number,
+        r.status.as_str(),
+        r.title,
+        r.pr_url,
+        r.error
+    );
     for t in store.tasks_for_run(&r.id) {
         println!(
             "  {:10} {:9} {:20} ${:.3} steps={} {}",
@@ -148,10 +196,19 @@ fn print_run(store: &Store, r: &Run) {
             t.title.chars().take(20).collect::<String>(),
             t.cost_usd,
             t.steps,
-            t.summary.lines().next().unwrap_or("").chars().take(100).collect::<String>()
+            t.summary
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(100)
+                .collect::<String>()
         );
         if let Some(e) = &t.error {
-            println!("             error: {}", e.chars().take(300).collect::<String>());
+            println!(
+                "             error: {}",
+                e.chars().take(300).collect::<String>()
+            );
         }
     }
 }

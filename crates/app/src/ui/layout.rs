@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, ease_in_out, linear_color_stop, linear_gradient, px, relative, Animation, AnimationExt as _,
-    AnyElement, App, Div, ElementId, Hsla, IntoElement, ParentElement, Pixels, RenderOnce,
-    SharedString, Styled as _, Window,
+    div, ease_in_out, linear_color_stop, linear_gradient, px, relative, Animation,
+    AnimationExt as _, AnyElement, App, Div, ElementId, Hsla, IntoElement, ParentElement, Pixels,
+    RenderOnce, SharedString, Styled as _, Window,
 };
 
 use super::{icon_sized, AppIcon, Button};
@@ -29,12 +29,13 @@ pub fn card() -> Div {
 
 /// Selected card look: accent ring + glow. Apply on top of [`card`].
 pub fn card_selected(d: Div) -> Div {
-    d.border_color(theme::ACCENT_RING).shadow(vec![gpui::BoxShadow {
-        color: theme::ACCENT_GLOW,
-        offset: gpui::point(px(0.), px(0.)),
-        blur_radius: px(0.),
-        spread_radius: px(3.),
-    }])
+    d.border_color(theme::ACCENT_RING)
+        .shadow(vec![gpui::BoxShadow {
+            color: theme::ACCENT_GLOW,
+            offset: gpui::point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(3.),
+        }])
 }
 
 /// Bordered surface without padding: tables, lists, sections with their own header row.
@@ -107,7 +108,12 @@ pub struct SectionHeader {
 
 impl SectionHeader {
     pub fn new(title: impl Into<SharedString>) -> Self {
-        SectionHeader { title: title.into(), icon: None, meta: None, right: vec![] }
+        SectionHeader {
+            title: title.into(),
+            icon: None,
+            meta: None,
+            right: vec![],
+        }
     }
     pub fn icon(mut self, icon: AppIcon) -> Self {
         self.icon = Some(icon);
@@ -132,9 +138,19 @@ impl RenderOnce for SectionHeader {
             .items_center()
             .gap(theme::S2)
             .min_h(px(28.))
-            .when_some(self.icon, |d, i| d.child(icon_tile(i, theme::ACCENT_SOFT, theme::ACCENT_TEXT)))
-            .child(div().text_heading().fg().whitespace_nowrap().child(self.title))
-            .when_some(self.meta, |d, m| d.child(div().text_label().fg_muted().truncate().child(m)))
+            .when_some(self.icon, |d, i| {
+                d.child(icon_tile(i, theme::ACCENT_SOFT, theme::ACCENT_TEXT))
+            })
+            .child(
+                div()
+                    .text_heading()
+                    .fg()
+                    .whitespace_nowrap()
+                    .child(self.title),
+            )
+            .when_some(self.meta, |d, m| {
+                d.child(div().text_label().fg_muted().truncate().child(m))
+            })
             .child(div().flex_1())
             .children(self.right)
     }
@@ -157,7 +173,12 @@ pub struct PageHeader {
 
 impl PageHeader {
     pub fn new(title: impl Into<SharedString>) -> Self {
-        PageHeader { title: title.into(), subtitle: None, meta: vec![], actions: vec![] }
+        PageHeader {
+            title: title.into(),
+            subtitle: None,
+            meta: vec![],
+            actions: vec![],
+        }
     }
     pub fn subtitle(mut self, s: impl Into<SharedString>) -> Self {
         self.subtitle = Some(s.into());
@@ -195,10 +216,25 @@ impl RenderOnce for PageHeader {
                     .whitespace_nowrap()
                     .child(self.title),
             )
-            .when_some(self.subtitle, |d, s| d.child(div().text_body().fg_muted().whitespace_nowrap().truncate().child(s)))
+            .when_some(self.subtitle, |d, s| {
+                d.child(
+                    div()
+                        .text_body()
+                        .fg_muted()
+                        .whitespace_nowrap()
+                        .truncate()
+                        .child(s),
+                )
+            })
             .children(self.meta)
             .child(div().flex_1())
-            .child(div().flex().items_center().gap(theme::S2).children(self.actions))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(theme::S2)
+                    .children(self.actions),
+            )
     }
 }
 
@@ -221,7 +257,11 @@ pub struct EmptyState {
 }
 
 impl EmptyState {
-    pub fn new(icon: AppIcon, title: impl Into<SharedString>, description: impl Into<SharedString>) -> Self {
+    pub fn new(
+        icon: AppIcon,
+        title: impl Into<SharedString>,
+        description: impl Into<SharedString>,
+    ) -> Self {
         EmptyState {
             icon,
             title: title.into(),
@@ -250,7 +290,10 @@ impl EmptyState {
         Self::new(
             AppIcon::Lock,
             "Not available yet",
-            format!("{} is not part of this release. Nothing here is hidden from you.", what.into()),
+            format!(
+                "{} is not part of this release. Nothing here is hidden from you.",
+                what.into()
+            ),
         )
     }
 }
@@ -281,7 +324,14 @@ impl RenderOnce for EmptyState {
                     .child(icon_sized(self.icon, px(18.))),
             )
             .child(div().text_heading().fg().child(self.title))
-            .child(div().max_w(px(420.)).text_body().fg_muted().text_center().child(self.description))
+            .child(
+                div()
+                    .max_w(px(420.))
+                    .text_body()
+                    .fg_muted()
+                    .text_center()
+                    .child(self.description),
+            )
             .when_some(self.action, |d, a| d.child(div().pt(theme::S1).child(a)))
             .with_animation(
                 self.id,
@@ -313,7 +363,12 @@ pub struct Skeleton {
 
 impl Skeleton {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Skeleton { id: id.into(), w: None, h: px(14.), full: true }
+        Skeleton {
+            id: id.into(),
+            w: None,
+            h: px(14.),
+            full: true,
+        }
     }
     pub fn w(mut self, w: Pixels) -> Self {
         self.w = Some(w);
@@ -357,7 +412,9 @@ impl RenderOnce for Skeleton {
                     )))
                     .with_animation(
                         self.id,
-                        Animation::new(Duration::from_millis(1400)).repeat().with_easing(ease_in_out),
+                        Animation::new(Duration::from_millis(1400))
+                            .repeat()
+                            .with_easing(ease_in_out),
                         |d, t| d.left(relative(-0.6 + 1.6 * t)),
                     ),
             )
@@ -366,12 +423,20 @@ impl RenderOnce for Skeleton {
 
 /// A few skeleton rows: a stand-in for a list while it loads.
 pub fn skeleton_rows(id: &'static str, rows: usize) -> Div {
-    div().flex().flex_col().gap(theme::S3).children((0..rows).map(move |i| {
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme::S2)
-            .child(Skeleton::new(ElementId::Name(format!("{id}-a{i}").into())).w(px(220.)).h(px(14.)))
-            .child(Skeleton::new(ElementId::Name(format!("{id}-b{i}").into())).h(px(12.)))
-    }))
+    div()
+        .flex()
+        .flex_col()
+        .gap(theme::S3)
+        .children((0..rows).map(move |i| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme::S2)
+                .child(
+                    Skeleton::new(ElementId::Name(format!("{id}-a{i}").into()))
+                        .w(px(220.))
+                        .h(px(14.)),
+                )
+                .child(Skeleton::new(ElementId::Name(format!("{id}-b{i}").into())).h(px(12.)))
+        }))
 }

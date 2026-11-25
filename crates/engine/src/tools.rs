@@ -27,7 +27,11 @@ pub struct ToolContext {
 }
 
 fn spec(name: &'static str, description: &str, parameters: Value) -> ToolSpec {
-    ToolSpec { name, description: description.to_string(), parameters }
+    ToolSpec {
+        name,
+        description: description.to_string(),
+        parameters,
+    }
 }
 
 /// Tool specs for this context's access level.
@@ -90,11 +94,13 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
 }
 
 fn arg<'a>(args: &'a Value, k: &str) -> Result<&'a str> {
-    args.get(k).and_then(|v| v.as_str()).ok_or_else(|| anyhow!("missing `{k}`"))
+    args.get(k)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing `{k}`"))
 }
 
 fn resolve(base: &Path, p: &str) -> PathBuf {
-    let pb = PathBuf::from(harness_core::config::expand_tilde(p));
+    let pb = harness_core::config::expand_tilde(p);
     if pb.is_absolute() {
         pb
     } else {
@@ -125,7 +131,11 @@ pub fn execute(ctx: &ToolContext, name: &str, args: &Value) -> String {
 }
 
 fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> {
-    let cwd = || ctx.cwd.clone().ok_or_else(|| anyhow!("no working directory"));
+    let cwd = || {
+        ctx.cwd
+            .clone()
+            .ok_or_else(|| anyhow!("no working directory"))
+    };
     match name {
         "read_file" => {
             let p = resolve(&cwd()?, arg(args, "path")?);
@@ -133,22 +143,38 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
         }
         "list_dir" => {
             let base = cwd()?;
-            let p = args["path"].as_str().map(|s| resolve(&base, s)).unwrap_or(base);
+            let p = args["path"]
+                .as_str()
+                .map(|s| resolve(&base, s))
+                .unwrap_or(base);
             list_dir(&p)
         }
         "search" => {
             let base = cwd()?;
-            search(&base, arg(args, "pattern")?, args["path"].as_str().unwrap_or("."), args["glob"].as_str())
+            search(
+                &base,
+                arg(args, "pattern")?,
+                args["path"].as_str().unwrap_or("."),
+                args["glob"].as_str(),
+            )
         }
         "read_workdir" => {
             let id = arg(args, "workdir")?;
-            let (_, root) = ctx
-                .workdirs
-                .iter()
-                .find(|(i, _)| i == id)
-                .ok_or_else(|| anyhow!("unknown workdir `{id}`; known: {}", ctx.workdirs.iter().map(|w| w.0.as_str()).collect::<Vec<_>>().join(", ")))?;
+            let (_, root) = ctx.workdirs.iter().find(|(i, _)| i == id).ok_or_else(|| {
+                anyhow!(
+                    "unknown workdir `{id}`; known: {}",
+                    ctx.workdirs
+                        .iter()
+                        .map(|w| w.0.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
             let root = PathBuf::from(root);
-            let p = args["path"].as_str().map(|s| resolve(&root, s)).unwrap_or(root);
+            let p = args["path"]
+                .as_str()
+                .map(|s| resolve(&root, s))
+                .unwrap_or(root);
             if p.is_dir() {
                 list_dir(&p)
             } else {
@@ -164,7 +190,14 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
                 bail!("run_command is not allowed for this agent");
             }
             let timeout = args["timeout_secs"].as_u64().unwrap_or(600).clamp(5, 3600);
-            run_command(&cwd()?, &ctx.shell, &ctx.env, arg(args, "command")?, Duration::from_secs(timeout), &ctx.cancel)
+            run_command(
+                &cwd()?,
+                &ctx.shell,
+                &ctx.env,
+                arg(args, "command")?,
+                Duration::from_secs(timeout),
+                &ctx.cancel,
+            )
         }
         "write_file" => {
             ensure_write(ctx)?;
@@ -176,14 +209,19 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
             }
             let content = arg(args, "content")?;
             std::fs::write(&p, content)?;
-            Ok(format!("Wrote {} ({} lines)", rel(&base, &p), content.lines().count()))
+            Ok(format!(
+                "Wrote {} ({} lines)",
+                rel(&base, &p),
+                content.lines().count()
+            ))
         }
         "edit_file" => {
             ensure_write(ctx)?;
             let base = cwd()?;
             let p = normalize(&resolve(&base, arg(args, "path")?));
             ensure_inside(&base, &p)?;
-            let text = std::fs::read_to_string(&p).with_context(|| format!("reading {}", rel(&base, &p)))?;
+            let text = std::fs::read_to_string(&p)
+                .with_context(|| format!("reading {}", rel(&base, &p)))?;
             let old = arg(args, "old")?;
             let new = arg(args, "new")?;
             if old.is_empty() {
@@ -192,14 +230,28 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
             let n = text.matches(old).count();
             let all = args["replace_all"].as_bool().unwrap_or(false);
             if n == 0 {
-                bail!("`old` not found in {}; read the file again and copy the exact text", rel(&base, &p));
+                bail!(
+                    "`old` not found in {}; read the file again and copy the exact text",
+                    rel(&base, &p)
+                );
             }
             if n > 1 && !all {
-                bail!("`old` matches {n} times in {}; add more context or set replace_all", rel(&base, &p));
+                bail!(
+                    "`old` matches {n} times in {}; add more context or set replace_all",
+                    rel(&base, &p)
+                );
             }
-            let out = if all { text.replace(old, new) } else { text.replacen(old, new, 1) };
+            let out = if all {
+                text.replace(old, new)
+            } else {
+                text.replacen(old, new, 1)
+            };
             std::fs::write(&p, out)?;
-            Ok(format!("Edited {} ({n} replacement{})", rel(&base, &p), if n == 1 { "" } else { "s" }))
+            Ok(format!(
+                "Edited {} ({n} replacement{})",
+                rel(&base, &p),
+                if n == 1 { "" } else { "s" }
+            ))
         }
         other => bail!("unknown tool `{other}`"),
     }
@@ -218,7 +270,10 @@ fn ensure_inside(base: &Path, p: &Path) -> Result<()> {
     let mut existing = p.to_path_buf();
     let mut rest = vec![];
     while !existing.exists() {
-        match (existing.file_name().map(|f| f.to_owned()), existing.parent()) {
+        match (
+            existing.file_name().map(|f| f.to_owned()),
+            existing.parent(),
+        ) {
             (Some(f), Some(parent)) => {
                 rest.push(f);
                 existing = parent.to_path_buf();
@@ -253,7 +308,11 @@ fn read_text(p: &Path, offset: Option<u64>, limit: Option<u64>) -> Result<String
         out.push_str(&format!("{:>5}\t{}\n", i + 1, l));
     }
     if end < lines.len() {
-        out.push_str(&format!("… {} more lines (use offset={} to continue)\n", lines.len() - end, end + 1));
+        out.push_str(&format!(
+            "… {} more lines (use offset={} to continue)\n",
+            lines.len() - end,
+            end + 1
+        ));
     }
     if out.is_empty() {
         out = "(empty file)".into();
@@ -262,7 +321,10 @@ fn read_text(p: &Path, offset: Option<u64>, limit: Option<u64>) -> Result<String
 }
 
 fn list_dir(p: &Path) -> Result<String> {
-    let mut entries: Vec<_> = std::fs::read_dir(p).with_context(|| format!("listing {}", p.display()))?.filter_map(|e| e.ok()).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(p)
+        .with_context(|| format!("listing {}", p.display()))?
+        .filter_map(|e| e.ok())
+        .collect();
     entries.sort_by_key(|e| e.file_name());
     let mut out = String::new();
     for e in entries.iter().take(500) {
@@ -274,10 +336,17 @@ fn list_dir(p: &Path) -> Result<String> {
         if md.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
             out.push_str(&format!("{name}/\n"));
         } else {
-            out.push_str(&format!("{name}  ({} B)\n", md.map(|m| m.len()).unwrap_or(0)));
+            out.push_str(&format!(
+                "{name}  ({} B)\n",
+                md.map(|m| m.len()).unwrap_or(0)
+            ));
         }
     }
-    Ok(if out.is_empty() { "(empty)".into() } else { out })
+    Ok(if out.is_empty() {
+        "(empty)".into()
+    } else {
+        out
+    })
 }
 
 fn search(base: &Path, pattern: &str, path: &str, glob: Option<&str>) -> Result<String> {
@@ -304,11 +373,17 @@ fn search(base: &Path, pattern: &str, path: &str, glob: Option<&str>) -> Result<
     if lines.is_empty() {
         return Ok("No matches.".into());
     }
-    Ok(lines.iter().map(|l| l.chars().take(300).collect::<String>()).collect::<Vec<_>>().join("\n"))
+    Ok(lines
+        .iter()
+        .map(|l| l.chars().take(300).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 fn which(bin: &str) -> bool {
-    std::env::var_os("PATH").map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file())).unwrap_or(false)
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+        .unwrap_or(false)
 }
 
 fn shell_quote(s: &str) -> String {
@@ -326,13 +401,22 @@ pub fn run_command(
     cancel: &AtomicBool,
 ) -> Result<String> {
     use std::os::unix::process::CommandExt;
-    let full = if shell.trim().is_empty() { command.to_string() } else { format!("{} {}", shell.trim(), shell_quote(command)) };
+    let full = if shell.trim().is_empty() {
+        command.to_string()
+    } else {
+        format!("{} {}", shell.trim(), shell_quote(command))
+    };
     let mut child = Command::new("sh")
         .arg("-c")
         // A group redirect covers every command in the line (and survives trailing comments).
         .arg(format!("{{ {full}\n}} 2>&1"))
         .current_dir(cwd)
-        .envs(env.iter().map(|(k, v)| (k.clone(), harness_core::config::expand_tilde(v).display().to_string())))
+        .envs(env.iter().map(|(k, v)| {
+            (
+                k.clone(),
+                harness_core::config::expand_tilde(v).display().to_string(),
+            )
+        }))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -375,7 +459,10 @@ pub fn run_command(
         let _ = tx.send(head);
     });
     let kill_group = |sig: &str| {
-        let _ = Command::new("kill").args([sig, "--", &format!("-{pgid}")]).stderr(Stdio::null()).status();
+        let _ = Command::new("kill")
+            .args([sig, "--", &format!("-{pgid}")])
+            .stderr(Stdio::null())
+            .status();
     };
     let start = Instant::now();
     let status = loop {
@@ -435,18 +522,44 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pl-tools-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let c = ctx(&dir);
-        assert!(execute(&c, "write_file", &json!({"path":"a/b.txt","content":"hello\nworld\n"})).starts_with("Wrote"));
+        assert!(execute(
+            &c,
+            "write_file",
+            &json!({"path":"a/b.txt","content":"hello\nworld\n"})
+        )
+        .starts_with("Wrote"));
         assert!(execute(&c, "read_file", &json!({"path":"a/b.txt"})).contains("world"));
-        assert!(execute(&c, "edit_file", &json!({"path":"a/b.txt","old":"world","new":"there"})).starts_with("Edited"));
-        assert!(std::fs::read_to_string(dir.join("a/b.txt")).unwrap().contains("there"));
-        assert!(execute(&c, "write_file", &json!({"path":"../x.txt","content":""})).starts_with("Error"));
+        assert!(execute(
+            &c,
+            "edit_file",
+            &json!({"path":"a/b.txt","old":"world","new":"there"})
+        )
+        .starts_with("Edited"));
+        assert!(std::fs::read_to_string(dir.join("a/b.txt"))
+            .unwrap()
+            .contains("there"));
+        assert!(
+            execute(&c, "write_file", &json!({"path":"../x.txt","content":""}))
+                .starts_with("Error")
+        );
         let out = execute(&c, "run_command", &json!({"command":"echo hi"}));
         assert!(out.contains("exit code 0") && out.contains("hi"), "{out}");
-        let out = execute(&c, "run_command", &json!({"command":"echo err1 >&2; echo err2 >&2 # note"}));
+        let out = execute(
+            &c,
+            "run_command",
+            &json!({"command":"echo err1 >&2; echo err2 >&2 # note"}),
+        );
         assert!(out.contains("err1") && out.contains("err2"), "{out}");
         let t = Instant::now();
-        let out = execute(&c, "run_command", &json!({"command":"sleep 30 & sleep 60","timeout_secs":5}));
-        assert!(out.starts_with("timed out") && t.elapsed() < Duration::from_secs(15), "{out}");
+        let out = execute(
+            &c,
+            "run_command",
+            &json!({"command":"sleep 30 & sleep 60","timeout_secs":5}),
+        );
+        assert!(
+            out.starts_with("timed out") && t.elapsed() < Duration::from_secs(15),
+            "{out}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

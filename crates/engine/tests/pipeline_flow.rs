@@ -10,7 +10,9 @@ use harness_core::*;
 use harness_engine::Engine;
 
 /// Serves OpenAI-style SSE. `reply` maps the request body to (text, Option<(tool, args)>).
-fn serve(reply: impl Fn(&str) -> (String, Option<(String, String)>) + Send + Sync + 'static) -> String {
+fn serve(
+    reply: impl Fn(&str) -> (String, Option<(String, String)>) + Send + Sync + 'static,
+) -> String {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
     let reply = Arc::new(reply);
@@ -58,7 +60,13 @@ fn engine(url: &str) -> Engine {
     let config = Config {
         default_model: "t/test-sonnet".into(),
         fast_model: "t/test-haiku".into(),
-        providers: vec![Provider { id: "t".into(), kind: "openai".into(), base_url: url.into(), api_key: "x".into(), api_key_env: String::new() }],
+        providers: vec![Provider {
+            id: "t".into(),
+            kind: "openai".into(),
+            base_url: url.into(),
+            api_key: "x".into(),
+            api_key_env: String::new(),
+        }],
         ..Config::default()
     };
     Engine::new(store, config)
@@ -71,25 +79,71 @@ fn wait_for(engine: &Engine, run_id: &str, want: Status) -> Run {
         if r.status == want {
             return r;
         }
-        assert!(r.status != Status::Failed || want == Status::Failed, "run failed: {:?}", r.error);
-        assert!(start.elapsed() < Duration::from_secs(20), "timeout waiting for {want:?}; run is {:?} at {:?}", r.status, r.frontier);
+        assert!(
+            r.status != Status::Failed || want == Status::Failed,
+            "run failed: {:?}",
+            r.error
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "timeout waiting for {want:?}; run is {:?} at {:?}",
+            r.status,
+            r.frontier
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
 fn graph() -> PipelineGraph {
-    let n = |id: &str, kind: NodeKind| Node { id: id.into(), name: id.into(), kind, x: 0.0, y: 0.0 };
-    let e = |f: &str, t: &str, p: Option<&str>| Edge { from: f.into(), to: t.into(), port: p.map(String::from) };
+    let n = |id: &str, kind: NodeKind| Node {
+        id: id.into(),
+        name: id.into(),
+        kind,
+        x: 0.0,
+        y: 0.0,
+    };
+    let e = |f: &str, t: &str, p: Option<&str>| Edge {
+        from: f.into(),
+        to: t.into(),
+        port: p.map(String::from),
+    };
     PipelineGraph {
         workdirs: vec![],
         nodes: vec![
             n("src", NodeKind::Source(SourceNode::default())),
-            n("ask", NodeKind::Decision(DecisionNode { question: "needs design?".into(), model: String::new(), workdir: None, max_steps: 4 })),
-            n("design", NodeKind::Agent(AgentNode { variants: 2, instructions: "DESIGN".into(), ..Default::default() })),
+            n(
+                "ask",
+                NodeKind::Decision(DecisionNode {
+                    question: "needs design?".into(),
+                    model: String::new(),
+                    workdir: None,
+                    max_steps: 4,
+                }),
+            ),
+            n(
+                "design",
+                NodeKind::Agent(AgentNode {
+                    variants: 2,
+                    instructions: "DESIGN".into(),
+                    ..Default::default()
+                }),
+            ),
             n("pick", NodeKind::Gate(GateNode::default())),
-            n("build", NodeKind::Agent(AgentNode { instructions: "BUILD".into(), ..Default::default() })),
+            n(
+                "build",
+                NodeKind::Agent(AgentNode {
+                    instructions: "BUILD".into(),
+                    ..Default::default()
+                }),
+            ),
         ],
-        edges: vec![e("src", "ask", None), e("ask", "design", Some("yes")), e("ask", "build", Some("no")), e("design", "pick", None), e("pick", "build", None)],
+        edges: vec![
+            e("src", "ask", None),
+            e("ask", "design", Some("yes")),
+            e("ask", "build", Some("no")),
+            e("design", "pick", None),
+            e("pick", "build", None),
+        ],
     }
 }
 
@@ -113,8 +167,17 @@ fn pipeline(engine: &Engine) -> Pipeline {
 #[test]
 fn no_branch_skips_design() {
     let url = serve(|body| {
-        if body.contains("needs design?") && body.contains("\"answer\"") && !body.contains("recorded") {
-            ("".into(), Some(("answer".into(), r#"{"yes":false,"reason":"logic only"}"#.into())))
+        if body.contains("needs design?")
+            && body.contains("\"answer\"")
+            && !body.contains("recorded")
+        {
+            (
+                "".into(),
+                Some((
+                    "answer".into(),
+                    r#"{"yes":false,"reason":"logic only"}"#.into(),
+                )),
+            )
         } else {
             ("built it".into(), None)
         }
@@ -134,8 +197,17 @@ fn yes_branch_fans_out_and_gate_send_back_then_pick() {
     let seen_note = Arc::new(Mutex::new(false));
     let sn = seen_note.clone();
     let url = serve(move |body| {
-        if body.contains("needs design?") && body.contains("\"answer\"") && !body.contains("recorded") {
-            return ("".into(), Some(("answer".into(), r#"{"yes":true,"reason":"new screen"}"#.into())));
+        if body.contains("needs design?")
+            && body.contains("\"answer\"")
+            && !body.contains("recorded")
+        {
+            return (
+                "".into(),
+                Some((
+                    "answer".into(),
+                    r#"{"yes":true,"reason":"new screen"}"#.into(),
+                )),
+            );
         }
         if body.contains("make it blue") {
             *sn.lock().unwrap() = true;
@@ -152,32 +224,61 @@ fn yes_branch_fans_out_and_gate_send_back_then_pick() {
     let p = pipeline(&e);
     let r = e.start_run(&p.id, "new settings screen", None).unwrap();
     wait_for(&e, &r.id, Status::Waiting);
-    let gate = e.store().waiting().into_iter().find(|t| t.kind == TaskKind::Gate).unwrap();
+    let gate = e
+        .store()
+        .waiting()
+        .into_iter()
+        .find(|t| t.kind == TaskKind::Gate)
+        .unwrap();
     let vs = e.store().variants(&gate.id);
     assert_eq!(vs.len(), 2);
 
     // Send back: design re-runs with the note, gate asks again.
-    e.decide(&gate.id, DecisionKind::SendBack { note: "make it blue".into(), target: None }).unwrap();
+    e.decide(
+        &gate.id,
+        DecisionKind::SendBack {
+            note: "make it blue".into(),
+            target: None,
+        },
+    )
+    .unwrap();
     let start = Instant::now();
     let gate2 = loop {
-        if let Some(t) = e.store().waiting().into_iter().find(|t| t.kind == TaskKind::Gate && t.id != gate.id) {
+        if let Some(t) = e
+            .store()
+            .waiting()
+            .into_iter()
+            .find(|t| t.kind == TaskKind::Gate && t.id != gate.id)
+        {
             break t;
         }
         assert!(start.elapsed() < Duration::from_secs(20), "no second gate");
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(*seen_note.lock().unwrap(), "note did not reach the model");
-    e.decide(&gate2.id, DecisionKind::Pick { index: 1 }).unwrap();
+    e.decide(&gate2.id, DecisionKind::Pick { index: 1 })
+        .unwrap();
     let r = wait_for(&e, &r.id, Status::Done);
-    assert!(r.outputs["pick"].summary.starts_with("You picked B"), "{}", r.outputs["pick"].summary);
-    assert!(e.store().variants(&gate2.id).iter().any(|v| v.picked && v.index == 1));
+    assert!(
+        r.outputs["pick"].summary.starts_with("You picked B"),
+        "{}",
+        r.outputs["pick"].summary
+    );
+    assert!(e
+        .store()
+        .variants(&gate2.id)
+        .iter()
+        .any(|v| v.picked && v.index == 1));
 }
 
 #[test]
 fn reject_cancels_and_restart_resumes_gate() {
     let url = serve(|body| {
         if body.contains("\"answer\"") && !body.contains("recorded") {
-            return ("".into(), Some(("answer".into(), r#"{"yes":true,"reason":"ui"}"#.into())));
+            return (
+                "".into(),
+                Some(("answer".into(), r#"{"yes":true,"reason":"ui"}"#.into())),
+            );
         }
         ("ok".into(), None)
     });
@@ -188,7 +289,18 @@ fn reject_cancels_and_restart_resumes_gate() {
     // Simulate a restart: a fresh engine on the same store resumes the waiting run.
     let e2 = Engine::new(e.store().clone(), e.config());
     e2.start();
-    let gate = e2.store().waiting().into_iter().find(|t| t.kind == TaskKind::Gate).unwrap();
-    e2.decide(&gate.id, DecisionKind::Reject { reason: "no".into() }).unwrap();
+    let gate = e2
+        .store()
+        .waiting()
+        .into_iter()
+        .find(|t| t.kind == TaskKind::Gate)
+        .unwrap();
+    e2.decide(
+        &gate.id,
+        DecisionKind::Reject {
+            reason: "no".into(),
+        },
+    )
+    .unwrap();
     wait_for(&e2, &r.id, Status::Cancelled);
 }

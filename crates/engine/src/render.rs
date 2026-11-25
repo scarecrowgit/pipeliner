@@ -28,13 +28,21 @@ pub fn render(command: &str, input: &Path, output: &Path, w: u32, h: u32) -> Res
             .replace("{out}", &q(&output.display().to_string()))
             .replace("{w}", &w.to_string())
             .replace("{h}", &h.to_string())
-    } else if let Some(bin) = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]
-        .into_iter()
-        .find(|b| on_path(b))
+    } else if let Some(bin) = [
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+    ]
+    .into_iter()
+    .find(|b| on_path(b))
     {
         format!("{bin} {flags} {}", q(&url))
     } else if on_path("nix-shell") {
-        format!("nix-shell -p chromium --run {}", q(&format!("chromium {flags} {}", q(&url))))
+        format!(
+            "nix-shell -p chromium --run {}",
+            q(&format!("chromium {flags} {}", q(&url)))
+        )
     } else {
         bail!("no Chromium found to render mockups; install chromium or set a render command in Settings");
     };

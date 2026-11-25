@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, pulsating_between, Animation, AnimationExt as _, AnyElement, App, Div, ElementId,
+    div, pulsating_between, px, Animation, AnimationExt as _, AnyElement, App, Div, ElementId,
     Hsla, IntoElement, ParentElement as _, RenderOnce, SharedString, Styled as _, Window,
 };
 use harness_core::Status;
@@ -40,7 +40,13 @@ pub struct Badge {
 
 impl Badge {
     pub fn new(label: impl Into<SharedString>) -> Self {
-        Badge { label: label.into(), tone: BadgeTone::Neutral, dot: false, mono: false, leading: None }
+        Badge {
+            label: label.into(),
+            tone: BadgeTone::Neutral,
+            dot: false,
+            mono: false,
+            leading: None,
+        }
     }
     pub fn tone(mut self, tone: BadgeTone) -> Self {
         self.tone = tone;
@@ -84,13 +90,48 @@ impl Badge {
 impl RenderOnce for Badge {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let (bg, border, fg, dot) = match self.tone {
-            BadgeTone::Neutral => (theme::TRANSPARENT, theme::LINE_STRONG, theme::TEXT_SECONDARY, theme::TEXT_MUTED),
-            BadgeTone::Accent => (theme::ACCENT_SOFT, theme::TRANSPARENT, theme::ACCENT_TEXT, theme::ACCENT),
-            BadgeTone::Spawn => (theme::SPAWN_SOFT, theme::TRANSPARENT, theme::SPAWN_TEXT, theme::SPAWN),
-            BadgeTone::Success => (theme::TRANSPARENT, theme::LINE_STRONG, theme::SUCCESS, theme::SUCCESS),
-            BadgeTone::Warning => (theme::TRANSPARENT, theme::LINE_STRONG, theme::WARNING, theme::WARNING),
-            BadgeTone::Danger => (theme::TRANSPARENT, theme::LINE_STRONG, theme::DANGER, theme::DANGER),
-            BadgeTone::Info => (theme::TRANSPARENT, theme::LINE_STRONG, theme::INFO_TEXT, theme::INFO),
+            BadgeTone::Neutral => (
+                theme::TRANSPARENT,
+                theme::LINE_STRONG,
+                theme::TEXT_SECONDARY,
+                theme::TEXT_MUTED,
+            ),
+            BadgeTone::Accent => (
+                theme::ACCENT_SOFT,
+                theme::TRANSPARENT,
+                theme::ACCENT_TEXT,
+                theme::ACCENT,
+            ),
+            BadgeTone::Spawn => (
+                theme::SPAWN_SOFT,
+                theme::TRANSPARENT,
+                theme::SPAWN_TEXT,
+                theme::SPAWN,
+            ),
+            BadgeTone::Success => (
+                theme::TRANSPARENT,
+                theme::LINE_STRONG,
+                theme::SUCCESS,
+                theme::SUCCESS,
+            ),
+            BadgeTone::Warning => (
+                theme::TRANSPARENT,
+                theme::LINE_STRONG,
+                theme::WARNING,
+                theme::WARNING,
+            ),
+            BadgeTone::Danger => (
+                theme::TRANSPARENT,
+                theme::LINE_STRONG,
+                theme::DANGER,
+                theme::DANGER,
+            ),
+            BadgeTone::Info => (
+                theme::TRANSPARENT,
+                theme::LINE_STRONG,
+                theme::INFO_TEXT,
+                theme::INFO,
+            ),
         };
         div()
             .flex()
@@ -153,7 +194,11 @@ pub fn kbd(keys: impl Into<SharedString>) -> Div {
 
 /// A plain filled dot.
 pub fn dot_el(color: Hsla, size: gpui::Pixels) -> Div {
-    div().flex_none().size(size).rounded(theme::RADIUS_FULL).bg(color)
+    div()
+        .flex_none()
+        .size(size)
+        .rounded(theme::RADIUS_FULL)
+        .bg(color)
 }
 
 /// A hollow ring dot (queued, draft, not deployed).
@@ -183,7 +228,11 @@ pub struct StatusDot {
 
 impl StatusDot {
     pub fn new(status: Status) -> Self {
-        StatusDot { status, id: "status-dot".into(), size: px(8.) }
+        StatusDot {
+            status,
+            id: "status-dot".into(),
+            size: px(8.),
+        }
     }
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = id.into();
@@ -244,7 +293,11 @@ pub struct StatusPill {
 
 impl StatusPill {
     pub fn new(status: Status) -> Self {
-        StatusPill { status, id: "status-pill".into(), suffix: None }
+        StatusPill {
+            status,
+            id: "status-pill".into(),
+            suffix: None,
+        }
     }
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = id.into();
@@ -308,7 +361,11 @@ pub struct VariantChip {
 
 impl VariantChip {
     pub fn new(letter: impl Into<SharedString>) -> Self {
-        VariantChip { letter: letter.into(), selected: false, size: px(24.) }
+        VariantChip {
+            letter: letter.into(),
+            selected: false,
+            size: px(24.),
+        }
     }
     /// Variant index -> `A`, `B`, ...
     pub fn variant(index: u32) -> Self {
@@ -316,7 +373,12 @@ impl VariantChip {
     }
     /// First letter of a name, uppercased.
     pub fn initial(name: &str) -> Self {
-        Self::new(name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into()))
+        Self::new(
+            name.chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "?".into()),
+        )
     }
     pub fn selected(mut self, s: bool) -> Self {
         self.selected = s;
@@ -339,9 +401,14 @@ impl RenderOnce for VariantChip {
             .rounded(theme::RADIUS_MD)
             .text_size(px(12.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .when(self.selected, |d| d.bg(theme::ACCENT_STRONG).text_color(theme::ON_ACCENT))
+            .when(self.selected, |d| {
+                d.bg(theme::ACCENT_STRONG).text_color(theme::ON_ACCENT)
+            })
             .when(!self.selected, |d| {
-                d.bg(theme::SURFACE_HOVER).border_1().border_color(theme::LINE_STRONG).text_color(theme::TEXT)
+                d.bg(theme::SURFACE_HOVER)
+                    .border_1()
+                    .border_color(theme::LINE_STRONG)
+                    .text_color(theme::TEXT)
             })
             .child(self.letter)
     }
