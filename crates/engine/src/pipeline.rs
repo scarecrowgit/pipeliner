@@ -101,12 +101,7 @@ pub fn start(
         .find(|l| !l.is_empty())
         .unwrap_or("Run")
         .to_string();
-    let title: String = first
-        .trim_start_matches('#')
-        .trim()
-        .chars()
-        .take(80)
-        .collect();
+    let title = run_title(&first);
     let run = Run {
         id: new_id(),
         number,
@@ -141,6 +136,33 @@ pub fn start(
     );
     engine.spawn_run_thread(run.id.clone());
     Ok(run)
+}
+
+/// A short run title: the first sentence of the first line, at most 80 characters.
+fn run_title(first_line: &str) -> String {
+    let l = first_line.trim_start_matches('#').trim();
+    let sentence = l
+        .find(". ")
+        .map(|i| &l[..i])
+        .unwrap_or(l)
+        .trim_end_matches('.');
+    let mut t: String = sentence.chars().take(80).collect();
+    if sentence.chars().count() > 80 {
+        t = t.trim_end().to_string() + "…";
+    }
+    t
+}
+
+#[cfg(test)]
+mod title_tests {
+    #[test]
+    fn first_sentence() {
+        assert_eq!(
+            super::run_title("Timeline hides queued work. Tasks that…"),
+            "Timeline hides queued work"
+        );
+        assert_eq!(super::run_title("# Fix crash"), "Fix crash");
+    }
 }
 
 enum Step {
