@@ -50,6 +50,8 @@ impl ReviewScreen {
     }
 
     pub(crate) fn reload_reports(&mut self, cx: &mut Context<Self>) {
+        // Stamp first: a write landing during the load is then picked up by the next poll.
+        self.inbox_stamp = crate::file_stamp(&inbox::path());
         self.reports = inbox::load();
         if self.report.as_ref().is_some() && self.report().is_none() {
             self.report = None;

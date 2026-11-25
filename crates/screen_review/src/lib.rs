@@ -5,9 +5,12 @@ mod data;
 mod report;
 mod view;
 
+use std::path::Path;
+use std::time::{Duration, SystemTime};
+
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Global, IntoElement, KeyBinding, MouseButton,
-    Render, Subscription, Window, actions, div, prelude::*,
+    Render, Subscription, Task, Window, actions, div, prelude::*,
 };
 use ui::nav::Screen;
 use ui::{TextInput, TextInputEvent};
@@ -28,6 +31,19 @@ actions!(
 );
 
 const KEY_CONTEXT: &str = "ReviewScreen";
+
+/// How often `inbox.json` is checked for changes made by other processes (other Harness
+/// instances, agents), so the sidebar badge follows them within about a second.
+const INBOX_POLL: Duration = Duration::from_secs(1);
+
+/// Modification time and size of the file; `None` when it is missing or unreadable.
+/// Two different stamps mean the file was rewritten.
+pub(crate) type FileStamp = (SystemTime, u64);
+
+pub(crate) fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
 
 struct KeysBound;
 impl Global for KeysBound {}
@@ -78,6 +94,9 @@ pub struct ReviewScreen {
     /// Pull request status by URL.
     prs: report::PrCache,
     inbox_version: u64,
+    /// Stamp of `inbox.json` as of the last load; the poll reloads when it differs.
+    inbox_stamp: Option<FileStamp>,
+    _inbox_poll: Task<()>,
     /// The newest report was opened on the first visit.
     auto_opened: bool,
     _subscriptions: Vec<Subscription>,
@@ -117,9 +136,28 @@ impl ReviewScreen {
                 }
             }));
         }
+        let inbox_stamp = file_stamp(&screen_chat::inbox::path());
         let reports = screen_chat::inbox::load();
         let unread = screen_chat::inbox::unread(&reports) + ISSUES.len();
         cx.defer(move |cx| ui::nav::set_inbox_count(unread, cx));
+
+        // Other processes write `inbox.json` too: notice it without blocking the UI thread.
+        let inbox_poll = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(INBOX_POLL).await;
+                let stamp = cx
+                    .background_spawn(async { file_stamp(&screen_chat::inbox::path()) })
+                    .await;
+                let alive = this.update(cx, |this, cx| {
+                    if stamp != this.inbox_stamp {
+                        this.reload_reports(cx);
+                    }
+                });
+                if alive.is_err() {
+                    return;
+                }
+            }
+        });
 
         Self {
             focus,
@@ -133,6 +171,8 @@ impl ReviewScreen {
             report: None,
             prs: Default::default(),
             inbox_version: 0,
+            inbox_stamp,
+            _inbox_poll: inbox_poll,
             auto_opened: false,
             _subscriptions: subscriptions,
         }
@@ -380,5 +420,29 @@ impl Render for ReviewScreen {
                     .child(self.render_queue(cx))
                     .child(self.render_main(cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_stamp;
+
+    #[test]
+    fn stamp_changes_when_file_is_rewritten() {
+        let dir = std::env::temp_dir().join(format!("harness-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inbox.json");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(file_stamp(&path), None);
+
+        std::fs::write(&path, b"{\"items\":[]}").unwrap();
+        let first = file_stamp(&path);
+        assert!(first.is_some());
+        assert_eq!(file_stamp(&path), first);
+
+        std::fs::write(&path, b"{\"items\":[{\"id\":\"a\"}]}").unwrap();
+        assert_ne!(file_stamp(&path), first);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
