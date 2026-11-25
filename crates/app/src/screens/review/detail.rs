@@ -212,7 +212,9 @@ impl ReviewScreen {
                     .id(SharedString::from(format!("review-variant-{}", v.v.id)))
                     .relative()
                     .flex_1()
+                    .flex_basis(px(0.))
                     .min_w(px(260.))
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .gap(px(10.))
@@ -311,12 +313,16 @@ impl ReviewScreen {
                             }),
                     )
                     .when(!v.body.is_empty(), |d| {
+                        // A plain-text teaser; the full Markdown is in the Summary tab below.
                         d.child(
                             div()
+                                .w_full()
+                                .min_w_0()
+                                .overflow_hidden()
                                 .text_label()
                                 .fg_muted()
                                 .line_clamp(4)
-                                .child(v.body.clone()),
+                                .child(plain_teaser(&v.body)),
                         )
                     })
                     .child(div().flex_1())
@@ -969,6 +975,16 @@ impl ReviewScreen {
                     )
             }))
     }
+}
+
+/// Markdown flattened to one wrapping paragraph: markers dropped, lines joined.
+fn plain_teaser(md: &str) -> String {
+    md.lines()
+        .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>']).trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.replace("**", "").replace('`', ""))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// A markdown block with a stable id.
