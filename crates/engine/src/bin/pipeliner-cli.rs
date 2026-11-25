@@ -20,6 +20,12 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let store = Store::open_default()?;
     let engine = Engine::new(store.clone(), Config::load());
+    engine.start();
+    if !engine.is_owner() {
+        eprintln!(
+            "note: another Pipeliner process owns the engine; it will execute runs and decisions."
+        );
+    }
     let cmd = args.first().map(String::as_str).unwrap_or("help");
     let rest = &args[args.len().min(1)..];
     match cmd {
@@ -63,7 +69,6 @@ fn main() -> Result<()> {
         }
         "watch" => {
             let r = find_run(&store, rest.first().context("run number")?)?;
-            engine.start();
             drive_until_idle(&engine, &r.id)?;
         }
         "runs" => {

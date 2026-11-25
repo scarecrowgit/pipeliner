@@ -36,6 +36,9 @@ pub struct Inner {
     slots: Arc<Semaphore>,
     /// Runs being executed by a thread in this process.
     active_runs: Mutex<std::collections::HashSet<Id>>,
+    /// This process holds the engine lock and executes runs.
+    owner: AtomicBool,
+    lock_file: Mutex<Option<std::fs::File>>,
 }
 
 impl std::ops::Deref for Engine {
@@ -54,30 +57,99 @@ impl Engine {
             cancels: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(slots)),
             active_runs: Mutex::new(Default::default()),
+            owner: AtomicBool::new(false),
+            lock_file: Mutex::new(None),
         }))
     }
 
     /// Resumes runs that were active when the app last quit.
     /// Interrupted agent tasks are marked failed (retry them from the Board or thread).
+    /// Becomes the engine owner for this data folder (or waits to become it) and resumes runs.
+    ///
+    /// Only one process at a time executes pipeline runs: the one holding
+    /// `<data dir>/engine.lock`. Others (a second window, the CLI while the app is open)
+    /// still create runs and record decisions in the shared database; the owner picks
+    /// them up within a couple of seconds. When the owner exits, another process takes over.
     pub fn start(&self) {
-        for t in self.store.tasks() {
-            if t.status.is_active() {
-                // Gates of active runs are resumed by their run thread.
-                if t.kind == TaskKind::Gate
-                    && t.run_id
-                        .as_deref()
-                        .and_then(|r| self.store.run(r))
-                        .map(|r| r.status.is_active())
-                        .unwrap_or(false)
-                {
+        if self.try_become_owner() {
+            self.recover();
+        }
+        let engine = self.clone();
+        std::thread::Builder::new()
+            .name("engine-owner".into())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !engine.is_owner() {
+                    if engine.try_become_owner() {
+                        engine.recover();
+                    }
                     continue;
                 }
-                let _ = self.store.update_task(&t.id, |t| {
-                    t.status = Status::Failed;
-                    t.error = Some("Interrupted: the app was closed while this ran.".into());
-                    t.finished_at = Some(now());
-                });
+                // Runs created or resumed by other processes.
+                for r in engine.store.runs() {
+                    if r.status == Status::Running || r.status == Status::Waiting {
+                        engine.spawn_run_thread(r.id.clone());
+                    }
+                }
+            })
+            .ok();
+    }
+
+    /// Whether this process executes pipeline runs.
+    pub fn is_owner(&self) -> bool {
+        self.owner.load(Ordering::SeqCst)
+    }
+
+    fn try_become_owner(&self) -> bool {
+        if self.is_owner() {
+            return true;
+        }
+        let Some(dir) = self.store.dir() else {
+            // In-memory store (tests): nothing to share.
+            self.owner.store(true, Ordering::SeqCst);
+            return true;
+        };
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("engine.lock"))
+        else {
+            return false;
+        };
+        if f.try_lock().is_ok() {
+            *self.lock_file.lock() = Some(f);
+            self.owner.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// After taking ownership: steps that were running in a process that is gone are
+    /// marked interrupted; active runs are resumed (their frontier re-executes).
+    fn recover(&self) {
+        let local: std::collections::HashSet<Id> = self.cancels.lock().keys().cloned().collect();
+        for t in self.store.tasks() {
+            if !t.status.is_active() || local.contains(&t.id) {
+                continue;
             }
+            // Gates of active runs are resumed by their run thread.
+            let run_active = t
+                .run_id
+                .as_deref()
+                .and_then(|r| self.store.run(r))
+                .map(|r| r.status.is_active())
+                .unwrap_or(false);
+            if t.kind == TaskKind::Gate && run_active {
+                continue;
+            }
+            let _ = self.store.update_task(&t.id, |t| {
+                t.status = Status::Failed;
+                t.error = Some("Interrupted: the app was closed while this ran.".into());
+                t.finished_at = Some(now());
+            });
         }
         for r in self.store.runs() {
             if r.status.is_active() {
@@ -465,6 +537,10 @@ impl Engine {
     // ---- internals -----------------------------------------------------------
 
     pub(crate) fn spawn_run_thread(&self, run_id: Id) {
+        if !self.is_owner() {
+            // The owning process picks the run up from the database.
+            return;
+        }
         {
             let mut active = self.active_runs.lock();
             if !active.insert(run_id.clone()) {

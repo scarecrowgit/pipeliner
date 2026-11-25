@@ -69,7 +69,9 @@ fn engine(url: &str) -> Engine {
         }],
         ..Config::default()
     };
-    Engine::new(store, config)
+    let e = Engine::new(store, config);
+    e.start();
+    e
 }
 
 fn wait_for(engine: &Engine, run_id: &str, want: Status) -> Run {

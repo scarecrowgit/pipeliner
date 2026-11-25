@@ -250,6 +250,14 @@ impl Store {
         }))
     }
 
+    /// Folder of the database file (`None` for an in-memory store).
+    pub fn dir(&self) -> Option<std::path::PathBuf> {
+        let c = self.conn.lock();
+        c.path()
+            .filter(|p| !p.is_empty())
+            .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+    }
+
     /// Receive every change. Dropping the receiver unsubscribes.
     pub fn subscribe(&self) -> async_channel::Receiver<Change> {
         let (tx, rx) = async_channel::unbounded();
