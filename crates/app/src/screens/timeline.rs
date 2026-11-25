@@ -50,6 +50,8 @@ struct Bar {
     end: Option<DateTime<Utc>>,
     cost: f64,
     tokens: u64,
+    /// Queued work laid out after "now" (an estimate, not a record).
+    planned: bool,
 }
 
 enum Owner {
@@ -77,6 +79,10 @@ struct DayData {
     tasks: usize,
     running: usize,
     waiting: usize,
+    /// Queued tasks shown as planned bars (today only).
+    queued: usize,
+    /// When the data was read; planned bars are shifted by the time since then.
+    queried_at: DateTime<Utc>,
 }
 
 /// Local midnight of `day`, as UTC.
@@ -111,13 +117,46 @@ impl DayData {
 
         let mut out = DayData {
             cumulative: vec![0.0; 24],
+            queried_at: now,
             ..Default::default()
         };
         let mut hourly = [0.0f64; 24];
+        let is_today = ds <= now && now < de;
         #[allow(clippy::type_complexity)]
-        let mut groups: HashMap<String, (Group, Vec<(CoreTask, DateTime<Utc>)>)> = HashMap::new();
+        let mut groups: HashMap<
+            String,
+            (
+                Group,
+                Vec<(CoreTask, DateTime<Utc>, Option<DateTime<Utc>>)>,
+                Vec<CoreTask>,
+            ),
+        > = HashMap::new();
 
         for t in store.tasks() {
+            if t.status == Status::Queued {
+                // Queued work has no real span: it is only planned on today's lane.
+                if is_today {
+                    out.queued += 1;
+                    let (key, owner, title, status) = group_info(&t, &runs, &chats);
+                    let g = groups.entry(key.clone()).or_insert_with(|| {
+                        (
+                            Group {
+                                key,
+                                owner,
+                                title,
+                                status,
+                                bars: vec![],
+                                cost: 0.0,
+                            },
+                            vec![],
+                            vec![],
+                        )
+                    });
+                    g.0.cost += t.cost_usd;
+                    g.2.push(t);
+                }
+                continue;
+            }
             let start = match t.started_at {
                 Some(s) => s,
                 None if matches!(
@@ -161,30 +200,7 @@ impl DayData {
                 _ => {}
             }
 
-            let (key, owner, title, status) =
-                if let Some(r) = t.run_id.as_deref().and_then(|id| runs.get(id)) {
-                    (
-                        format!("run-{}", r.id),
-                        Owner::Run(r.pipeline_id.clone()),
-                        format!("Run #{} · {}", r.number, r.title),
-                        Some(r.status),
-                    )
-                } else if let Some(c) = t.chat_id.clone() {
-                    let title = chats.get(&c).cloned().unwrap_or_default();
-                    (
-                        format!("chat-{c}"),
-                        Owner::Chat(c),
-                        format!("Chat · {title}"),
-                        None,
-                    )
-                } else {
-                    (
-                        "other".to_string(),
-                        Owner::Other,
-                        "Other tasks".to_string(),
-                        None,
-                    )
-                };
+            let (key, owner, title, status) = group_info(&t, &runs, &chats);
             let g = groups.entry(key.clone()).or_insert_with(|| {
                 (
                     Group {
@@ -196,10 +212,11 @@ impl DayData {
                         cost: 0.0,
                     },
                     vec![],
+                    vec![],
                 )
             });
             g.0.cost += t.cost_usd;
-            g.1.push((t, start));
+            g.1.push((t, start, None));
         }
 
         let mut cum = 0.0;
@@ -212,7 +229,20 @@ impl DayData {
 
         let mut list: Vec<Group> = groups
             .into_values()
-            .map(|(mut g, tasks)| {
+            .map(|(mut g, mut tasks, mut queued)| {
+                if !queued.is_empty() {
+                    let durs: Vec<chrono::Duration> = tasks
+                        .iter()
+                        .filter(|(t, _, _)| matches!(t.status, Status::Done | Status::Failed))
+                        .filter_map(|(t, _, _)| Some(t.finished_at? - t.started_at?))
+                        .collect();
+                    let est = estimate_duration(&durs);
+                    queued.sort_by_key(|t| (t.priority, t.created_at));
+                    let slots = plan_queue(now, est, de, queued.len());
+                    for (t, (s, e)) in queued.into_iter().zip(slots) {
+                        tasks.push((t, s, Some(e)));
+                    }
+                }
                 g.bars = order_bars(tasks);
                 g
             })
@@ -228,12 +258,73 @@ impl DayData {
     }
 }
 
+/// Group key, owner, title and run status of the row a task belongs to.
+fn group_info(
+    t: &CoreTask,
+    runs: &HashMap<Id, harness_core::Run>,
+    chats: &HashMap<Id, String>,
+) -> (String, Owner, String, Option<Status>) {
+    if let Some(r) = t.run_id.as_deref().and_then(|id| runs.get(id)) {
+        (
+            format!("run-{}", r.id),
+            Owner::Run(r.pipeline_id.clone()),
+            format!("Run #{} · {}", r.number, r.title),
+            Some(r.status),
+        )
+    } else if let Some(c) = t.chat_id.clone() {
+        let title = chats.get(&c).cloned().unwrap_or_default();
+        (
+            format!("chat-{c}"),
+            Owner::Chat(c),
+            format!("Chat · {title}"),
+            None,
+        )
+    } else {
+        (
+            "other".to_string(),
+            Owner::Other,
+            "Other tasks".to_string(),
+            None,
+        )
+    }
+}
+
+/// Typical length of a task in a group: the mean of its finished tasks, clamped to
+/// 2–30 minutes; 5 minutes when there is nothing to go on.
+fn estimate_duration(finished: &[chrono::Duration]) -> chrono::Duration {
+    if finished.is_empty() {
+        return chrono::Duration::minutes(5);
+    }
+    let total: i64 = finished.iter().map(|d| d.num_milliseconds().max(0)).sum();
+    let avg = chrono::Duration::milliseconds(total / finished.len() as i64);
+    avg.clamp(chrono::Duration::minutes(2), chrono::Duration::minutes(30))
+}
+
+/// Lays `n` queued tasks out back-to-back from `now`, each `est` long, never past `day_end`.
+fn plan_queue(
+    now: DateTime<Utc>,
+    est: chrono::Duration,
+    day_end: DateTime<Utc>,
+    n: usize,
+) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    let mut cur = now.min(day_end);
+    (0..n)
+        .map(|_| {
+            let s = cur.min(day_end);
+            let e = (s + est).min(day_end);
+            cur = e;
+            (s, e)
+        })
+        .collect()
+}
+
 /// Orders a group's tasks by start time with spawned tasks right under their parent.
-fn order_bars(mut tasks: Vec<(CoreTask, DateTime<Utc>)>) -> Vec<Bar> {
-    tasks.sort_by_key(|(_, s)| *s);
-    let ids: HashSet<Id> = tasks.iter().map(|(t, _)| t.id.clone()).collect();
+/// The third element is the planned end of a queued task (`Some` makes a planned bar).
+fn order_bars(mut tasks: Vec<(CoreTask, DateTime<Utc>, Option<DateTime<Utc>>)>) -> Vec<Bar> {
+    tasks.sort_by_key(|(_, s, _)| *s);
+    let ids: HashSet<Id> = tasks.iter().map(|(t, _, _)| t.id.clone()).collect();
     let mut children: HashMap<Option<Id>, Vec<usize>> = HashMap::new();
-    for (i, (t, _)) in tasks.iter().enumerate() {
+    for (i, (t, _, _)) in tasks.iter().enumerate() {
         let parent = t.parent_id.clone().filter(|p| ids.contains(p));
         children.entry(parent).or_default().push(i);
     }
@@ -251,7 +342,7 @@ fn order_bars(mut tasks: Vec<(CoreTask, DateTime<Utc>)>) -> Vec<Bar> {
     order
         .into_iter()
         .map(|(i, depth)| {
-            let (t, start) = &tasks[i];
+            let (t, start, planned_end) = &tasks[i];
             let active = matches!(t.status, Status::Running | Status::Waiting);
             Bar {
                 id: t.id.clone(),
@@ -262,13 +353,16 @@ fn order_bars(mut tasks: Vec<(CoreTask, DateTime<Utc>)>) -> Vec<Bar> {
                 status: t.status,
                 depth,
                 start: *start,
-                end: if active {
+                end: if let Some(e) = planned_end {
+                    Some(*e)
+                } else if active {
                     None
                 } else {
                     Some(t.finished_at.unwrap_or(*start).max(*start))
                 },
                 cost: t.cost_usd,
                 tokens: t.tokens_in + t.tokens_out,
+                planned: planned_end.is_some(),
             }
         })
         .collect()
@@ -280,6 +374,13 @@ fn order_bars(mut tasks: Vec<(CoreTask, DateTime<Utc>)>) -> Vec<Bar> {
 
 /// Bar background, border and text colors for a task.
 fn bar_colors(b: &Bar) -> (Hsla, Hsla, Hsla) {
+    if b.planned {
+        return (
+            theme::alpha(theme::LINE_STRONG, 0.0),
+            theme::LINE_STRONG,
+            theme::TEXT_MUTED,
+        );
+    }
     match b.status {
         Status::Running if b.kind == TaskKind::Spawned => {
             (theme::SPAWN_BAR, theme::SPAWN, theme::ON_ACCENT)
@@ -314,9 +415,35 @@ fn fmt_tokens(n: u64) -> String {
 }
 
 /// Hover text of a bar.
-fn bar_tooltip(b: &Bar, now: DateTime<Utc>) -> SharedString {
-    let s = b.start.with_timezone(&Local);
-    let span = match b.end {
+/// `start`/`end` are the span as drawn (planned bars are shifted to stay after "now").
+fn bar_tooltip(
+    b: &Bar,
+    now: DateTime<Utc>,
+    start: DateTime<Utc>,
+    end: Option<DateTime<Utc>>,
+) -> SharedString {
+    if b.planned {
+        let who = [b.actor.as_str(), b.model.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let mut lines = vec![b.title.clone()];
+        if !who.is_empty() {
+            lines.push(who);
+        }
+        let e = end.unwrap_or(start);
+        lines.push(format!(
+            "planned ~{} – {} (estimate)",
+            start.with_timezone(&Local).format("%H:%M"),
+            e.with_timezone(&Local).format("%H:%M")
+        ));
+        lines.push("Queued · not started".to_string());
+        return lines.join("\n").into();
+    }
+    let s = start.with_timezone(&Local);
+    let span = match end {
         Some(e) => format!(
             "{} – {}",
             s.format("%H:%M:%S"),
@@ -324,7 +451,7 @@ fn bar_tooltip(b: &Bar, now: DateTime<Utc>) -> SharedString {
         ),
         None => format!("{} – now", s.format("%H:%M:%S")),
     };
-    let secs = (b.end.unwrap_or(now) - b.start).num_seconds();
+    let secs = (end.unwrap_or(now) - start).num_seconds();
     let who = [b.actor.as_str(), b.model.as_str()]
         .iter()
         .filter(|s| !s.is_empty())
@@ -548,7 +675,11 @@ impl TimelineScreen {
             .child(stat_tile(
                 "Tasks",
                 d.tasks.to_string(),
-                Some(format!("in {} rows", d.groups.len())),
+                Some(if d.queued > 0 {
+                    format!("in {} rows · {} queued", d.groups.len(), d.queued)
+                } else {
+                    format!("in {} rows", d.groups.len())
+                }),
                 theme::TEXT,
                 false,
             ))
@@ -638,6 +769,20 @@ impl TimelineScreen {
         let ds = day_start(self.day);
         let now = Utc::now();
         let today = self.day == Local::now().date_naive();
+        let de = day_start(self.day + Days::new(1));
+        // Planned bars follow the clock between reloads so they stay after the now line.
+        let shift = (now - d.queried_at).max(chrono::Duration::zero());
+        // A bar's drawn span: planned bars are shifted, live bars end at now.
+        let span_of = |b: &Bar| -> (DateTime<Utc>, Option<DateTime<Utc>>) {
+            if b.planned {
+                (
+                    (b.start + shift).min(de),
+                    b.end.map(|e| (e + shift).min(de)),
+                )
+            } else {
+                (b.start, b.end)
+            }
+        };
         let x_of = |t: DateTime<Utc>| -> f32 {
             ((t - ds).num_milliseconds() as f64 / 1000.0).clamp(0.0, DAY_SECS) as f32 / 3600.0
                 * pxph
@@ -732,8 +877,8 @@ impl TimelineScreen {
         for g in &d.groups {
             let collapsed = self.collapsed.contains(&g.key);
             let key = g.key.clone();
-            let start = g.bars.iter().map(|b| b.start).min();
-            let end = g.bars.iter().map(|b| b.end.unwrap_or(now)).max();
+            let start = g.bars.iter().map(|b| span_of(b).0).min();
+            let end = g.bars.iter().map(|b| span_of(b).1.unwrap_or(now)).max();
             let tone = g
                 .status
                 .map(theme::status_color)
@@ -837,8 +982,9 @@ impl TimelineScreen {
                 let task_id = b.id.clone();
                 let spawned = b.kind == TaskKind::Spawned;
                 let live = b.end.is_none();
-                let eff_end = b.end.unwrap_or(now).max(b.start);
-                let secs = (eff_end - b.start).num_seconds();
+                let (b_start, b_end) = span_of(b);
+                let eff_end = b_end.unwrap_or(now).max(b_start);
+                let secs = (eff_end - b_start).num_seconds();
 
                 // Label cell.
                 let sub = if live {
@@ -847,6 +993,8 @@ impl TimelineScreen {
                         b.status.label().to_lowercase(),
                         ui::fmt_duration(secs)
                     )
+                } else if b.planned {
+                    "queued".to_string()
                 } else {
                     String::new()
                 };
@@ -909,7 +1057,7 @@ impl TimelineScreen {
 
                 // Lane row with the bar.
                 let (bg, border, fg) = bar_colors(b);
-                let x0 = x_of(b.start);
+                let x0 = x_of(b_start);
                 let w = (x_of(eff_end) - x0).max(4.0);
                 let text = [b.title.as_str(), b.actor.as_str()]
                     .iter()
@@ -918,7 +1066,7 @@ impl TimelineScreen {
                     .collect::<Vec<_>>()
                     .join(" · ");
                 let text = format!("{text} · {}", ui::fmt_usd(b.cost));
-                let tip = bar_tooltip(b, now);
+                let tip = bar_tooltip(b, now, b_start, b_end);
                 let waiting = b.status == Status::Waiting;
                 let bar = div()
                     .id(("tl-bar", i))
@@ -930,6 +1078,7 @@ impl TimelineScreen {
                     .rounded(theme::RADIUS_SM)
                     .border_1()
                     .border_color(border)
+                    .when(b.planned, |d| d.border_dashed())
                     .bg(bg)
                     .overflow_hidden()
                     .cursor_pointer()
@@ -1025,7 +1174,7 @@ impl TimelineScreen {
     }
 
     fn legend() -> Div {
-        let item = |bg: Hsla, border: Hsla, text: &'static str| {
+        let item = |bg: Hsla, border: Hsla, dashed: bool, text: &'static str| {
             div()
                 .flex()
                 .items_center()
@@ -1036,6 +1185,7 @@ impl TimelineScreen {
                         .h(px(10.))
                         .rounded(theme::RADIUS_SM)
                         .border_1()
+                        .when(dashed, |d| d.border_dashed())
                         .border_color(border)
                         .bg(bg),
                 )
@@ -1052,15 +1202,33 @@ impl TimelineScreen {
             .child(item(
                 theme::alpha(theme::SUCCESS, 0.32),
                 theme::alpha(theme::SUCCESS, 0.55),
+                false,
                 "done",
             ))
-            .child(item(theme::ACCENT_STRONG, theme::ACCENT, "running"))
-            .child(item(theme::WARNING_SOFT, theme::WARNING, "waiting for you"))
-            .child(item(theme::SPAWN_BAR, theme::SPAWN, "made by an agent"))
+            .child(item(theme::ACCENT_STRONG, theme::ACCENT, false, "running"))
+            .child(item(
+                theme::WARNING_SOFT,
+                theme::WARNING,
+                false,
+                "waiting for you",
+            ))
+            .child(item(
+                theme::SPAWN_BAR,
+                theme::SPAWN,
+                false,
+                "made by an agent",
+            ))
             .child(item(
                 theme::alpha(theme::DANGER, 0.6),
                 theme::DANGER,
+                false,
                 "failed",
+            ))
+            .child(item(
+                theme::alpha(theme::LINE_STRONG, 0.0),
+                theme::LINE_STRONG,
+                true,
+                "planned",
             ))
             .child(
                 div().child("Click a bar or row to open its thread. Click a run row to fold it."),
@@ -1077,11 +1245,11 @@ impl Render for TimelineScreen {
         } else {
             self.day.format("%A, %b %-d").to_string()
         };
-        let (running, waiting) = self
+        let (running, waiting, queued) = self
             .data
             .as_ref()
-            .map(|d| (d.running, d.waiting))
-            .unwrap_or((0, 0));
+            .map(|d| (d.running, d.waiting, d.queued))
+            .unwrap_or((0, 0, 0));
 
         let header = PageHeader::new("Timeline")
             .subtitle(label)
@@ -1094,6 +1262,9 @@ impl Render for TimelineScreen {
                         .warning()
                         .dot(),
                 )
+            })
+            .when(queued > 0, |h| {
+                h.meta(Badge::new(format!("{queued} queued")))
             })
             .action(
                 IconButton::new("tl-prev", AppIcon::ChevronLeft)
@@ -1192,6 +1363,40 @@ mod tests {
         let h = chrono::Duration::hours(1);
         assert_eq!(overlap_secs(t, t + h, t + h * 2, t + h * 3), 0.0);
         assert_eq!(overlap_secs(t, t + h * 2, t + h, t + h * 3), 3600.0);
+    }
+
+    #[test]
+    fn plan_queue_is_back_to_back_from_now() {
+        let now = Utc::now();
+        let est = chrono::Duration::minutes(5);
+        let end = now + chrono::Duration::hours(5);
+        let slots = plan_queue(now, est, end, 3);
+        assert_eq!(slots.len(), 3);
+        assert_eq!(slots[0], (now, now + est));
+        assert_eq!(slots[1], (now + est, now + est * 2));
+        assert_eq!(slots[2], (now + est * 2, now + est * 3));
+    }
+
+    #[test]
+    fn plan_queue_clamps_at_day_end() {
+        let now = Utc::now();
+        let est = chrono::Duration::minutes(10);
+        let end = now + chrono::Duration::minutes(15);
+        let slots = plan_queue(now, est, end, 4);
+        assert_eq!(slots[0], (now, now + est));
+        assert_eq!(slots[1], (now + est, end));
+        assert_eq!(slots[2], (end, end));
+        assert_eq!(slots[3], (end, end));
+        assert!(plan_queue(now, est, end, 0).is_empty());
+    }
+
+    #[test]
+    fn estimate_falls_back_and_clamps() {
+        let m = chrono::Duration::minutes;
+        assert_eq!(estimate_duration(&[]), m(5));
+        assert_eq!(estimate_duration(&[chrono::Duration::seconds(10)]), m(2));
+        assert_eq!(estimate_duration(&[m(120)]), m(30));
+        assert_eq!(estimate_duration(&[m(4), m(8)]), m(6));
     }
 
     #[test]
