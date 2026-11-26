@@ -805,13 +805,64 @@ pub fn run_command(
     };
     // Background processes may hold the pipe open: don't wait for them forever.
     let buf = rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default();
-    let text = String::from_utf8_lossy(&buf).to_string();
+    let text = clean_terminal_output(&String::from_utf8_lossy(&buf));
     let text = truncate_middle(&text, 16_000);
     match status {
         Some(s) => Ok(format!("exit code {}\n{}", s.code().unwrap_or(-1), text)),
         None if cancel.load(Ordering::SeqCst) => bail!("cancelled"),
         None => Ok(format!("timed out after {}s\n{}", timeout.as_secs(), text)),
     }
+}
+
+/// What a terminal would show: drops ANSI escape sequences (colours, cursor moves,
+/// hide/show cursor, OSC titles) and other control characters, and keeps only the last
+/// state of a line redrawn with `\r` (spinners, progress bars). CLIs print these even
+/// without a TTY; raw, they showed up as "[?25l[1G[J" in errors and agent results.
+pub fn clean_terminal_output(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut line = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.next() {
+                // CSI: ESC [ params… final byte in @..~
+                Some('[') => {
+                    for n in chars.by_ref() {
+                        if ('@'..='~').contains(&n) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: ESC ] … BEL or ESC \
+                Some(']') => {
+                    while let Some(n) = chars.next() {
+                        if n == '\u{7}' {
+                            break;
+                        }
+                        if n == '\u{1b}' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // Two-character escapes (ESC 7, ESC =, ...).
+                _ => {}
+            },
+            '\r' if chars.peek() == Some(&'\n') => {}
+            // A bare carriage return starts the line over.
+            '\r' => line.clear(),
+            '\n' => {
+                out.push_str(line.trim_end());
+                out.push('\n');
+                line.clear();
+            }
+            '\t' => line.push('\t'),
+            c if c.is_control() => {}
+            c => line.push(c),
+        }
+    }
+    out.push_str(&line);
+    out
 }
 
 pub fn truncate_middle(s: &str, max: usize) -> String {
@@ -847,6 +898,17 @@ mod tests {
             config: Config::default(),
             cancel: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    #[test]
+    fn terminal_noise_is_removed() {
+        let raw = "\u{1b}[?25l\u{1b}[1G\u{1b}[J\u{1b}[32m✓\u{1b}[39m Selected 1 skill\n\
+                   \u{1b}]0;title\u{7}loading 10%\rloading 100%\r\ndone\u{8}\tok\n";
+        assert_eq!(
+            clean_terminal_output(raw),
+            "✓ Selected 1 skill\nloading 100%\ndone\tok\n"
+        );
+        assert_eq!(clean_terminal_output("plain\ntext"), "plain\ntext");
     }
 
     #[test]
