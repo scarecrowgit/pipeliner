@@ -730,30 +730,13 @@ tbody tr:hover{background:var(--surface-raised)}
 ></button
 ></div
 ><div style="padding: 24px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;"
-><form aria-label="Create an agent with AI" class="gr-card" style="padding: 16px; gap: 10px; border-radius: var(--radius-lg); border-color: var(--accent-ring);"
-><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"
-><span class="lnum" style="border-color: var(--accent-ring); color: var(--accent-text);"
-><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
-><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
-></path
-></svg
-></span
-><label for="ag-ai" class="head" style="font-size: 13px;">Create with AI</label
-><span class="lbl">describe the agent in your words; it opens as a draft</span
-></div
-><textarea id="ag-ai" rows="6" class="field" placeholder="Describe the agent: what it does, what it may touch, what it returns…" style="height: auto; min-height: 132px; padding: 10px 12px; resize: vertical; font-size: 13px; line-height: 20px;">Reads CI logs for a failed run and says which test broke and why.
-Read-only: no code changes, no pushes.
-Use a cheap model; fall back to Sonnet if it fails.
-One variant is enough.
-Return the failing test, the cause and the log lines that show it.</textarea
-><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px;"
-><span class="lbl" style="flex: 1 1 300px; min-width: 0px;">Fills every field below: name, one line, role prompt, model, fallback, variants, tools, memory scope and returns. Nothing is saved until you save.</span
-><button type="submit" class="gr-btn gr-btn--primary"
+><form aria-label="Create an agent with AI" style="display: flex; gap: 8px; align-items: center;"
+><input id="ag-ai" aria-label="Describe an agent for AI to fill in" class="field" placeholder="Describe an agent and AI fills the fields below…" value="Reads CI logs for a failed run and says which test broke and why" style="flex: 1 1 0%; min-width: 0px;"
+><button type="submit" class="gr-btn gr-btn--secondary"
 ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
 ></path
-></svg>Fill all fields</button
-></div
+></svg>Fill with AI</button
 ></form
 ><div style="display: flex; flex-wrap: wrap; gap: 16px;"
 ><div class="fgroup" style="flex: 1 1 180px;"
