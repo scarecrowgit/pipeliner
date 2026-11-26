@@ -1033,6 +1033,8 @@ fn run_variant(
 ) -> Result<Value> {
     let store = engine.store().clone();
     let config = engine.config();
+    // Before this attempt's task exists: what interrupted attempts of this step left behind.
+    let resume = resume_context(&store, &run.id, &node.id, variant);
     let mut t = new_task(run, node, TaskKind::Agent, &r.name);
     if let Some(i) = variant {
         t.title = format!("{} {}", node.name, variant_letter(i));
@@ -1101,6 +1103,10 @@ fn run_variant(
         message = format!(
             "The user sent your previous attempt back with this note:\n\n{n}\n\nYour earlier work is still in the working directory. Revise it accordingly, then reply with a short report."
         );
+    }
+    if let Some(ctx) = &resume {
+        message = format!("{ctx}\n\n{message}");
+        system_note(&store, &t.id, "Resuming: a previous attempt of this step was interrupted; its work and report are passed to this one.");
     }
     let workdirs = other_workdirs(run, a.workdir.as_deref());
     let mut extra = vec![];
@@ -1563,6 +1569,71 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
     }
 }
 
+/// When the latest attempts of this step (same node and variant) were cut off by the app
+/// closing, tells the new attempt what they did so it continues instead of starting over:
+/// their last words and the sub-tasks they delegated, with results.
+fn resume_context(
+    store: &Store,
+    run_id: &str,
+    node_id: &str,
+    variant: Option<u32>,
+) -> Option<String> {
+    let mut attempts: Vec<Task> = store
+        .tasks_for_run(run_id)
+        .into_iter()
+        .filter(|t| {
+            t.node_id.as_deref() == Some(node_id)
+                && t.variant == variant
+                && t.kind == TaskKind::Agent
+                && t.depth == 0
+        })
+        .collect();
+    attempts.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+    // Consecutive interrupted attempts, newest first, stopping at a finished or sent-back one.
+    let interrupted: Vec<Task> = attempts
+        .into_iter()
+        .take_while(|t| t.error.as_deref() == Some(crate::INTERRUPTED))
+        .collect();
+    if interrupted.is_empty() {
+        return None;
+    }
+    let all = store.tasks_for_run(run_id);
+    let mut out = String::from(
+        "Your previous attempt at this step was interrupted when the app closed. Its changes are still in the \
+         working directory: start with `git status` and `git diff` to see them, keep what is done and continue \
+         from there instead of starting over.",
+    );
+    for a in interrupted.iter().rev() {
+        let mut subs: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.parent_id.as_deref() == Some(a.id.as_str()))
+            .collect();
+        subs.sort_by_key(|t| t.created_at);
+        for s in subs {
+            let result = match s.status {
+                Status::Done => first_line(&s.summary),
+                _ => format!("{} before it finished", s.status.as_str()),
+            };
+            out.push_str(&format!("\n- Delegated \"{}\": {}", s.title, result));
+        }
+    }
+    let last_words = interrupted.iter().find_map(|a| {
+        store
+            .messages(&a.id)
+            .into_iter()
+            .rev()
+            .find(|m| m.role == Role::Assistant && !m.content.trim().is_empty())
+            .map(|m| m.content)
+    });
+    if let Some(w) = last_words {
+        out.push_str(&format!(
+            "\n\nThe last thing the interrupted attempt wrote:\n{}",
+            crate::tools::truncate_middle(w.trim(), 1500)
+        ));
+    }
+    Some(out)
+}
+
 fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -1844,5 +1915,53 @@ mod title_tests {
             "Timeline hides queued work"
         );
         assert_eq!(super::run_title("# Fix crash"), "Fix crash");
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    fn attempt(s: &Store, error: Option<&str>) -> Task {
+        let mut t = Task::new(TaskKind::Agent, "GPUI build");
+        t.run_id = Some("r".into());
+        t.node_id = Some("build".into());
+        t.status = Status::Failed;
+        t.error = error.map(String::from);
+        s.put_task(&t).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        t
+    }
+
+    #[test]
+    fn interrupted_attempts_pass_their_work_on() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(resume_context(&s, "r", "build", None).is_none());
+        let a = attempt(&s, Some(crate::INTERRUPTED));
+        let mut sub = Task::new(TaskKind::Spawned, "Engine: create tasks");
+        sub.run_id = Some("r".into());
+        sub.parent_id = Some(a.id.clone());
+        sub.depth = 1;
+        sub.status = Status::Done;
+        sub.summary = "TaskKind::Manual is in; tests pass".into();
+        s.put_task(&sub).unwrap();
+        s.put_message(&Message::new(
+            &a.id,
+            Role::Assistant,
+            "Engine part done, UI next.",
+        ))
+        .unwrap();
+        let ctx = resume_context(&s, "r", "build", None).unwrap();
+        assert!(ctx.contains("git status"), "{ctx}");
+        assert!(
+            ctx.contains("Engine: create tasks\": TaskKind::Manual is in"),
+            "{ctx}"
+        );
+        assert!(ctx.contains("Engine part done, UI next."), "{ctx}");
+        // Another variant's history doesn't leak in.
+        assert!(resume_context(&s, "r", "build", Some(1)).is_none());
+        // A later attempt that failed for another reason ends the resume chain.
+        attempt(&s, Some("model error"));
+        assert!(resume_context(&s, "r", "build", None).is_none());
     }
 }

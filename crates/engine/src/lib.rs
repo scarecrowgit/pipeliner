@@ -24,6 +24,9 @@ use parking_lot::{Mutex, RwLock};
 
 pub use templates::Template;
 
+/// Error set on tasks that were running when the app closed.
+pub const INTERRUPTED: &str = "Interrupted: the app was closed while this ran.";
+
 /// Shared handle to the engine. Cheap to clone.
 #[derive(Clone)]
 pub struct Engine(Arc<Inner>);
@@ -130,6 +133,7 @@ impl Engine {
 
     /// After taking ownership: steps that were running in a process that is gone are
     /// marked interrupted; active runs are resumed (their frontier re-executes).
+    /// Error of tasks that were running when the app closed (the next attempt resumes them).
     fn recover(&self) {
         let local: std::collections::HashSet<Id> = self.cancels.lock().keys().cloned().collect();
         for t in self.store.tasks() {
@@ -148,7 +152,7 @@ impl Engine {
             }
             let _ = self.store.update_task(&t.id, |t| {
                 t.status = Status::Failed;
-                t.error = Some("Interrupted: the app was closed while this ran.".into());
+                t.error = Some(INTERRUPTED.into());
                 t.finished_at = Some(now());
             });
         }
