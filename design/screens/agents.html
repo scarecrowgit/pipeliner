@@ -508,25 +508,6 @@ tbody tr:hover{background:var(--surface-raised)}
 ></svg
 ></button
 ></div
-><form aria-label="Create an agent with AI" class="gr-card" style="padding: 10px; gap: 8px; margin-bottom: 8px; border-radius: var(--radius-lg);"
-><div style="display: flex; align-items: baseline; gap: 8px;"
-><label for="ag-ai" class="lbl" style="flex: 1 1 0%; color: var(--text-secondary); font-weight: 500;">Create with AI</label
-><span class="lbl">opens as a draft</span
-></div
-><textarea id="ag-ai" rows="9" class="field" placeholder="Describe the agent: what it does, what it may touch, what it returns…" style="height: auto; min-height: 176px; padding: 8px 10px; resize: vertical; font-size: 12px; line-height: 18px; border-radius: var(--radius-md);">Reads CI logs for a failed run and says which test broke and why.
-Read-only: no code changes, no pushes.
-Use a cheap model; fall back to Sonnet if it fails.
-One variant is enough.
-Return the failing test, the cause and the log lines that show it.</textarea
-><span class="lbl">Fills every field: name, one line, role prompt, model, fallback, variants, tools, memory scope and returns. Nothing is saved until you save.</span
-><div style="display: flex; justify-content: flex-end;"
-><button type="submit" class="gr-btn gr-btn--primary gr-btn--sm"
-><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
-><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
-></path
-></svg>Fill all fields</button
-></div
-></form
 ><div role="group" aria-label="Show" style="display: flex; padding: 2px; gap: 2px; margin-bottom: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised);"
 ><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-pressed="true" style="flex: 1 1 0%; background: var(--surface-hover);">All 9</button
 ><button type="button" class="gr-btn gr-btn--sm gr-btn--ghost" aria-pressed="false" style="flex: 1 1 0%;">Yours 7</button
@@ -749,6 +730,31 @@ Return the failing test, the cause and the log lines that show it.</textarea
 ></button
 ></div
 ><div style="padding: 24px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;"
+><form aria-label="Create an agent with AI" class="gr-card" style="padding: 16px; gap: 10px; border-radius: var(--radius-lg); border-color: var(--accent-ring);"
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"
+><span class="lnum" style="border-color: var(--accent-ring); color: var(--accent-text);"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
+></path
+></svg
+></span
+><label for="ag-ai" class="head" style="font-size: 13px;">Create with AI</label
+><span class="lbl">describe the agent in your words; it opens as a draft</span
+></div
+><textarea id="ag-ai" rows="6" class="field" placeholder="Describe the agent: what it does, what it may touch, what it returns…" style="height: auto; min-height: 132px; padding: 10px 12px; resize: vertical; font-size: 13px; line-height: 20px;">Reads CI logs for a failed run and says which test broke and why.
+Read-only: no code changes, no pushes.
+Use a cheap model; fall back to Sonnet if it fails.
+One variant is enough.
+Return the failing test, the cause and the log lines that show it.</textarea
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px;"
+><span class="lbl" style="flex: 1 1 300px; min-width: 0px;">Fills every field below: name, one line, role prompt, model, fallback, variants, tools, memory scope and returns. Nothing is saved until you save.</span
+><button type="submit" class="gr-btn gr-btn--primary"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
+></path
+></svg>Fill all fields</button
+></div
+></form
 ><div style="display: flex; flex-wrap: wrap; gap: 16px;"
 ><div class="fgroup" style="flex: 1 1 180px;"
 ><label for="ag-name" class="lbl">Name</label
