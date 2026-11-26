@@ -10,6 +10,7 @@
 //!   pipeliner-cli show <run number>
 //!   pipeliner-cli waiting
 //!   pipeliner-cli adopt-agents <pipeline>  (inline agent steps -> saved agents)
+//!   pipeliner-cli install [binary]       (copies a built app to the launcher's bin dir)
 //!   pipeliner-cli delete-run <run number>  (removes the run, its worktrees, branches, renders)
 //!   pipeliner-cli decide <task id> pick <n> | approve | back <note...> | reject
 //!   pipeliner-cli chat <text...>          (direct chat, prints the reply)
@@ -142,6 +143,17 @@ fn main() -> Result<()> {
                 }
             );
         }
+        "install" => {
+            let built = match rest.first() {
+                Some(p) => std::path::PathBuf::from(p),
+                None => std::path::PathBuf::from(
+                    std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".into()),
+                )
+                .join("release/pipeliner"),
+            };
+            let dest = harness_engine::update::install(&built)?;
+            println!("installed {} -> {}", built.display(), dest.display());
+        }
         "delete-run" => {
             let r = find_run(&store, rest.first().context("run number")?)?;
             if r.status == Status::Running {
@@ -253,6 +265,7 @@ fn delete_run_files(r: &Run) {
     let _ = std::fs::remove_dir_all(
         harness_core::paths::renders_dir().join(format!("run-{}", r.number)),
     );
+    let _ = std::fs::remove_dir_all(harness_core::paths::run_cache_dir(r.number));
 }
 
 fn find_run(store: &Store, n: &str) -> Result<Run> {

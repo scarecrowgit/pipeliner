@@ -77,13 +77,26 @@ pub fn update(engine: &Engine, log: &mut dyn FnMut(&str)) -> Result<PathBuf> {
     if !out.starts_with("exit code 0") {
         bail!("build failed:\n{}", tools::truncate_middle(&out, 3000));
     }
-    let bin = PathBuf::from(target).join("release/pipeliner");
-    if !bin.exists() {
-        bail!("build finished but {} is missing", bin.display());
+    let built = PathBuf::from(target).join("release/pipeliner");
+    if !built.exists() {
+        bail!("build finished but {} is missing", built.display());
     }
+    let bin = install(&built)?;
     engine
         .store()
         .log("app.updated", None, None, format!("Built {}", st.head));
     log("Built. Restarting…");
     Ok(bin)
+}
+
+/// Copies a built binary to `bin_dir()/pipeliner` (atomically: copy, then rename over the
+/// old one, so the running app keeps its file). Returns the installed path.
+pub fn install(built: &std::path::Path) -> Result<PathBuf> {
+    let dir = harness_core::paths::bin_dir();
+    std::fs::create_dir_all(&dir)?;
+    let dest = dir.join("pipeliner");
+    let tmp = dir.join(".pipeliner.new");
+    std::fs::copy(built, &tmp).with_context(|| format!("copy {}", built.display()))?;
+    std::fs::rename(&tmp, &dest)?;
+    Ok(dest)
 }

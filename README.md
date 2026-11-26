@@ -47,12 +47,15 @@ Configuration lives in `~/.config/pipeliner/config.toml`; data (SQLite, worktree
 
 ## Launcher
 
-The release binary runs outside nix-shell (runtime library paths are baked in). To get a menu
-entry:
+The release binary runs outside nix-shell (runtime library paths are baked in). Install it to
+`~/.local/share/pipeliner/bin/pipeliner` (what the launcher and Settings → Update & restart use, so
+other builds never replace the running app) and add a menu entry:
 
 ```sh
-CARGO_TARGET_DIR=~/.cache/pipeliner/cargo-target nix-shell shell.nix --run 'cargo build --release -p pipeliner'
-sed -e "s|@BIN@|$HOME/.cache/pipeliner/cargo-target/release/pipeliner|" \
+export CARGO_TARGET_DIR=~/.cache/pipeliner/cargo-target
+nix-shell shell.nix --run 'cargo build --release -p pipeliner -p harness-engine'
+$CARGO_TARGET_DIR/release/pipeliner-cli install
+sed -e "s|@BIN@|$HOME/.local/share/pipeliner/bin/pipeliner|" \
     -e "s|@ICON@|$PWD/packaging/pipeliner.svg|" \
     packaging/pipeliner.desktop > ~/.local/share/applications/pipeliner.desktop
 ```

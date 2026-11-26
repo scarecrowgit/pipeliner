@@ -289,6 +289,10 @@ fn finish(engine: &Engine, run: &Run, status: Status, error: Option<String>) -> 
     };
     store.log("run.finished", Some(&run.id), None, text.clone());
     post_to_chat(engine, &run, &text);
+    if matches!(status, Status::Done | Status::Cancelled) {
+        // Build caches of a finished run are many gigabytes and won't be used again.
+        let _ = std::fs::remove_dir_all(harness_core::paths::run_cache_dir(run.number));
+    }
     Ok(())
 }
 
@@ -431,6 +435,22 @@ struct Place {
     env: BTreeMap<String, String>,
 }
 
+/// A workdir's environment for one run: `{run}` becomes the run number and `{run_cache}`
+/// the run's scratch dir (so each run can get its own cargo target dir, for example).
+fn run_env(env: &BTreeMap<String, String>, run: &Run) -> BTreeMap<String, String> {
+    let cache = harness_core::paths::run_cache_dir(run.number)
+        .display()
+        .to_string();
+    env.iter()
+        .map(|(k, v)| {
+            let v = v
+                .replace("{run_cache}", &cache)
+                .replace("{run}", &run.number.to_string());
+            (k.clone(), v)
+        })
+        .collect()
+}
+
 /// Resolves (and creates if needed) the folder a step works in.
 /// `variant`: Some(i) for fan-out variants (each gets its own worktree/branch).
 fn place(
@@ -447,6 +467,7 @@ fn place(
         .context("workdir not found")?
         .clone();
     let root = expand_tilde(&wd.path);
+    let env = run_env(&wd.env, run);
     let shell = if wd.shell.is_empty() {
         crate::chat::shell_for(Some(&root))
     } else {
@@ -458,7 +479,7 @@ fn place(
             branch: None,
             base: None,
             shell,
-            env: wd.env.clone(),
+            env: env.clone(),
         });
     }
     let sub = git::subdir(&wd).unwrap_or_default();
@@ -495,7 +516,7 @@ fn place(
                         branch,
                         base,
                         shell,
-                        env: wd.env.clone(),
+                        env: env.clone(),
                     });
                 }
             }
@@ -519,7 +540,7 @@ fn place(
             let out = tools::run_command(
                 &dest.join(&sub),
                 "",
-                &wd.env,
+                &env,
                 &wd.setup,
                 Duration::from_secs(1800),
                 &never,
@@ -554,7 +575,7 @@ fn place(
         branch: Some(branch),
         base,
         shell,
-        env: wd.env.clone(),
+        env: env.clone(),
     })
 }
 
@@ -1963,5 +1984,36 @@ mod resume_tests {
         // A later attempt that failed for another reason ends the resume chain.
         attempt(&s, Some("model error"));
         assert!(resume_context(&s, "r", "build", None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn run_placeholders_expand() {
+        let run = Run {
+            number: 42,
+            ..serde_json::from_value(serde_json::json!({
+                "id": "r", "number": 42, "pipeline_id": "p", "pipeline_version": 1,
+                "title": "t", "input": "", "status": "running", "graph": {"workdirs": [], "nodes": [], "edges": []},
+                "created_at": "2026-01-01T00:00:00Z"
+            }))
+            .unwrap()
+        };
+        let mut env = BTreeMap::new();
+        env.insert(
+            "CARGO_TARGET_DIR".to_string(),
+            "{run_cache}/target".to_string(),
+        );
+        env.insert("TAG".to_string(), "run-{run}".to_string());
+        let out = run_env(&env, &run);
+        assert!(
+            out["CARGO_TARGET_DIR"].ends_with("runs/run-42/target"),
+            "{}",
+            out["CARGO_TARGET_DIR"]
+        );
+        assert_eq!(out["TAG"], "run-42");
     }
 }
