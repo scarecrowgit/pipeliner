@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1440">
-<meta name="design:size" content="1440x2600">
+<meta name="design:size" content="1440x3980">
 <title>Settings · rules</title>
 <style>
 /* Design tokens (keep in sync with design/tokens.css). */
@@ -287,11 +287,25 @@ tbody tr:last-child td,tbody tr:last-child th{border-bottom:0}
 .layer{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:2px 8px;align-items:baseline;padding:8px 10px;border-top:1px solid var(--line-subtle)}
 .layer:hover{background:var(--surface-raised)}
 .hist{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 0;border-top:1px solid var(--line-subtle);font-size:12px;line-height:18px}
+.ell{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skbox{border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--bg-sidebar);overflow:hidden}
+.skstep{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-top:1px solid var(--line)}
+.skstep:first-child{border-top:0}
+.sknum{width:18px;height:18px;flex:0 0 auto;border-radius:var(--radius-full);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent-text)}
+.skfound{display:grid;grid-template-columns:16px 116px minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:7px 0;border-top:1px solid var(--line-subtle);font-size:12px;line-height:18px}
+.skfound:first-child{border-top:0}
+.skfound input{margin-top:2px !important}
+.skinst{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-rows:auto auto;gap:0 12px;align-items:center;padding:8px 0;border-top:1px solid var(--line-subtle);font-size:12px;line-height:18px}
+.skinst > div{grid-column:1;grid-row:1}
+.skinst > button{grid-column:3;grid-row:1 / 3;justify-self:end}
+.skinst > span.lbl{grid-column:2;grid-row:1 / 3}
+.skinst:hover{background:var(--surface-raised)}
+.skway{display:grid;grid-template-columns:14px 72px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line-subtle);font-size:12px;line-height:18px}
 </style>
 </head>
 <body>
 <div id="dc-root"
-><div style="min-height: 2600px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
+><div style="min-height: 3980px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><div style="flex: 0 0 276px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);"
 ><nav class="gr-nav" aria-label="Main" style="width: 100%; min-height: 800px; gap: 2px; font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0px 8px; border: 0px; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer; text-align: left;"
@@ -505,6 +519,14 @@ tbody tr:last-child td,tbody tr:last-child th{border-bottom:0}
 ></svg
 ><span style="flex: 1 1 0%;">Models</span
 ><span class="lbl">4</span
+></a
+><a href="#skills" class="snav"
+><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"
+><path d="M12 3l1.9 5.8L20 10l-5.1 3.2L16.5 20 12 16.3 7.5 20l1.6-6.8L4 10l6.1-1.2z"
+></path
+></svg
+><span style="flex: 1 1 0%;">Skills</span
+><span class="lbl">6</span
 ></a
 ><a href="#sources" class="snav"
 ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
@@ -824,6 +846,264 @@ tbody tr:last-child td,tbody tr:last-child th{border-bottom:0}
 ><option>Sonnet 5.5</option
 ></select
 ></div
+></div
+></section
+><section class="panel" id="skills" aria-label="Skills"
+><div class="phead"
+><span class="tile" style="background: var(--spawn-soft); color: var(--spawn-text);"
+><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"
+><path d="M12 3l1.9 5.8L20 10l-5.1 3.2L16.5 20 12 16.3 7.5 20l1.6-6.8L4 10l6.1-1.2z"
+></path
+></svg
+></span
+><h2 class="head" style="margin: 0px;">Skills</h2
+><span class="lbl">folders with a SKILL.md · agents get them always or on demand (load_skill)</span
+><div style="flex: 1 1 0%;"
+></div
+><span class="lbl" style="font-variant-numeric: tabular-nums;">6 installed · 2 waiting for you</span
+></div
+><div class="skbox"
+><div class="skstep"
+><div style="display: flex; align-items: center; gap: 8px;"
+><span class="sknum">1</span
+><span class="head" style="font-size: 13px;">Get a skill</span
+><span class="lbl">one field for links, commands and requests; nothing installs before you review</span
+></div
+><div style="display: flex; flex-direction: column; gap: 6px;"
+><label for="sk-src" class="lbl">Paste a link or an install command, or say what you need in words</label
+><div style="display: flex; gap: 6px;"
+><div class="field edited" style="flex: 1 1 0%; min-width: 0px; display: flex; align-items: center; gap: 8px; padding: 0px 4px 0px 10px;"
+><input id="sk-src" class="mono" style="flex: 1 1 0%; min-width: 0px; border: 0px; padding: 0px; background: transparent; color: var(--text); outline: none; text-overflow: ellipsis;" value="https://github.com/acme/agent-skills/tree/main/documents"
+><span class="gr-badge gr-badge--accent" style="flex: 0 0 auto; height: 22px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+></path
+><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+></path
+></svg>GitHub folder</span
+></div
+><button type="button" class="gr-btn gr-btn--primary gr-btn--sm" style="height: 32px; flex: 0 0 auto;">Fetch</button
+></div
+></div
+><div style="display: flex; flex-direction: column; gap: 0px;"
+><div class="skway"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon" style="color: var(--accent-text);"
+><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+></path
+><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+></path
+></svg
+><span style="color: var(--text);">Link</span
+><span class="lbl ell">GitHub repo or folder, .zip, raw SKILL.md · downloaded, nothing runs</span
+><span class="gr-badge gr-badge--accent" style="height: 18px;">detected</span
+></div
+><div class="skway"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon" style="color: var(--text-secondary);"
+><path d="m4 17 6-6-6-6"
+></path
+><path d="M12 19h8"
+></path
+></svg
+><span style="color: var(--text);">Command</span
+><span class="lbl ell"
+><span class="mono" style="color: var(--text-secondary);">npx skills add owner/repo</span> · runs in an empty temp folder, you confirm first</span
+><span
+></span
+></div
+><div class="skway"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon" style="color: var(--spawn-text);"
+><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+></path
+><path d="M8 10h8M8 13h5"
+></path
+></svg
+><span style="color: var(--text);">Words</span
+><span class="lbl ell">“a skill for release notes” · Orchestrator searches in a <a href="chat.html">chat</a> and stages what it finds</span
+><span
+></span
+></div
+></div
+></div
+><div class="skstep"
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"
+><span class="sknum">2</span
+><span class="head" style="font-size: 13px;">Review and install</span
+><span class="gr-badge gr-badge--accent">2 waiting</span
+><div style="flex: 1 1 0%;"
+></div
+><label for="sk-into" class="lbl">into</label
+><select id="sk-into" class="field mono" style="width: auto; height: 28px; font-size: 12px;"
+><option>~/.config/pipeliner/skills</option
+><option>~/skills</option
+></select
+></div
+><div style="border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;"
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+></path
+><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+></path
+></svg
+><span class="mono ell" style="color: var(--text); flex: 0 1 auto;">acme/agent-skills/documents</span
+><span class="mono" style="color: var(--text-muted);">@ 3f9c2a1</span
+><span class="lbl">from link · 10:52 · 3 skills · 14 files · 48 KB</span
+><div style="flex: 1 1 0%;"
+></div
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">View files</button
+></div
+><div
+><div class="skfound"
+><input type="checkbox" checked="" aria-label="Install pdf-tools" style="accent-color: rgb(113, 112, 255); margin: 0px;"
+><span class="mono ell" style="color: var(--text);">pdf-tools</span
+><span>Read, split and fill PDF forms; extract tables to CSV.</span
+><span class="gr-badge gr-badge--success">new</span
+></div
+><div class="skfound"
+><input type="checkbox" checked="" aria-label="Install spreadsheets" style="accent-color: rgb(113, 112, 255); margin: 0px;"
+><span class="mono ell" style="color: var(--text);">spreadsheets</span
+><span>Edit .xlsx and .csv files, keep formulas, write charts.</span
+><span class="gr-badge gr-badge--warning">has scripts · 2</span
+></div
+><div class="skfound"
+><input type="checkbox" aria-label="Install brand-voice" style="accent-color: rgb(113, 112, 255); margin: 0px;"
+><span class="mono ell" style="color: var(--text);">brand-voice</span
+><span>You already have brand-voice in ~/skills; that one keeps winning unless you replace it.</span
+><select class="field" aria-label="brand-voice clash" style="width: auto; height: 24px; padding: 0px 6px; font-size: 12px;"
+><option>Skip</option
+><option>Replace mine</option
+><option>Install as brand-voice-acme</option
+></select
+></div
+></div
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line-subtle);"
+><span class="lbl" style="flex: 1 1 240px;">Scripts inside a skill run only through an agent’s shell tool, like any other command. Installing doesn’t run anything.</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Discard</button
+><button type="button" class="gr-btn gr-btn--primary gr-btn--sm"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M20 6 9 17l-5-5"
+></path
+></svg>Install 2 skills</button
+></div
+></div
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); padding: 8px 12px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon" style="color: var(--spawn-text);"
+><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+></path
+></svg
+><span class="mono" style="color: var(--text);">release-notes</span
+><span class="lbl" style="flex: 1 1 200px; min-width: 0px;">staged by Orchestrator in <a href="chat.html">“skills for the changelog”</a> · from npx skills add keep-a-changelog/skill · 09:47</span
+><button type="button" class="gr-btn gr-btn--secondary gr-btn--sm">Review</button
+></div
+></div
+></div
+><div style="display: flex; flex-direction: column;"
+><div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;"
+><span class="lbl" style="flex: 1 1 0%;">Installed · earlier folders win on name clashes</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Check for updates</button
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M5 12h14M12 5v14"
+></path
+></svg>Add folder</button
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">code-review</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+></path
+></svg
+><span class="ell">~/skills</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap;"><span style="color: var(--text-secondary);">Fixer</span> · always</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Open</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Review a diff for bugs first, style last; cite file:line.</span
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">brand-voice</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+></path
+></svg
+><span class="ell">~/skills</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap;"><span style="color: var(--text-secondary);">Writer</span> · always</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Open</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Tone, banned words and headline rules for blog drafts.</span
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">git-conventions</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+></path
+><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+></path
+></svg
+><span class="ell">github.com/acme/team-skills @ 2d1e0b7</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap;"><span style="color: var(--text-secondary);">3 agents</span> · on demand</span
+><button type="button" class="gr-btn gr-btn--secondary gr-btn--sm">Update</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Branch names, commit messages and PR bodies for this team.</span
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">sql-style</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="m4 17 6-6-6-6"
+></path
+><path d="M12 19h8"
+></path
+></svg
+><span class="ell">npx skills add dbt-labs/sql-style · Nov 12</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap;"><span style="color: var(--text-secondary);">Analyst</span> · on demand</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Open</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Readable SQL: CTEs over nesting, explicit joins, no SELECT *.</span
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">web-research</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+></path
+><path d="M8 10h8M8 13h5"
+></path
+></svg
+><span class="ell">Orchestrator · chat “research skills” · Nov 20</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap; color: var(--text-disabled);">no agent yet</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Open</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Search, open sources, quote with links; never trust one source.</span
+></div
+><div class="skinst"
+><div style="display: flex; align-items: center; gap: 8px; min-width: 0px;"
+><span class="mono" style="color: var(--text); flex: 0 0 auto;">changelog</span
+><span class="lbl ell" style="display: inline-flex; align-items: center; gap: 4px;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+></path
+></svg
+><span class="ell">~/skills</span
+></span
+></div
+><span class="lbl" style="text-align: right; white-space: nowrap;"><span style="color: var(--text-secondary);">Writer</span> · on demand</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Open</button
+><span class="ell" style="grid-column: 1; grid-row: 2;">Group changes by Added / Fixed / Removed, link the PRs.</span
+></div
+><span class="lbl" style="padding-top: 8px; border-top: 1px solid var(--line-subtle);">Folders: <span class="mono" style="color: var(--text-secondary);">~/.config/pipeliner/skills</span> (installs go here) · <span class="mono" style="color: var(--text-secondary);">~/skills</span>. Pick which agent gets which skill in <a href="pipeline-editor.html">Pipeline editor › node</a>.</span
 ></div
 ></section
 ><section class="panel" id="sources" aria-label="Sources and triggers"

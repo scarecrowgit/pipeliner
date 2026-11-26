@@ -89,6 +89,8 @@ mod route_tests {
         );
         assert_eq!(Route::parse("task:t1"), Some(Route::Task { task: "t1".into() }));
         assert_eq!(Route::parse("task"), None);
+        assert_eq!(Route::parse("settings:skills"), Some(Route::Settings));
+        assert_eq!(Route::from_name("settings:skills"), Some(Route::Settings));
         assert_eq!(Route::parse("nope"), None);
     }
 }
@@ -160,6 +162,8 @@ impl Route {
                 "chat" => Route::Chat { chat: id },
                 "agents" => Route::Agents { agent: id },
                 "task" => Route::Task { task: id? },
+                // `settings:skills` opens Settings (the screen reads the section itself).
+                "settings" => Route::Settings,
                 _ => return None,
             });
         }

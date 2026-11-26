@@ -152,10 +152,14 @@ impl ChatScreen {
         let app = AppState::global(cx);
         let mut subs =
             vec![
-                cx.subscribe_in(&app, window, |this, _, ev: &AppEvent, _, cx| match ev {
+                cx.subscribe_in(&app, window, |this, _, ev: &AppEvent, window, cx| match ev {
                     AppEvent::StoreChanged { changes, .. } => this.on_changes(changes, cx),
-                    AppEvent::Navigated(Route::Chat { chat: Some(id) }) => {
-                        this.select(Some(id.clone()), cx)
+                    AppEvent::Navigated(Route::Chat { chat }) => {
+                        if let Some(id) = chat {
+                            this.select(Some(id.clone()), cx);
+                        }
+                        // Opening a chat means writing in it.
+                        this.composer.update(cx, |s, cx| s.focus(window, cx));
                     }
                     _ => {}
                 }),
@@ -324,6 +328,14 @@ impl ChatScreen {
         this.reload_models(cx);
         if selected.is_some() {
             this.select(selected, cx);
+        }
+        // The screen is built on the first visit to Chat: start in the message box.
+        this.composer.update(cx, |s, cx| s.focus(window, cx));
+        // PIPELINER_DRAFT_IMAGES (paths separated by ':'): start with these images in the
+        // message box, so headless screenshots (scripts/shoot.sh) can show the image tray.
+        if let Some(paths) = std::env::var_os("PIPELINER_DRAFT_IMAGES") {
+            let paths: Vec<_> = std::env::split_paths(&paths).collect();
+            this.add_files(paths, cx);
         }
         this
     }
