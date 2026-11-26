@@ -355,6 +355,10 @@ impl Default for AgentNode {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DelegateConfig {
+    /// Saved agent to delegate to; its role, model and skills apply, fields below override
+    /// when non-empty.
+    #[serde(default)]
+    pub agent: Option<Id>,
     pub name: String,
     pub model: String,
     #[serde(default)]
@@ -845,7 +849,37 @@ pub struct Message {
     /// For user messages posted mid-run: has the agent seen it yet.
     #[serde(default)]
     pub delivered: bool,
+    /// Images attached to the message (screenshots, pasted or picked files).
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
     pub created_at: DateTime<Utc>,
+}
+
+/// An image attached to a message (a screenshot, pasted or picked file). The file lives in `paths::attachments_dir()`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Attachment {
+    pub path: String,
+    pub name: String,
+    pub mime: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub pasted: bool,
+}
+
+impl Attachment {
+    /// Estimated prompt tokens: w*h/750 after scaling so the long edge is ≤ 1568 px
+    /// (Anthropic's rule), minimum 1.
+    pub fn tokens(&self) -> u64 {
+        let (mut w, mut h) = (self.width as f64, self.height as f64);
+        let long = w.max(h);
+        if long > 1568.0 {
+            let k = 1568.0 / long;
+            w = (w * k).floor();
+            h = (h * k).floor();
+        }
+        ((w * h / 750.0) as u64).max(1)
+    }
 }
 
 impl Message {
@@ -861,6 +895,7 @@ impl Message {
             card: None,
             partial: false,
             delivered: false,
+            attachments: vec![],
             created_at: now(),
         }
     }
@@ -920,4 +955,29 @@ pub struct Event {
     #[serde(default)]
     pub task_id: Option<Id>,
     pub text: String,
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+
+    fn att(width: u32, height: u32) -> Attachment {
+        Attachment {
+            path: "x.png".into(),
+            name: "x".into(),
+            mime: "image/png".into(),
+            width,
+            height,
+            pasted: false,
+        }
+    }
+
+    #[test]
+    fn attachment_tokens() {
+        assert_eq!(att(1280, 800).tokens(), 1365);
+        assert_eq!(att(980, 620).tokens(), 810);
+        assert_eq!(att(0, 0).tokens(), 1);
+        // Scaled down to a 1568 long edge.
+        assert_eq!(att(3136, 1568).tokens(), 1568 * 784 / 750);
+    }
 }

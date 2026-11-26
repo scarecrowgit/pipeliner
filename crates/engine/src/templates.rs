@@ -11,6 +11,51 @@ pub struct Template {
     pub description: &'static str,
     pub graph: PipelineGraph,
     pub color: u32,
+    /// Saved agents the graph refers to by `id` (a template-local key). Creating a
+    /// pipeline saves them (or reuses saved agents with the same name) and rewrites the
+    /// references to the real ids, so they show up on the Agents screen.
+    pub agents: Vec<AgentDef>,
+}
+
+fn agent_def(
+    key: &str,
+    name: &str,
+    description: &str,
+    role: &str,
+    model: String,
+    skills_on_demand: Vec<String>,
+    max_steps: u32,
+) -> AgentDef {
+    AgentDef {
+        id: key.into(),
+        name: name.into(),
+        description: description.into(),
+        role: role.into(),
+        model,
+        tools: ToolAccess::Full,
+        skills: vec![],
+        skills_on_demand,
+        max_steps,
+        version: 1,
+        created_at: now(),
+        updated_at: now(),
+    }
+}
+
+/// Rewrites template-local agent keys in `graph` to saved agent ids.
+pub fn remap_agents(graph: &mut PipelineGraph, ids: &std::collections::HashMap<String, Id>) {
+    for n in &mut graph.nodes {
+        if let NodeKind::Agent(a) = &mut n.kind {
+            if let Some(id) = a.agent.as_ref().and_then(|k| ids.get(k)) {
+                a.agent = Some(id.clone());
+            }
+            if let Some(d) = &mut a.delegate {
+                if let Some(id) = d.agent.as_ref().and_then(|k| ids.get(k)) {
+                    d.agent = Some(id.clone());
+                }
+            }
+        }
+    }
 }
 
 /// The repository this app was built from (for pipelines that improve the app itself).
@@ -79,7 +124,9 @@ pub fn all(config: &Config) -> Vec<Template> {
     let mut env = std::collections::BTreeMap::new();
     env.insert(
         "CARGO_TARGET_DIR".to_string(),
-        "~/.cache/pipeliner/cargo-target".to_string(),
+        // Per run: parallel runs build different code under the same crate names and would
+        // overwrite each other's artifacts in a shared target dir.
+        "{run_cache}/target".to_string(),
     );
     let app = Workdir {
         id: "app".into(),
@@ -130,8 +177,8 @@ pub fn all(config: &Config) -> Vec<Template> {
                 "design",
                 "Designer",
                 NodeKind::Agent(AgentNode {
-                    agent: None,
-                    model: model(config, "opus"),
+                    agent: Some("designer".into()),
+                    model: String::new(),
                     instructions: "You change the UI mockups for one issue. The mockups are static HTML screens in \
                                    `design/screens/` (read `design/README.md` for the format and `design/tokens.css` for the \
                                    design tokens). Edit the HTML in place (edit_file for small changes); keep files static \
@@ -140,9 +187,9 @@ pub fn all(config: &Config) -> Vec<Template> {
                                    `design/`. The user compares renders of the screens you change before anything is coded."
                         .into(),
                     workdir: Some("app".into()),
-                    tools: Some(ToolAccess::Full),
+                    tools: None,
                     skills: vec![],
-                    skills_on_demand: design_skills,
+                    skills_on_demand: vec![],
                     max_steps: 60,
                     variants: 2,
                     variant_hints: vec![
@@ -172,8 +219,8 @@ pub fn all(config: &Config) -> Vec<Template> {
                 "build",
                 "GPUI build",
                 NodeKind::Agent(AgentNode {
-                    agent: None,
-                    model: model(config, "opus"),
+                    agent: Some("gpui-lead".into()),
+                    model: String::new(),
                     instructions: "You lead coders to implement one issue in this Rust + GPUI codebase. Plan the work, hand \
                                    focused tasks to the coder with `delegate` (exact files and acceptance criteria), review \
                                    what they did (read the code, `git diff`), and send follow-ups until it is right. You may \
@@ -184,21 +231,18 @@ pub fn all(config: &Config) -> Vec<Template> {
                                    (files), how you checked it, anything not addressed."
                         .into(),
                     workdir: Some("app".into()),
-                    tools: Some(ToolAccess::Full),
+                    tools: None,
                     skills: vec![],
-                    skills_on_demand: gpui_skills.clone(),
+                    skills_on_demand: vec![],
                     max_steps: 80,
                     variants: 1,
                     variant_hints: vec![],
                     delegate: Some(DelegateConfig {
-                        name: "Coder".into(),
-                        model: model(config, "sonnet"),
-                        instructions: "You implement one task given by the orchestrator in a Rust + GPUI codebase. Read the \
-                                       relevant code first, make focused changes in the existing style (edit_file for small \
-                                       edits), and check your work (at least `cargo check` as AGENTS.md says). Do not commit. \
-                                       Use `load_skill` for GPUI guidance. Reply with what you changed and how you checked it."
-                            .into(),
-                        skills_on_demand: gpui_skills,
+                        agent: Some("coder".into()),
+                        name: String::new(),
+                        model: String::new(),
+                        instructions: String::new(),
+                        skills_on_demand: vec![],
                         max_steps: 80,
                     }),
                 }),
@@ -225,6 +269,42 @@ pub fn all(config: &Config) -> Vec<Template> {
             edge("pr", "approve", None),
         ],
     };
+
+    let design_agents = vec![
+        agent_def(
+            "designer",
+            "Designer",
+            "Changes the static HTML mockups in design/screens for one issue",
+            "You are a product designer for a desktop app. You work on static HTML mockups, keep them consistent \
+             with the existing screens and the design tokens, and change only what the task needs. You explain \
+             your choices in a few plain sentences.",
+            model(config, "opus"),
+            design_skills,
+            60,
+        ),
+        agent_def(
+            "gpui-lead",
+            "GPUI lead",
+            "Plans GPUI work, delegates it to the Coder, reviews and verifies",
+            "You are a senior Rust engineer who leads work on a GPUI desktop app. You plan, hand focused tasks to \
+             coders, review their changes, and verify with builds, tests and clippy before you report.",
+            model(config, "opus"),
+            gpui_skills.clone(),
+            80,
+        ),
+        agent_def(
+            "coder",
+            "Coder",
+            "Implements one focused task in a Rust + GPUI codebase",
+            "You implement one task given by the orchestrator in a Rust + GPUI codebase. Read the relevant code \
+             first, make focused changes in the existing style (edit_file for small edits), and check your work (at \
+             least `cargo check` as AGENTS.md says). Do not commit. Use `load_skill` for GPUI guidance. Reply with \
+             what you changed and how you checked it.",
+            model(config, "sonnet"),
+            gpui_skills,
+            80,
+        ),
+    ];
 
     let agent_pr = PipelineGraph {
         workdirs: vec![Workdir { id: "code".into(), name: "Code".into(), path: String::new(), worktree: true, base_branch: "main".into(), branch_prefix: "pipeliner/".into(), setup: String::new(), shell: String::new(), env: Default::default() }],
@@ -270,6 +350,7 @@ pub fn all(config: &Config) -> Vec<Template> {
                           orchestrator with a coder builds it in this app's repo and opens a PR for your approval.",
             graph: design_build,
             color: 0x7170ff,
+            agents: design_agents,
         },
         Template {
             id: "agent-pr",
@@ -277,8 +358,9 @@ pub fn all(config: &Config) -> Vec<Template> {
             description: "One agent works in a repository, you review the diff, a pull request is opened.",
             graph: agent_pr,
             color: 0x4cb782,
+            agents: vec![],
         },
-        Template { id: "blank", name: "Blank", description: "Just a source node. Build your own graph.", graph: blank, color: 0x4ea7fc },
+        Template { id: "blank", name: "Blank", description: "Just a source node. Build your own graph.", graph: blank, color: 0x4ea7fc, agents: vec![] },
     ]
 }
 

@@ -3,6 +3,7 @@
 //! through [`Engine`] and observes it through the [`Store`]'s change feed.
 
 pub mod agent;
+pub mod attachments;
 pub mod chat;
 pub mod git;
 pub mod llm;
@@ -23,6 +24,9 @@ use harness_core::*;
 use parking_lot::{Mutex, RwLock};
 
 pub use templates::Template;
+
+/// Error set on tasks that were running when the app closed.
+pub const INTERRUPTED: &str = "Interrupted: the app was closed while this ran.";
 
 /// Shared handle to the engine. Cheap to clone.
 #[derive(Clone)]
@@ -130,6 +134,7 @@ impl Engine {
 
     /// After taking ownership: steps that were running in a process that is gone are
     /// marked interrupted; active runs are resumed (their frontier re-executes).
+    /// Error of tasks that were running when the app closed (the next attempt resumes them).
     fn recover(&self) {
         let local: std::collections::HashSet<Id> = self.cancels.lock().keys().cloned().collect();
         for t in self.store.tasks() {
@@ -155,7 +160,7 @@ impl Engine {
             }
             let _ = self.store.update_task(&t.id, |t| {
                 t.status = Status::Failed;
-                t.error = Some("Interrupted: the app was closed while this ran.".into());
+                t.error = Some(INTERRUPTED.into());
                 t.finished_at = Some(now());
             });
         }
@@ -237,7 +242,32 @@ impl Engine {
     /// agent works with tools as a task. Pipeline: starts the chat's pipeline with the text.
     /// If the chat's agent is mid-task, the message steers it instead.
     pub fn send(&self, chat_id: &str, text: &str) -> Result<()> {
-        chat::send(self, chat_id, text)
+        self.send_with(chat_id, text, vec![])
+    }
+
+    /// Like [`Engine::send`], with images attached (the text may be empty then).
+    pub fn send_with(&self, chat_id: &str, text: &str, attachments: Vec<Attachment>) -> Result<()> {
+        chat::send(self, chat_id, text, attachments)
+    }
+
+    /// Stores image bytes (pasted or dropped) as an attachment.
+    pub fn save_attachment_bytes(
+        &self,
+        bytes: &[u8],
+        name: Option<&str>,
+        pasted: bool,
+    ) -> Result<Attachment> {
+        attachments::save_bytes(bytes, name, pasted)
+    }
+
+    /// Copies an image file into the attachments folder.
+    pub fn add_attachment_file(&self, path: &std::path::Path) -> Result<Attachment> {
+        attachments::add_file(path)
+    }
+
+    /// Deletes an attachment that was never sent (only inside the attachments folder).
+    pub fn discard_attachment(&self, path: &str) {
+        attachments::discard(path)
     }
 
     // ---- runs ----------------------------------------------------------------
@@ -271,8 +301,21 @@ impl Engine {
         let (Some(run_id), Some(node_id)) = (t.run_id.clone(), t.node_id.clone()) else {
             bail!("only pipeline steps can be retried");
         };
-        if self.active_runs.lock().contains(&run_id) {
-            bail!("this run is still stopping; try again in a moment");
+        if t.kind == TaskKind::Spawned {
+            bail!("a sub-agent can't be retried on its own; retry the step that spawned it");
+        }
+        if let Some(n) = self.store.newer_attempt(&t) {
+            bail!(
+                "this step already has a newer attempt ({}); open that one instead",
+                n.status.as_str()
+            );
+        }
+        let run = self.store.run(&run_id).context("run not found")?;
+        if run.status == Status::Done {
+            bail!("run #{} has finished; start a new run instead", run.number);
+        }
+        if self.active_runs.lock().contains(&run_id) || run.status == Status::Running {
+            bail!("run #{} is already running", run.number);
         }
         self.store.update_run(&run_id, |r| {
             r.status = Status::Running;
@@ -395,7 +438,9 @@ impl Engine {
     }
 
     pub fn create_pipeline(&self, template: &Template, name: &str) -> Result<Pipeline> {
-        let p = templates::instantiate(template, name);
+        let mut p = templates::instantiate(template, name);
+        let ids = self.ensure_agents(&template.agents)?;
+        templates::remap_agents(&mut p.graph, &ids);
         self.store.put_pipeline(&p)?;
         self.store.log(
             "pipeline.created",
@@ -404,6 +449,112 @@ impl Engine {
             format!("Pipeline {} created", p.name),
         );
         Ok(p)
+    }
+
+    /// Saves template agents, reusing saved agents with the same name. Returns template key -> id.
+    fn ensure_agents(&self, defs: &[AgentDef]) -> Result<HashMap<String, Id>> {
+        let mut ids = HashMap::new();
+        for d in defs {
+            let id = match self.store.agent_by_name(&d.name) {
+                Some(a) => a.id,
+                None => {
+                    let mut a = d.clone();
+                    a.id = new_id();
+                    a.created_at = now();
+                    a.updated_at = now();
+                    self.store.put_agent(&a)?;
+                    self.store.log(
+                        "agent.created",
+                        None,
+                        None,
+                        format!("Agent {} created", a.name),
+                    );
+                    a.id
+                }
+            };
+            ids.insert(d.id.clone(), id);
+        }
+        Ok(ids)
+    }
+
+    /// Turns a pipeline's inline agent steps (and coder delegates) into saved agents the
+    /// steps refer to, so they can be edited on the Agents screen. Saves a new version.
+    /// Returns the names of the agents it saved or reused.
+    pub fn adopt_agents(&self, pipeline_id: &str) -> Result<Vec<String>> {
+        let mut p = self
+            .store
+            .pipeline(pipeline_id)
+            .context("pipeline not found")?;
+        let mut graph = p.graph.clone();
+        let mut names = vec![];
+        let fallback_model = self.config().default_model;
+        for n in &mut graph.nodes {
+            let NodeKind::Agent(a) = &mut n.kind else {
+                continue;
+            };
+            if a.agent.is_none() {
+                let def = AgentDef {
+                    id: n.id.clone(),
+                    name: n.name.clone(),
+                    description: String::new(),
+                    role: String::new(),
+                    model: if a.model.is_empty() {
+                        fallback_model.clone()
+                    } else {
+                        a.model.clone()
+                    },
+                    tools: a.tools.unwrap_or(ToolAccess::Full),
+                    skills: std::mem::take(&mut a.skills),
+                    skills_on_demand: std::mem::take(&mut a.skills_on_demand),
+                    max_steps: a.max_steps,
+                    version: 1,
+                    created_at: now(),
+                    updated_at: now(),
+                };
+                let ids = self.ensure_agents(std::slice::from_ref(&def))?;
+                a.agent = ids.get(&def.id).cloned();
+                a.model = String::new();
+                a.tools = None;
+                names.push(def.name);
+            }
+            if let Some(d) = a.delegate.as_mut().filter(|d| d.agent.is_none()) {
+                let def = AgentDef {
+                    id: format!("{}-delegate", n.id),
+                    name: if d.name.is_empty() {
+                        "Coder".into()
+                    } else {
+                        d.name.clone()
+                    },
+                    description: String::new(),
+                    role: std::mem::take(&mut d.instructions),
+                    model: if d.model.is_empty() {
+                        fallback_model.clone()
+                    } else {
+                        std::mem::take(&mut d.model)
+                    },
+                    tools: ToolAccess::Full,
+                    skills: vec![],
+                    skills_on_demand: std::mem::take(&mut d.skills_on_demand),
+                    max_steps: d.max_steps,
+                    version: 1,
+                    created_at: now(),
+                    updated_at: now(),
+                };
+                let ids = self.ensure_agents(std::slice::from_ref(&def))?;
+                d.agent = ids.get(&def.id).cloned();
+                d.name = String::new();
+                names.push(def.name);
+            }
+        }
+        if names.is_empty() {
+            return Ok(names);
+        }
+        p.graph = graph;
+        p.version += 1;
+        p.draft = None;
+        p.updated_at = now();
+        self.store.put_pipeline(&p)?;
+        Ok(names)
     }
 
     /// Saves edits as the pipeline's draft (runs keep using the live version).
@@ -538,6 +689,7 @@ impl Engine {
             description: "Saved from an orchestrator plan.",
             graph: g,
             color: 0xa78bfa,
+            agents: vec![],
         };
         self.create_pipeline(&t, name)
     }

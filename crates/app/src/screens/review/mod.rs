@@ -53,6 +53,9 @@ pub struct ReviewScreen {
     zoom: Option<Zoom>,
     /// Item the inputs below were last prepared for.
     synced: Option<Id>,
+    /// Item drawn in the last frame. Decisions, picks and keys act on this one, so what
+    /// you ship is always what you were looking at (the list can change under you).
+    shown: Option<Id>,
     note: Entity<InputState>,
     target: Entity<SelectState<Options>>,
     load: Option<Task<()>>,
@@ -122,6 +125,7 @@ impl ReviewScreen {
             leaving: HashSet::new(),
             zoom: None,
             synced: None,
+            shown: None,
             note,
             target,
             load: None,
@@ -165,6 +169,12 @@ impl ReviewScreen {
             .as_ref()
             .and_then(|id| live.iter().copied().find(|i| &i.task.id == id))
             .or_else(|| live.first().copied())
+    }
+
+    /// The item on screen right now (see `shown`); None when it has left the list.
+    fn acted(&self) -> Option<&Item> {
+        let id = self.shown.as_ref()?;
+        self.live().into_iter().find(|i| &i.task.id == id)
     }
 
     fn select(&mut self, id: Id, cx: &mut Context<Self>) {
@@ -237,7 +247,7 @@ impl ReviewScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(id) = self.current().map(|i| i.task.id.clone()) else {
+        let Some(id) = self.acted().map(|i| i.task.id.clone()) else {
             return;
         };
         let next = self.neighbour_of(&id);
@@ -269,7 +279,7 @@ impl ReviewScreen {
 
     /// The primary action: ship the pick, approve the PR or the plan.
     fn ship(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = self.current() else { return };
+        let Some(item) = self.acted() else { return };
         let title = item.task.title.clone();
         let (kind, toast) = match item.kind {
             ItemKind::Pick => {
@@ -301,7 +311,7 @@ impl ReviewScreen {
 
     /// Sends the note: a send-back for gates, feedback (reply) for plans and questions.
     fn submit_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = self.current() else { return };
+        let Some(item) = self.acted() else { return };
         let text = self.note_text(cx);
         if text.is_empty() {
             state::toast(ToastKind::Warning, "Write a note first", cx);
@@ -335,7 +345,7 @@ impl ReviewScreen {
 
     fn reject(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let reason = self.note_text(cx);
-        let toast = match self.current().map(|i| i.kind) {
+        let toast = match self.acted().map(|i| i.kind) {
             Some(ItemKind::ApprovePr) => "Rejected · the pull request stays open",
             _ => "Rejected",
         };
@@ -417,7 +427,7 @@ impl ReviewScreen {
                 }
                 key if key.len() == 1 && key.as_bytes()[0].is_ascii_digit() && key != "0" => {
                     let n = (key.as_bytes()[0] - b'1') as usize;
-                    if let Some(item) = self.current().filter(|i| i.kind == ItemKind::Pick) {
+                    if let Some(item) = self.acted().filter(|i| i.kind == ItemKind::Pick) {
                         if let Some(v) = item.variants.get(n) {
                             let (id, index) = (item.task.id.clone(), v.v.index);
                             self.pick(id, index, cx);
@@ -505,6 +515,7 @@ impl Render for ReviewScreen {
                 .child(body().child(skeleton_rows("review-loading", 4)));
         };
 
+        self.shown = self.current().map(|i| i.task.id.clone());
         let live = self.live();
         let count = live.len();
         let mut header = PageHeader::new("Review").when(count > 0, |h| {

@@ -63,6 +63,7 @@ app_icons! {
     GitFork => "git-fork",
     GitPullRequest => "git-pull-request",
     Home => "home",
+    Image => "image",
     Inbox => "inbox",
     Info => "info",
     Loader => "loader",

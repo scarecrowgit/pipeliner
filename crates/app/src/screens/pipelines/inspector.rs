@@ -1283,6 +1283,7 @@ impl PipelinesScreen {
                             None
                         } else {
                             Some(DelegateConfig {
+                                agent: None,
                                 name: "coder".into(),
                                 model: default_model,
                                 instructions: String::new(),

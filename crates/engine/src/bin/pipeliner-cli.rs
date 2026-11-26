@@ -9,6 +9,9 @@
 //!   pipeliner-cli runs
 //!   pipeliner-cli show <run number>
 //!   pipeliner-cli waiting
+//!   pipeliner-cli adopt-agents <pipeline>  (inline agent steps -> saved agents)
+//!   pipeliner-cli install [binary]       (copies a built app to the launcher's bin dir)
+//!   pipeliner-cli delete-run <run number>  (removes the run, its worktrees, branches, renders)
 //!   pipeliner-cli decide <task id> pick <n> | approve | back <note...> | reject
 //!   pipeliner-cli chat <text...>          (direct chat, prints the reply)
 //!   pipeliner-cli watch <run number>      (drives the run in this process until it waits or ends)
@@ -122,6 +125,44 @@ fn main() -> Result<()> {
             let r = find_run(&store, rest.first().context("run number")?)?;
             print_run(&store, &r);
         }
+        "adopt-agents" => {
+            let name = rest.join(" ");
+            let p = store
+                .pipelines()
+                .into_iter()
+                .find(|p| p.name == name || p.id == name)
+                .context("no such pipeline")?;
+            let names = engine.adopt_agents(&p.id)?;
+            println!(
+                "{}: {}",
+                p.name,
+                if names.is_empty() {
+                    "nothing to adopt".into()
+                } else {
+                    names.join(", ")
+                }
+            );
+        }
+        "install" => {
+            let built = match rest.first() {
+                Some(p) => std::path::PathBuf::from(p),
+                None => std::path::PathBuf::from(
+                    std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".into()),
+                )
+                .join("release/pipeliner"),
+            };
+            let dest = harness_engine::update::install(&built)?;
+            println!("installed {} -> {}", built.display(), dest.display());
+        }
+        "delete-run" => {
+            let r = find_run(&store, rest.first().context("run number")?)?;
+            if r.status == Status::Running {
+                bail!("run #{} is running; cancel it first", r.number);
+            }
+            delete_run_files(&r);
+            store.delete_run(&r.id)?;
+            println!("deleted run #{} {}", r.number, r.title);
+        }
         "waiting" => {
             for t in store.waiting() {
                 println!("{}  {}", t.id, t.title);
@@ -184,6 +225,47 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Removes the run's git worktrees, their local branches and its rendered images.
+fn delete_run_files(r: &Run) {
+    use std::process::Command;
+    let git = |cwd: &std::path::Path, args: &[&str]| {
+        Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let dir = harness_core::paths::worktrees_dir().join(format!("run-{}", r.number));
+    for wt in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let wt = wt.path();
+        let branch = git(&wt, &["branch", "--show-current"]).unwrap_or_default();
+        let Some(common) = git(
+            &wt,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ) else {
+            continue;
+        };
+        let repo = std::path::Path::new(&common)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let wt_s = wt.to_string_lossy().to_string();
+        if git(&repo, &["worktree", "remove", "--force", &wt_s]).is_none() {
+            eprintln!("could not remove worktree {wt_s}");
+        }
+        if !branch.is_empty() && git(&repo, &["branch", "-D", &branch]).is_none() {
+            eprintln!("could not delete branch {branch}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(
+        harness_core::paths::renders_dir().join(format!("run-{}", r.number)),
+    );
+    let _ = std::fs::remove_dir_all(harness_core::paths::run_cache_dir(r.number));
 }
 
 fn find_run(store: &Store, n: &str) -> Result<Run> {

@@ -289,6 +289,10 @@ fn finish(engine: &Engine, run: &Run, status: Status, error: Option<String>) -> 
     };
     store.log("run.finished", Some(&run.id), None, text.clone());
     post_to_chat(engine, &run, &text);
+    if matches!(status, Status::Done | Status::Cancelled) {
+        // Build caches of a finished run are many gigabytes and won't be used again.
+        let _ = std::fs::remove_dir_all(harness_core::paths::run_cache_dir(run.number));
+    }
     Ok(())
 }
 
@@ -431,6 +435,22 @@ struct Place {
     env: BTreeMap<String, String>,
 }
 
+/// A workdir's environment for one run: `{run}` becomes the run number and `{run_cache}`
+/// the run's scratch dir (so each run can get its own cargo target dir, for example).
+fn run_env(env: &BTreeMap<String, String>, run: &Run) -> BTreeMap<String, String> {
+    let cache = harness_core::paths::run_cache_dir(run.number)
+        .display()
+        .to_string();
+    env.iter()
+        .map(|(k, v)| {
+            let v = v
+                .replace("{run_cache}", &cache)
+                .replace("{run}", &run.number.to_string());
+            (k.clone(), v)
+        })
+        .collect()
+}
+
 /// Resolves (and creates if needed) the folder a step works in.
 /// `variant`: Some(i) for fan-out variants (each gets its own worktree/branch).
 fn place(
@@ -447,6 +467,7 @@ fn place(
         .context("workdir not found")?
         .clone();
     let root = expand_tilde(&wd.path);
+    let env = run_env(&wd.env, run);
     let shell = if wd.shell.is_empty() {
         crate::chat::shell_for(Some(&root))
     } else {
@@ -458,7 +479,7 @@ fn place(
             branch: None,
             base: None,
             shell,
-            env: wd.env.clone(),
+            env: env.clone(),
         });
     }
     let sub = git::subdir(&wd).unwrap_or_default();
@@ -495,7 +516,7 @@ fn place(
                         branch,
                         base,
                         shell,
-                        env: wd.env.clone(),
+                        env: env.clone(),
                     });
                 }
             }
@@ -519,7 +540,7 @@ fn place(
             let out = tools::run_command(
                 &dest.join(&sub),
                 "",
-                &wd.env,
+                &env,
                 &wd.setup,
                 Duration::from_secs(1800),
                 &never,
@@ -554,7 +575,7 @@ fn place(
         branch: Some(branch),
         base,
         shell,
-        env: wd.env.clone(),
+        env: env.clone(),
     })
 }
 
@@ -853,6 +874,41 @@ struct Resolved {
     max_steps: u32,
 }
 
+/// The delegate's effective settings: the saved agent (if any) with the node's
+/// non-empty fields on top. `instructions` becomes the role when the agent has none.
+fn resolve_delegate(engine: &Engine, d: &DelegateConfig) -> DelegateConfig {
+    let Some(def) = d.agent.as_deref().and_then(|id| engine.store().agent(id)) else {
+        return d.clone();
+    };
+    let mut skills = def.skills_on_demand.clone();
+    for s in def.skills.iter().chain(&d.skills_on_demand) {
+        if !skills.contains(s) {
+            skills.push(s.clone());
+        }
+    }
+    let role = match (def.role.trim().is_empty(), d.instructions.trim().is_empty()) {
+        (false, false) => format!("{}\n\n{}", def.role.trim(), d.instructions.trim()),
+        (false, true) => def.role.clone(),
+        _ => d.instructions.clone(),
+    };
+    DelegateConfig {
+        agent: d.agent.clone(),
+        name: if d.name.trim().is_empty() {
+            def.name
+        } else {
+            d.name.clone()
+        },
+        model: if d.model.trim().is_empty() {
+            def.model
+        } else {
+            d.model.clone()
+        },
+        instructions: role,
+        skills_on_demand: skills,
+        max_steps: d.max_steps.max(def.max_steps),
+    }
+}
+
 fn resolve_agent(engine: &Engine, node: &Node, a: &AgentNode) -> Resolved {
     let def = a.agent.as_deref().and_then(|id| engine.store().agent(id));
     let config = engine.config();
@@ -998,6 +1054,8 @@ fn run_variant(
 ) -> Result<Value> {
     let store = engine.store().clone();
     let config = engine.config();
+    // Before this attempt's task exists: what interrupted attempts of this step left behind.
+    let resume = resume_context(&store, &run.id, &node.id, variant);
     let mut t = new_task(run, node, TaskKind::Agent, &r.name);
     if let Some(i) = variant {
         t.title = format!("{} {}", node.name, variant_letter(i));
@@ -1067,10 +1125,14 @@ fn run_variant(
             "The user sent your previous attempt back with this note:\n\n{n}\n\nYour earlier work is still in the working directory. Revise it accordingly, then reply with a short report."
         );
     }
+    if let Some(ctx) = &resume {
+        message = format!("{ctx}\n\n{message}");
+        system_note(&store, &t.id, "Resuming: a previous attempt of this step was interrupted; its work and report are passed to this one.");
+    }
     let workdirs = other_workdirs(run, a.workdir.as_deref());
     let mut extra = vec![];
     if let Some(d) = &a.delegate {
-        extra.push(delegate_spec(&d.name));
+        extra.push(delegate_spec(&resolve_delegate(engine, d).name));
     }
     let agent = AgentRun {
         engine,
@@ -1091,6 +1153,7 @@ fn run_variant(
             skills: r.skills.clone(),
             skills_on_demand: r.skills_on_demand.clone(),
             message,
+            images: vec![],
         },
         tools: ToolContext {
             cwd: place.as_ref().map(|p| p.cwd.clone()),
@@ -1115,7 +1178,7 @@ fn run_variant(
         if call.name != "delegate" {
             return None;
         }
-        let d = delegate_cfg.as_ref()?;
+        let d = resolve_delegate(engine, delegate_cfg.as_ref()?);
         let role = if d.instructions.is_empty() {
             crate::chat::DELEGATE_ROLE
         } else {
@@ -1527,6 +1590,71 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
     }
 }
 
+/// When the latest attempts of this step (same node and variant) were cut off by the app
+/// closing, tells the new attempt what they did so it continues instead of starting over:
+/// their last words and the sub-tasks they delegated, with results.
+fn resume_context(
+    store: &Store,
+    run_id: &str,
+    node_id: &str,
+    variant: Option<u32>,
+) -> Option<String> {
+    let mut attempts: Vec<Task> = store
+        .tasks_for_run(run_id)
+        .into_iter()
+        .filter(|t| {
+            t.node_id.as_deref() == Some(node_id)
+                && t.variant == variant
+                && t.kind == TaskKind::Agent
+                && t.depth == 0
+        })
+        .collect();
+    attempts.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+    // Consecutive interrupted attempts, newest first, stopping at a finished or sent-back one.
+    let interrupted: Vec<Task> = attempts
+        .into_iter()
+        .take_while(|t| t.error.as_deref() == Some(crate::INTERRUPTED))
+        .collect();
+    if interrupted.is_empty() {
+        return None;
+    }
+    let all = store.tasks_for_run(run_id);
+    let mut out = String::from(
+        "Your previous attempt at this step was interrupted when the app closed. Its changes are still in the \
+         working directory: start with `git status` and `git diff` to see them, keep what is done and continue \
+         from there instead of starting over.",
+    );
+    for a in interrupted.iter().rev() {
+        let mut subs: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.parent_id.as_deref() == Some(a.id.as_str()))
+            .collect();
+        subs.sort_by_key(|t| t.created_at);
+        for s in subs {
+            let result = match s.status {
+                Status::Done => first_line(&s.summary),
+                _ => format!("{} before it finished", s.status.as_str()),
+            };
+            out.push_str(&format!("\n- Delegated \"{}\": {}", s.title, result));
+        }
+    }
+    let last_words = interrupted.iter().find_map(|a| {
+        store
+            .messages(&a.id)
+            .into_iter()
+            .rev()
+            .find(|m| m.role == Role::Assistant && !m.content.trim().is_empty())
+            .map(|m| m.content)
+    });
+    if let Some(w) = last_words {
+        out.push_str(&format!(
+            "\n\nThe last thing the interrupted attempt wrote:\n{}",
+            crate::tools::truncate_middle(w.trim(), 1500)
+        ));
+    }
+    Some(out)
+}
+
 fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -1808,5 +1936,84 @@ mod title_tests {
             "Timeline hides queued work"
         );
         assert_eq!(super::run_title("# Fix crash"), "Fix crash");
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    fn attempt(s: &Store, error: Option<&str>) -> Task {
+        let mut t = Task::new(TaskKind::Agent, "GPUI build");
+        t.run_id = Some("r".into());
+        t.node_id = Some("build".into());
+        t.status = Status::Failed;
+        t.error = error.map(String::from);
+        s.put_task(&t).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        t
+    }
+
+    #[test]
+    fn interrupted_attempts_pass_their_work_on() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(resume_context(&s, "r", "build", None).is_none());
+        let a = attempt(&s, Some(crate::INTERRUPTED));
+        let mut sub = Task::new(TaskKind::Spawned, "Engine: create tasks");
+        sub.run_id = Some("r".into());
+        sub.parent_id = Some(a.id.clone());
+        sub.depth = 1;
+        sub.status = Status::Done;
+        sub.summary = "TaskKind::Manual is in; tests pass".into();
+        s.put_task(&sub).unwrap();
+        s.put_message(&Message::new(
+            &a.id,
+            Role::Assistant,
+            "Engine part done, UI next.",
+        ))
+        .unwrap();
+        let ctx = resume_context(&s, "r", "build", None).unwrap();
+        assert!(ctx.contains("git status"), "{ctx}");
+        assert!(
+            ctx.contains("Engine: create tasks\": TaskKind::Manual is in"),
+            "{ctx}"
+        );
+        assert!(ctx.contains("Engine part done, UI next."), "{ctx}");
+        // Another variant's history doesn't leak in.
+        assert!(resume_context(&s, "r", "build", Some(1)).is_none());
+        // A later attempt that failed for another reason ends the resume chain.
+        attempt(&s, Some("model error"));
+        assert!(resume_context(&s, "r", "build", None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn run_placeholders_expand() {
+        let run = Run {
+            number: 42,
+            ..serde_json::from_value(serde_json::json!({
+                "id": "r", "number": 42, "pipeline_id": "p", "pipeline_version": 1,
+                "title": "t", "input": "", "status": "running", "graph": {"workdirs": [], "nodes": [], "edges": []},
+                "created_at": "2026-01-01T00:00:00Z"
+            }))
+            .unwrap()
+        };
+        let mut env = BTreeMap::new();
+        env.insert(
+            "CARGO_TARGET_DIR".to_string(),
+            "{run_cache}/target".to_string(),
+        );
+        env.insert("TAG".to_string(), "run-{run}".to_string());
+        let out = run_env(&env, &run);
+        assert!(
+            out["CARGO_TARGET_DIR"].ends_with("runs/run-42/target"),
+            "{}",
+            out["CARGO_TARGET_DIR"]
+        );
+        assert_eq!(out["TAG"], "run-42");
     }
 }

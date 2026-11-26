@@ -314,18 +314,19 @@ impl BoardScreen {
                 let tasks = s.tasks();
                 let pipelines: HashMap<Id, String> =
                     s.pipelines().into_iter().map(|p| (p.id, p.name)).collect();
-                // Per run: number, pipeline, node names (for the breadcrumb).
-                let runs: HashMap<Id, (u64, Id, HashMap<Id, String>)> = s
+                // Per run: number, task, pipeline, node names (for the breadcrumb).
+                let runs: HashMap<Id, RunRef> = s
                     .runs()
                     .into_iter()
                     .map(|r| {
                         (
                             r.id,
-                            (
-                                r.number,
-                                r.pipeline_id,
-                                r.graph.nodes.into_iter().map(|n| (n.id, n.name)).collect(),
-                            ),
+                            RunRef {
+                                number: r.number,
+                                title: r.title,
+                                pipeline_id: r.pipeline_id,
+                                nodes: r.graph.nodes.into_iter().map(|n| (n.id, n.name)).collect(),
+                            },
                         )
                     })
                     .collect();
@@ -750,6 +751,7 @@ impl BoardScreen {
                             .min_w_0()
                             .text_body_strong()
                             .fg()
+                            .line_clamp(2)
                             .child(c.title.clone()),
                     ),
             )
@@ -1137,28 +1139,55 @@ fn local_midnight() -> DateTime<Utc> {
         .unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24))
 }
 
+/// What a card needs to know about the run a task belongs to.
+struct RunRef {
+    number: u64,
+    /// The run's task (first sentence of its input).
+    title: String,
+    pipeline_id: Id,
+    nodes: HashMap<Id, String>,
+}
+
 fn card_view(
     t: &CoreTask,
-    runs: &HashMap<Id, (u64, Id, HashMap<Id, String>)>,
+    runs: &HashMap<Id, RunRef>,
     pipelines: &HashMap<Id, String>,
     actors: &HashMap<&Id, &String>,
 ) -> CardView {
     let run = t.run_id.as_ref().and_then(|r| runs.get(r));
-    let pipeline_name = run.and_then(|(_, p, _)| pipelines.get(p)).cloned();
+    let pipeline_name = run.and_then(|r| pipelines.get(&r.pipeline_id)).cloned();
     let node_name = run
         .zip(t.node_id.as_ref())
-        .and_then(|((_, _, nodes), n)| nodes.get(n))
+        .and_then(|(r, n)| r.nodes.get(n))
         .cloned();
     let run_chip = match (run, &pipeline_name) {
-        (Some((n, _, _)), Some(p)) => Some(SharedString::from(format!("#{n} · {p}"))),
-        (Some((n, _, _)), None) => Some(SharedString::from(format!("#{n}"))),
+        (Some(r), Some(p)) => Some(SharedString::from(format!("#{} · {p}", r.number))),
+        (Some(r), None) => Some(SharedString::from(format!("#{}", r.number))),
         _ => None,
     };
-    let trail = match (&pipeline_name, &node_name) {
-        (Some(p), Some(n)) if t.kind != TaskKind::Spawned => {
-            Some(SharedString::from(format!("{p} › {n}")))
+    let run_title = run
+        .map(|r| r.title.clone())
+        .filter(|t| !t.trim().is_empty());
+    // Pipeline steps are titled by the run's task (what the work is about) with the step
+    // below; sub-agents keep their own title and say which task they work for.
+    let is_step = t.kind != TaskKind::Spawned && node_name.is_some();
+    let (title, trail) = match (&run_title, is_step) {
+        (Some(task), true) => {
+            let step = node_name.clone().unwrap_or_default();
+            let step = match t.variant {
+                Some(v) => format!("{step} {}", harness_core::variant_letter(v)),
+                None => step,
+            };
+            (
+                task.clone(),
+                Some(SharedString::from(format!("Step · {step}"))),
+            )
         }
-        _ => None,
+        (Some(task), false) if t.kind == TaskKind::Spawned => (
+            t.title.clone(),
+            Some(SharedString::from(format!("For · {task}"))),
+        ),
+        _ => (t.title.clone(), None),
     };
     let spawn = (t.kind == TaskKind::Spawned).then(|| {
         let parent = t
@@ -1176,8 +1205,9 @@ fn card_view(
         Config::short_model(&t.model)
     };
     let haystack = format!(
-        "{} {} {} {} {} {}",
+        "{} {} {} {} {} {} {}",
         t.title,
+        title,
         t.actor,
         model,
         t.summary,
@@ -1190,11 +1220,11 @@ fn card_view(
         kind: t.kind,
         status: t.status,
         held: t.status == Status::Queued && harness_engine::tasks::is_held(t),
-        title: t.title.clone().into(),
+        title: title.into(),
         run_chip: run_chip
             .or_else(|| (t.kind == TaskKind::Chat).then(|| SharedString::from("Chat")))
             .or_else(|| (t.kind == TaskKind::Manual).then(|| SharedString::from("Task"))),
-        pipeline_id: run.map(|(_, p, _)| p.clone()),
+        pipeline_id: run.map(|r| r.pipeline_id.clone()),
         trail,
         actor: t.actor.clone().into(),
         model: model.into(),
