@@ -41,7 +41,8 @@ check logic with tests or the CLI (`cargo run -p harness-engine --bin pipeliner-
 ## Look at what you changed
 
 Tests don't see layout. After any UI change, take screenshots of the real app and look at
-them (and include what you saw in your report):
+them with `read_file` (it shows PNGs to you; no OCR or other tricks needed), and include
+what you saw in your report:
 
 ```sh
 scripts/shoot.sh -o /tmp/shots                     # every screen

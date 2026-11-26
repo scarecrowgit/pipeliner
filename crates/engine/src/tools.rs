@@ -49,7 +49,8 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
         v.push(spec(
             "read_file",
             "Read text files with line numbers. Use this, not cat/sed/head/tail in run_command. \
-             One file: `path` (+ `offset`/`limit` lines). Several files or ranges in one call: `files`.",
+             One file: `path` (+ `offset`/`limit` lines). Several files or ranges in one call: `files`. \
+             Images (PNG, JPEG, GIF, WebP: screenshots, renders) are shown to you: read them to look at them.",
             json!({"type":"object","properties":{
                 "path":{"type":"string"},
                 "offset":{"type":"integer","description":"first line, 1-based"},
@@ -324,8 +325,30 @@ fn rel(base: &Path, p: &Path) -> String {
     p.strip_prefix(base).unwrap_or(p).display().to_string()
 }
 
+/// Marks an image in a `read_file` result; the agent loop shows the image to the model
+/// in the message after the tool results (tool results are text only).
+pub const IMAGE_MARK: &str = "[image attached: ";
+
+/// Image paths a `read_file` result asked to show (see [`IMAGE_MARK`]).
+pub fn marked_images(result: &str) -> Vec<PathBuf> {
+    result
+        .lines()
+        .filter_map(|l| l.strip_prefix(IMAGE_MARK)?.strip_suffix(']'))
+        .map(PathBuf::from)
+        .collect()
+}
+
 fn read_text(p: &Path, offset: Option<u64>, limit: Option<u64>) -> Result<String> {
     let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+    if let Some((mime, _, w, h)) = harness_core::image::sniff(&bytes) {
+        let abs = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        return Ok(format!(
+            "{}: {mime}, {w}×{h}, {} KB. It is shown to you in the next message.\n{IMAGE_MARK}{}]\n",
+            p.display(),
+            bytes.len() / 1024,
+            abs.display()
+        ));
+    }
     let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.lines().collect();
     let start = offset.unwrap_or(1).max(1) as usize - 1;
@@ -824,6 +847,33 @@ mod tests {
             config: Config::default(),
             cancel: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    #[test]
+    fn reading_an_image_marks_it_for_the_model() {
+        let d = std::env::temp_dir().join(format!("pl-img-{}", harness_core::new_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&640u32.to_be_bytes());
+        png.extend_from_slice(&480u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        std::fs::write(d.join("shot.png"), &png).unwrap();
+        std::fs::write(d.join("a.txt"), "hello").unwrap();
+        let c = ctx(&d);
+        let one = execute(&c, "read_file", &json!({"path":"shot.png"}));
+        assert!(one.contains("image/png, 640×480"), "{one}");
+        assert_eq!(marked_images(&one), vec![d.join("shot.png").canonicalize().unwrap()]);
+        let many = execute(
+            &c,
+            "read_file",
+            &json!({"files":[{"path":"a.txt"},{"path":"shot.png"}]}),
+        );
+        assert!(many.contains("hello"));
+        assert_eq!(marked_images(&many).len(), 1);
+        assert!(marked_images("plain text").is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
