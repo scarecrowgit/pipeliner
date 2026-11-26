@@ -23,7 +23,7 @@ const ROW_PX: f32 = 36.0;
 /// Height of the hour-tick header.
 const HEAD_PX: f32 = 32.0;
 /// Width of the fixed label column.
-const LABEL_W: f32 = 290.0;
+const LABEL_W: f32 = 340.0;
 const DAY_SECS: f64 = 86_400.0;
 /// Height of an "Add task to #N" row.
 const ADD_ROW_PX: f32 = 30.0;
@@ -892,12 +892,17 @@ impl TimelineScreen {
                             .child(g.title.clone()),
                     )
                     .when_some(g.status, |d, s| {
+                        // Short words: the title gets the room.
                         d.child(
                             div()
+                                .flex_none()
                                 .text_label()
                                 .text_color(theme::status_color(s))
                                 .whitespace_nowrap()
-                                .child(s.label()),
+                                .child(match s {
+                                    Status::Waiting => "waiting",
+                                    _ => s.as_str(),
+                                }),
                         )
                     })
                     .child(

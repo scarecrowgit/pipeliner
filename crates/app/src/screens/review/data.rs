@@ -99,7 +99,7 @@ impl VariantView {
         } else {
             v.title.clone()
         };
-        let body = rest_after_first_line(&v.summary);
+        let body = variant_body(&v.title, &v.summary);
         VariantView {
             title,
             body,
@@ -673,6 +673,17 @@ pub fn open_by_default(sizes: &[usize]) -> Vec<bool> {
         .collect()
 }
 
+/// The summary minus what the title already says: the first line when it *is* the title
+/// (no separate title, or the same text); otherwise all of it.
+fn variant_body(title: &str, summary: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() || first_line(summary).trim() == title {
+        rest_after_first_line(summary)
+    } else {
+        summary.trim().to_string()
+    }
+}
+
 pub fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -791,6 +802,13 @@ mod tests {
         assert_eq!(open, vec![true, true, false, false, false]);
         let drawn: usize = sizes.iter().zip(&open).filter(|(_, o)| **o).map(|(n, _)| n).sum();
         assert!(drawn <= DIFF_OPEN_BUDGET);
+    }
+
+    #[test]
+    fn variant_body_keeps_text_under_its_own_title() {
+        assert_eq!(variant_body("Swimlanes", "One line only."), "One line only.");
+        assert_eq!(variant_body("", "Title\nBody"), "Body");
+        assert_eq!(variant_body("Title", "Title\nBody"), "Body");
     }
 
     #[test]

@@ -1058,10 +1058,29 @@ fn plain_teaser(md: &str) -> String {
     md.lines()
         .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>']).trim())
         .filter(|l| !l.is_empty())
-        .map(|l| l.replace("**", "").replace('`', ""))
+        .map(|l| clip_words(&l.replace("**", "").replace('`', ""), TEASER_WORD_MAX))
         .collect::<Vec<_>>()
         .join(" · ")
 }
+
+/// Longest word a teaser shows whole. Text only wraps at spaces, so one longer word (a
+/// path, URL or hash) made the clamped teaser render as nothing.
+const TEASER_WORD_MAX: usize = 32;
+
+fn clip_words(s: &str, max: usize) -> String {
+    s.split(' ')
+        .map(|w| {
+            if w.chars().count() > max {
+                let head: String = w.chars().take(max - 1).collect();
+                format!("{head}…")
+            } else {
+                w.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 
 /// A markdown block with a stable id.
 fn markdown_of(id: String, text: &str, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -1193,4 +1212,17 @@ fn pill(p: &Pill) -> Div {
         .when(!p.detail.is_empty(), |d| {
             d.child(div().fg_muted().child(p.detail.clone()))
         })
+}
+
+#[cfg(test)]
+mod teaser_tests {
+    use super::*;
+
+    #[test]
+    fn long_words_are_clipped() {
+        let t = plain_teaser(&format!("**Swimlanes** see {}", "a".repeat(100)));
+        assert!(t.starts_with("Swimlanes see aaaa"));
+        assert!(t.split(' ').all(|w| w.chars().count() <= TEASER_WORD_MAX));
+        assert!(t.ends_with('…'));
+    }
 }

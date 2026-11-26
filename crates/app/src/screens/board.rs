@@ -627,6 +627,7 @@ impl BoardScreen {
             .child(
                 div()
                     .w(px(260.))
+                    .flex_none()
                     .child(
                         input::field_sm(&self.search).prefix(
                             ui::icon_sized(AppIcon::Search, theme::ICON_SM)
@@ -634,11 +635,13 @@ impl BoardScreen {
                         ),
                     ),
             )
-            .child(select::select_sm(&self.pipeline_select).w(px(190.)))
-            .child(select::select_sm(&self.kind_select).w(px(160.)))
+            .child(div().flex_none().w(px(190.)).child(select::select_sm(&self.pipeline_select)))
+            .child(div().flex_none().w(px(160.)).child(select::select_sm(&self.kind_select)))
+            .child(div().flex_1())
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(2.))
                     .child(time_btn("board-t-today", "Today", TimeFilter::Today, cx))

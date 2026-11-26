@@ -830,11 +830,13 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .justify_between()
+                    .gap_x(theme::S3)
                     .text_label()
                     .fg_muted()
-                    .child(format!("{} running", d.running))
-                    .child(month),
+                    .child(div().flex_none().child(format!("{} running", d.running)))
+                    .child(div().flex_none().child(month)),
             );
 
         div()
