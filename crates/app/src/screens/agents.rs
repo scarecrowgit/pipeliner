@@ -307,6 +307,7 @@ impl AgentsScreen {
                                 | Change::Task { .. }
                                 | Change::Pipeline(_)
                                 | Change::Config
+                                | Change::Skills
                                 | Change::External
                         )
                     });
