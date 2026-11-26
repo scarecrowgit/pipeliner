@@ -9,6 +9,7 @@ pub mod llm;
 pub mod pipeline;
 pub mod prompt;
 pub mod render;
+pub mod tasks;
 pub mod templates;
 pub mod tools;
 pub mod update;
@@ -143,6 +144,13 @@ impl Engine {
                 .map(|r| r.status.is_active())
                 .unwrap_or(false);
             if t.kind == TaskKind::Gate && run_active {
+                continue;
+            }
+            // Tasks you created: queued ones were never started; keep them.
+            if t.kind == TaskKind::Manual && t.status == Status::Queued {
+                if !tasks::is_held(&t) {
+                    let _ = self.start_task(&t.id);
+                }
                 continue;
             }
             let _ = self.store.update_task(&t.id, |t| {

@@ -87,6 +87,7 @@ pub mod board;
 pub mod chat;
 pub mod home;
 pub mod memory;
+pub mod new_task;
 pub mod pipelines;
 pub mod policies;
 pub mod review;

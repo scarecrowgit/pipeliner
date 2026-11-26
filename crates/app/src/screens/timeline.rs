@@ -10,11 +10,12 @@ use std::time::Duration;
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone as _, Utc};
 use gpui::{
     ease_in_out, linear_color_stop, linear_gradient, point, pulsating_between, relative, Animation,
-    AnimationExt as _, Hsla, ScrollHandle,
+    AnimationExt as _, FocusHandle, Hsla, KeyDownEvent, ScrollHandle,
 };
 use gpui_component::tooltip::Tooltip;
 use harness_core::{Task as CoreTask, TaskKind};
 
+use super::new_task::{NewTaskComposer, NewTaskEvent};
 use super::prelude::*;
 
 /// Height of every row (labels and lane share it so they line up).
@@ -24,6 +25,12 @@ const HEAD_PX: f32 = 32.0;
 /// Width of the fixed label column.
 const LABEL_W: f32 = 290.0;
 const DAY_SECS: f64 = 86_400.0;
+/// Height of an "Add task to #N" row.
+const ADD_ROW_PX: f32 = 30.0;
+/// Width of the draft bar (minutes from now) and of the composer's side column.
+const DRAFT_MINUTES: f32 = 20.0;
+/// The composer is stacked (options under the description) in this narrow column.
+const ASIDE_W: f32 = 400.0;
 
 /// Zoom levels: label, pixels per hour, minutes between tick labels, minutes between grid lines.
 const ZOOMS: [(&str, f32, i64, i64); 3] = [
@@ -64,6 +71,8 @@ struct Group {
     owner: Owner,
     title: String,
     status: Option<Status>,
+    /// Run id and human number, for the "Add task to #N" row (run groups only).
+    run: Option<(Id, u64)>,
     bars: Vec<Bar>,
     cost: f64,
 }
@@ -161,13 +170,14 @@ impl DayData {
                 _ => {}
             }
 
-            let (key, owner, title, status) =
+            let (key, owner, title, status, run) =
                 if let Some(r) = t.run_id.as_deref().and_then(|id| runs.get(id)) {
                     (
                         format!("run-{}", r.id),
                         Owner::Run(r.pipeline_id.clone()),
                         format!("Run #{} · {}", r.number, r.title),
                         Some(r.status),
+                        Some((r.id.clone(), r.number)),
                     )
                 } else if let Some(c) = t.chat_id.clone() {
                     let title = chats.get(&c).cloned().unwrap_or_default();
@@ -176,12 +186,14 @@ impl DayData {
                         Owner::Chat(c),
                         format!("Chat · {title}"),
                         None,
+                        None,
                     )
                 } else {
                     (
                         "other".to_string(),
                         Owner::Other,
                         "Other tasks".to_string(),
+                        None,
                         None,
                     )
                 };
@@ -192,6 +204,7 @@ impl DayData {
                         owner,
                         title,
                         status,
+                        run,
                         bars: vec![],
                         cost: 0.0,
                     },
@@ -303,6 +316,35 @@ fn bar_colors(b: &Bar) -> (Hsla, Hsla, Hsla) {
     }
 }
 
+/// Label of the row that adds a task to a run.
+fn add_row_label(n: u64) -> String {
+    format!("Add task to #{n}")
+}
+
+/// Title of the draft row while the composer's title is still empty.
+fn draft_title(typed: &str) -> String {
+    let t = typed.trim();
+    if t.is_empty() {
+        "New task".to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+/// Left edge and width (px) of the draft bar: starts at `now_x`, lasts [`DRAFT_MINUTES`] and
+/// never runs past the end of the day.
+fn draft_span(now_x: f32, pxph: f32, lane_w: f32) -> (f32, f32) {
+    let w = (pxph * DRAFT_MINUTES / 60.0)
+        .min((lane_w - now_x).max(0.0))
+        .max(4.0);
+    (now_x, w)
+}
+
+/// Whether a key press (without modifiers) is the "new task" shortcut.
+fn is_new_task_key(key: &str, modified: bool) -> bool {
+    key == "c" && !modified
+}
+
 fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1e6)
@@ -385,6 +427,13 @@ pub struct TimelineScreen {
     scroll: ScrollHandle,
     /// Scroll to "now" (today) or to the first bar once the lane has been laid out.
     pending_scroll: bool,
+    /// "New task" composer, shown in a column right of the grid while `composer_open`.
+    composer: Entity<NewTaskComposer>,
+    composer_open: bool,
+    /// Run the composer was opened for (draws the draft row in that run's group).
+    draft_run: Option<Id>,
+    /// Focus of the screen root: `c` opens the composer while nothing else has focus.
+    focus: FocusHandle,
     load: Option<Task<()>>,
     _ticker: Task<()>,
     _subs: Vec<Subscription>,
@@ -429,6 +478,30 @@ impl TimelineScreen {
                 }
             }
         });
+        let composer = cx.new(|cx| {
+            let mut c = NewTaskComposer::new(window, cx);
+            c.set_stacked(true, cx);
+            c
+        });
+        // The composer notifies on every title change: keeps the draft row live.
+        let composer_observe = cx.observe(&composer, |_, _, cx| cx.notify());
+        let composer_sub = cx.subscribe_in(
+            &composer,
+            window,
+            |this, _, ev: &NewTaskEvent, window, cx| {
+                match ev {
+                    // The timeline reloads by itself through the store change.
+                    NewTaskEvent::Created(_) | NewTaskEvent::Closed => {
+                        this.composer_open = false;
+                        this.draft_run = None;
+                    }
+                }
+                window.focus(&this.focus);
+                cx.notify();
+            },
+        );
+        let focus = cx.focus_handle();
+        window.focus(&focus);
         let mut this = TimelineScreen {
             data: None,
             day: Local::now().date_naive(),
@@ -437,12 +510,48 @@ impl TimelineScreen {
             daily_budget: 0.0,
             scroll: ScrollHandle::new(),
             pending_scroll: true,
+            composer,
+            composer_open: false,
+            draft_run: None,
+            focus,
             load: None,
             _ticker: ticker,
-            _subs: vec![sub],
+            _subs: vec![sub, composer_observe, composer_sub],
         };
         this.reload(cx);
         this
+    }
+
+    /// Opens the composer for `run` (id and number) or for the board's queue. When it is
+    /// already open this only focuses the title, unless another run was asked for.
+    fn open_composer(
+        &mut self,
+        run: Option<(Id, u64)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let run_id = run.as_ref().map(|r| r.0.clone());
+        let reset = !self.composer_open || (run_id.is_some() && run_id != self.draft_run);
+        self.composer_open = true;
+        self.draft_run = run_id.clone();
+        self.composer.update(cx, |c, cx| {
+            if reset {
+                match run {
+                    Some((_, n)) => {
+                        c.open(run_id, format!("in run #{n}").into(), false, window, cx)
+                    }
+                    None => c.open(
+                        None,
+                        "on the board · first in line".into(),
+                        true,
+                        window,
+                        cx,
+                    ),
+                }
+            }
+            c.focus_title(window, cx);
+        });
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -726,6 +835,10 @@ impl TimelineScreen {
             );
         }
 
+        let draft = self.composer_open.then(|| {
+            let composer = self.composer.read(cx);
+            (draft_title(&composer.title(cx)), composer.agent_label())
+        });
         let mut labels = div().flex().flex_col();
         let mut lanes = div().flex().flex_col().w(px(width));
         let mut tick_ix = 0usize;
@@ -991,6 +1104,128 @@ impl TimelineScreen {
                     lane.child(bar)
                 });
             }
+
+            // Draft row (the composer's task) and the "Add task to #N" row, today only.
+            let Some((run_id, number)) = g.run.clone().filter(|_| today) else {
+                continue;
+            };
+            if let Some((title, agent)) = draft
+                .as_ref()
+                .filter(|_| self.draft_run.as_ref() == Some(&run_id))
+            {
+                let key = SharedString::from(format!("tl-draft-{}", g.key));
+                let (x0, w) = draft_span(x_of(now), pxph, width);
+                labels = labels.child(
+                    div()
+                        .id(key.clone())
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(theme::S2)
+                        .h(px(ROW_PX))
+                        .pl(px(12.0))
+                        .pr(theme::S3)
+                        .border_b_1()
+                        .border_color(theme::LINE_SUBTLE)
+                        .bg(theme::ACCENT_GLOW)
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left_0()
+                                .w(px(2.))
+                                .bg(theme::ACCENT),
+                        )
+                        .child(
+                            StatusDot::new(Status::Queued)
+                                .id(SharedString::from(format!("tl-draft-dot-{}", g.key))),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_baseline()
+                                .gap(theme::S2)
+                                .child(
+                                    div()
+                                        .text_body()
+                                        .text_color(theme::ACCENT_TEXT)
+                                        .truncate()
+                                        .child(title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .max_w(px(110.))
+                                        .text_label()
+                                        .fg_muted()
+                                        .truncate()
+                                        .child(format!("draft · {agent}")),
+                                ),
+                        )
+                        .child(div().w(px(54.)).flex_none()),
+                );
+                lanes = lanes.child(
+                    div()
+                        .relative()
+                        .h(px(ROW_PX))
+                        .w_full()
+                        .border_b_1()
+                        .border_color(theme::LINE_SUBTLE)
+                        .bg(theme::ACCENT_GLOW)
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("tl-draft-bar-{}", g.key)))
+                                .absolute()
+                                .left(px(x0))
+                                .top(px((ROW_PX - 22.0) / 2.0))
+                                .w(px(w))
+                                .h(px(22.))
+                                .rounded(theme::RADIUS_SM)
+                                .border_1()
+                                .border_dashed()
+                                .border_color(theme::ACCENT_RING)
+                                .bg(theme::ACCENT_SOFT)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new("New task · planned by you").build(window, cx)
+                                }),
+                        ),
+                );
+            }
+
+            let add_label = add_row_label(number);
+            let add_row = |id: SharedString, content: Option<SharedString>| {
+                let run = (run_id.clone(), number);
+                div()
+                    .id(id)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(ADD_ROW_PX))
+                    .px(theme::S3)
+                    .border_b_1()
+                    .border_color(theme::LINE_SUBTLE)
+                    .text_label()
+                    .text_color(theme::TEXT_MUTED)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::SURFACE_RAISED).text_color(theme::TEXT))
+                    .when_some(content, |d, text| {
+                        d.child(ui::icon_sized(AppIcon::Plus, px(12.))).child(text)
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_composer(Some(run.clone()), window, cx)
+                    }))
+            };
+            labels = labels.child(add_row(
+                SharedString::from(format!("tl-add-{}", g.key)),
+                Some(add_label.into()),
+            ));
+            lanes = lanes.child(add_row(
+                SharedString::from(format!("tl-add-lane-{}", g.key)),
+                None,
+            ));
         }
 
         let mut rows_area = div().relative().w(px(width)).child(grid_lines).child(lanes);
@@ -1065,6 +1300,14 @@ impl TimelineScreen {
             .child(
                 div().child("Click a bar or row to open its thread. Click a run row to fold it."),
             )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(theme::S2)
+                    .child(kbd("C"))
+                    .child("new task"),
+            )
     }
 }
 
@@ -1095,6 +1338,16 @@ impl Render for TimelineScreen {
                         .dot(),
                 )
             })
+            .action(
+                Button::new("tl-new-task", "New task")
+                    .primary()
+                    .icon(AppIcon::Plus)
+                    .kbd("C")
+                    .selected(self.composer_open)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_composer(None, window, cx)),
+                    ),
+            )
             .action(
                 IconButton::new("tl-prev", AppIcon::ChevronLeft)
                     .tooltip("Previous day")
@@ -1136,6 +1389,19 @@ impl Render for TimelineScreen {
                 )
             });
 
+        let aside = self.composer_open.then(|| {
+            div()
+                .id("tl-new-task-aside")
+                .flex_none()
+                .w(px(ASIDE_W))
+                .min_w_0()
+                .min_h_0()
+                .overflow_y_scroll()
+                .pt(theme::S6)
+                .pr(theme::S6)
+                .pb(theme::S6)
+                .child(self.composer.clone())
+        });
         let empty_day = self.day.format("%A, %b %-d").to_string();
         let content = match self.data.take() {
             None => body()
@@ -1178,7 +1444,31 @@ impl Render for TimelineScreen {
                 out
             }
         };
-        screen().child(header).child(content)
+        // With the composer open the content area becomes a row: timeline | composer.
+        let content = if let Some(aside) = aside {
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .child(div().flex_1().min_w_0().flex().flex_col().child(content))
+                .child(aside)
+                .into_any_element()
+        } else {
+            content
+        };
+        screen()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                // Only when the screen itself has focus, never while typing in an input.
+                if is_new_task_key(&ev.keystroke.key, ev.keystroke.modifiers.modified())
+                    && !this.composer_open
+                    && this.focus.is_focused(window)
+                {
+                    this.open_composer(None, window, cx);
+                }
+            }))
+            .child(header)
+            .child(content)
     }
 }
 
@@ -1192,6 +1482,35 @@ mod tests {
         let h = chrono::Duration::hours(1);
         assert_eq!(overlap_secs(t, t + h, t + h * 2, t + h * 3), 0.0);
         assert_eq!(overlap_secs(t, t + h * 2, t + h, t + h * 3), 3600.0);
+    }
+
+    #[test]
+    fn add_row_names_the_run() {
+        assert_eq!(add_row_label(128), "Add task to #128");
+    }
+
+    #[test]
+    fn draft_title_falls_back() {
+        assert_eq!(draft_title("  "), "New task");
+        assert_eq!(draft_title(" Fix it "), "Fix it");
+    }
+
+    #[test]
+    fn draft_bar_is_twenty_minutes_and_clamped() {
+        // 40 px/h: 20 min is 13.33 px.
+        let (x, w) = draft_span(100.0, 40.0, 960.0);
+        assert_eq!(x, 100.0);
+        assert!((w - 40.0 / 3.0).abs() < 1e-3);
+        // Near midnight it is cut at the end of the day (but stays visible).
+        assert_eq!(draft_span(958.0, 40.0, 960.0).1, 4.0);
+        assert_eq!(draft_span(955.0, 480.0, 960.0).1, 5.0);
+    }
+
+    #[test]
+    fn only_plain_c_opens_the_composer() {
+        assert!(is_new_task_key("c", false));
+        assert!(!is_new_task_key("c", true));
+        assert!(!is_new_task_key("x", false));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
-use gpui::{Animation, AnimationExt as _};
+use gpui::{Animation, AnimationExt as _, FocusHandle, KeyDownEvent};
 use harness_core::{Task as CoreTask, TaskKind};
 
 use super::prelude::*;
@@ -20,6 +20,8 @@ use crate::ui::input::{self, InputEvent};
 use crate::ui::select::{self, Options, SelectEvent, SelectOption};
 use gpui_component::input::InputState;
 use gpui_component::select::SelectState;
+
+use super::new_task::{NewTaskComposer, NewTaskEvent};
 
 const COLUMNS: [(Status, &str); 4] = [
     (Status::Queued, "Queued"),
@@ -58,7 +60,10 @@ impl KindFilter {
         match self {
             KindFilter::All => true,
             KindFilter::Steps => {
-                c.kind != TaskKind::Chat && c.kind != TaskKind::Spawned && c.run_chip.is_some()
+                c.kind != TaskKind::Chat
+                    && c.kind != TaskKind::Spawned
+                    && c.kind != TaskKind::Manual
+                    && c.run_chip.is_some()
             }
             KindFilter::Chats => c.kind == TaskKind::Chat,
             KindFilter::SubAgents => c.kind == TaskKind::Spawned,
@@ -79,6 +84,8 @@ struct CardView {
     id: Id,
     kind: TaskKind,
     status: Status,
+    /// A queued task you created that waits for "Start".
+    held: bool,
     title: SharedString,
     /// `#12 · Bug triage` for pipeline steps, the kind label otherwise.
     run_chip: Option<SharedString>,
@@ -164,6 +171,11 @@ pub struct BoardScreen {
     search: Entity<InputState>,
     pipeline_select: Entity<SelectState<Options>>,
     kind_select: Entity<SelectState<Options>>,
+    /// "New task" composer, shown above the columns while `composer_open`.
+    composer: Entity<NewTaskComposer>,
+    composer_open: bool,
+    /// Focus of the board root: `c` opens the composer while nothing else has focus.
+    focus: FocusHandle,
     load: Option<Task<()>>,
     _subs: Vec<Subscription>,
 }
@@ -227,6 +239,24 @@ impl BoardScreen {
             },
         );
 
+        let composer = cx.new(|cx| NewTaskComposer::new(window, cx));
+        // The composer notifies on every title change: keeps the ghost card live.
+        let composer_observe = cx.observe(&composer, |_, _, cx| cx.notify());
+        let composer_sub = cx.subscribe_in(
+            &composer,
+            window,
+            |this, _, ev: &NewTaskEvent, window, cx| {
+                match ev {
+                    // The board reloads by itself through the store change.
+                    NewTaskEvent::Created(_) | NewTaskEvent::Closed => this.composer_open = false,
+                }
+                window.focus(&this.focus);
+                cx.notify();
+            },
+        );
+        let focus = cx.focus_handle();
+        window.focus(&focus);
+
         let mut this = BoardScreen {
             data: None,
             cols: Default::default(),
@@ -240,11 +270,40 @@ impl BoardScreen {
             search,
             pipeline_select,
             kind_select,
+            composer,
+            composer_open: false,
+            focus,
             load: None,
-            _subs: vec![store_sub, search_sub, pipeline_sub, kind_sub],
+            _subs: vec![
+                store_sub,
+                search_sub,
+                pipeline_sub,
+                kind_sub,
+                composer_observe,
+                composer_sub,
+            ],
         };
         this.reload(cx);
         this
+    }
+
+    /// Opens the composer (or just focuses its title when it is already open).
+    fn open_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reset = !self.composer_open;
+        self.composer_open = true;
+        self.composer.update(cx, |c, cx| {
+            if reset {
+                c.open(
+                    None,
+                    "lands in Queued · first in line".into(),
+                    true,
+                    window,
+                    cx,
+                );
+            }
+            c.focus_title(window, cx);
+        });
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -732,7 +791,11 @@ impl BoardScreen {
                             .id(SharedString::from(format!("board-dot-{}", c.id)))
                             .small(),
                     )
-                    .child(div().text_color(status_color).child(c.status.label()))
+                    .child(
+                        div()
+                            .text_color(status_color)
+                            .child(status_text(c.status, c.held)),
+                    )
                     .child(div().flex_1().min_w_0().truncate().child(
                         match (c.actor.is_empty(), c.model.is_empty()) {
                             (false, false) => format!("· {} · {}", c.actor, c.model),
@@ -743,6 +806,20 @@ impl BoardScreen {
                     ))
                     .child(div().flex_none().text_mono_sm().child(ui::fmt_usd(c.cost))),
             )
+            .when(c.held && c.kind == TaskKind::Manual, |d| {
+                let tid = c.id.clone();
+                d.child(
+                    div().flex().child(
+                        Button::new(SharedString::from(format!("board-start-{}", c.id)), "Start")
+                            .small()
+                            .ghost()
+                            .on_click(move |_, _, cx| {
+                                let tid = tid.clone();
+                                state::run_engine(cx, move |e| e.start_task(&tid)).detach();
+                            }),
+                    ),
+                )
+            })
             .when(waiting, |d| {
                 let tid = c.id.clone();
                 d.child(
@@ -770,6 +847,37 @@ impl BoardScreen {
             )
     }
 
+    /// Dashed preview of the task being drafted, first in the Queued column.
+    fn ghost_card(&self, cx: &App) -> impl IntoElement {
+        let composer = self.composer.read(cx);
+        let title = composer.title(cx);
+        let title = ghost_title(&title);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .p(theme::S3)
+            .border_1()
+            .border_dashed()
+            .border_color(theme::ACCENT_RING)
+            .rounded(theme::RADIUS_XL)
+            .bg(theme::ACCENT_GLOW)
+            .text_label()
+            .fg_muted()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(StatusDot::new(Status::Queued).id("board-ghost-new").small())
+                    .child("new")
+                    .child(div().flex_1())
+                    .child("draft"),
+            )
+            .child(div().text_body_strong().fg().child(title))
+            .child(composer.agent_label())
+    }
+
     fn column(&self, col: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let (status, title) = COLUMNS[col];
         let all = &self.cols[col];
@@ -780,6 +888,7 @@ impl BoardScreen {
         };
         let hidden = all.len() - shown;
         let highlight = status == Status::Waiting && !all.is_empty();
+        let ghost = status == Status::Queued && self.composer_open;
         panel()
             .flex_1()
             .min_w(px(240.))
@@ -807,6 +916,17 @@ impl BoardScreen {
                     )
                     .child(div().text_label().fg_muted().child(all.len().to_string()))
                     .child(div().flex_1())
+                    .when(status == Status::Queued, |d| {
+                        d.child(
+                            IconButton::new("board-add-queued", AppIcon::Plus)
+                                .small()
+                                .tooltip("Add a task to Queued")
+                                .selected(self.composer_open)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_composer(window, cx)
+                                })),
+                        )
+                    })
                     .when(status == Status::Waiting && !all.is_empty(), |d| {
                         d.child(
                             Button::new("board-col-review", "Review")
@@ -819,13 +939,14 @@ impl BoardScreen {
                         )
                     }),
             )
+            .when(ghost, |d| d.child(self.ghost_card(cx)))
             .children(
                 all.iter()
                     .take(shown)
                     .enumerate()
                     .map(|(i, c)| self.card_el(c, col, i, cx)),
             )
-            .when(all.is_empty(), |d| {
+            .when(all.is_empty() && !ghost, |d| {
                 d.child(
                     div()
                         .px(theme::S1)
@@ -882,22 +1003,33 @@ impl Render for BoardScreen {
         if running > 0 {
             header = header.meta(Badge::new(format!("{running} running")).info().dot());
         }
-        let header = header.action(segmented(
-            "board-view",
-            &["Board", "Timeline"],
-            0,
-            |ix, _, cx| {
-                if ix == 1 {
-                    state::navigate(Route::Timeline, cx);
-                }
-            },
-        ));
+        let header = header
+            .action(segmented(
+                "board-view",
+                &["Board", "Timeline"],
+                0,
+                |ix, _, cx| {
+                    if ix == 1 {
+                        state::navigate(Route::Timeline, cx);
+                    }
+                },
+            ))
+            .action(
+                Button::new("board-new-task", "New task")
+                    .primary()
+                    .icon(AppIcon::Plus)
+                    .kbd("C")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_composer(window, cx))),
+            );
 
         let content: gpui::AnyElement = match &self.data {
             None => body()
                 .child(skeleton_rows("board-loading", 4))
                 .into_any_element(),
             Some(data) if data.cards.is_empty() => body()
+                .when(self.composer_open, |d| {
+                    d.child(div().w_full().child(self.composer.clone()))
+                })
                 .child(
                     EmptyState::new(
                         AppIcon::Board,
@@ -928,18 +1060,63 @@ impl Render for BoardScreen {
                         .child(
                             div()
                                 .flex()
-                                .items_start()
+                                .flex_col()
                                 .gap(theme::S4)
-                                .children((0..4).map(|col| self.column(col, cx))),
+                                .when(self.composer_open, |d| {
+                                    d.child(div().w_full().child(self.composer.clone()))
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_start()
+                                        .gap(theme::S4)
+                                        .children((0..4).map(|col| self.column(col, cx))),
+                                ),
                         ),
                 )
                 .into_any_element(),
         };
-        screen().child(header).child(content)
+        screen()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                // Only when the board itself has focus, never while typing in an input.
+                if is_new_task_key(&ev.keystroke.key, ev.keystroke.modifiers.modified())
+                    && !this.composer_open
+                    && this.focus.is_focused(window)
+                {
+                    this.open_composer(window, cx);
+                }
+            }))
+            .child(header)
+            .child(content)
     }
 }
 
 // ---- helpers ------------------------------------------------------------------------
+
+/// Footer status text of a card: held tasks say "on hold" instead of "Queued".
+fn status_text(status: Status, held: bool) -> &'static str {
+    if held && status == Status::Queued {
+        "on hold"
+    } else {
+        status.label()
+    }
+}
+
+/// Title shown on the ghost card while the composer's title is still empty.
+fn ghost_title(title: &str) -> String {
+    let t = title.trim();
+    if t.is_empty() {
+        "Untitled task".to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+/// Whether a key press (without modifiers) is the "new task" shortcut.
+fn is_new_task_key(key: &str, modified: bool) -> bool {
+    key == "c" && !modified
+}
 
 fn column_of(s: Status) -> usize {
     match s {
@@ -1012,9 +1189,11 @@ fn card_view(
         id: t.id.clone(),
         kind: t.kind,
         status: t.status,
+        held: t.status == Status::Queued && harness_engine::tasks::is_held(t),
         title: t.title.clone().into(),
         run_chip: run_chip
-            .or_else(|| (t.kind == TaskKind::Chat).then(|| SharedString::from("Chat"))),
+            .or_else(|| (t.kind == TaskKind::Chat).then(|| SharedString::from("Chat")))
+            .or_else(|| (t.kind == TaskKind::Manual).then(|| SharedString::from("Task"))),
         pipeline_id: run.map(|(_, p, _)| p.clone()),
         trail,
         actor: t.actor.clone().into(),
@@ -1040,5 +1219,30 @@ fn card_view(
         started_at: t.started_at,
         finished_at: t.finished_at,
         haystack,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn held_queued_cards_say_on_hold() {
+        assert_eq!(status_text(Status::Queued, true), "on hold");
+        assert_eq!(status_text(Status::Queued, false), "Queued");
+        assert_eq!(status_text(Status::Running, true), "Running");
+    }
+
+    #[test]
+    fn ghost_title_falls_back() {
+        assert_eq!(ghost_title("  "), "Untitled task");
+        assert_eq!(ghost_title(" Fix it "), "Fix it");
+    }
+
+    #[test]
+    fn only_plain_c_opens_the_composer() {
+        assert!(is_new_task_key("c", false));
+        assert!(!is_new_task_key("c", true));
+        assert!(!is_new_task_key("x", false));
     }
 }
