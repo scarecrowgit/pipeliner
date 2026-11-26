@@ -194,7 +194,11 @@ impl<'a> AgentRun<'a> {
             // Tool calls, in order.
             let results = self.execute_calls(&reply.calls, handler);
             let mut stop: Option<Value> = None;
+            let mut shown: Vec<std::path::PathBuf> = vec![];
             for (call, (text, stop_value)) in reply.calls.iter().zip(results) {
+                if call.name == "read_file" {
+                    shown.extend(tools::marked_images(&text));
+                }
                 let mut tm = Message::new(
                     &self.thread_id,
                     Role::Tool,
@@ -215,6 +219,11 @@ impl<'a> AgentRun<'a> {
                 if let Some(v) = stop_value {
                     stop = Some(v);
                 }
+            }
+            // Images opened with read_file: tool results are text only, so they follow as
+            // a user turn the model can look at.
+            if let Some(m) = images_msg(&shown) {
+                msgs.push(m);
             }
             if let Some(v) = stop {
                 out.value = v;
@@ -256,6 +265,51 @@ impl<'a> AgentRun<'a> {
             .map(|r| r.unwrap_or_else(|| ("Error: tool did not run".into(), None)))
             .collect()
     }
+}
+
+/// Most images shown to the model after one step (each costs ~1–2k tokens).
+const MAX_SHOWN_IMAGES: usize = 6;
+/// Larger files are described, not sent (provider limit is ~5 MB per image).
+const MAX_SHOWN_BYTES: usize = 5 * 1024 * 1024;
+
+/// The user turn that shows images opened with `read_file`, or `None` when there are none.
+fn images_msg(paths: &[std::path::PathBuf]) -> Option<Msg> {
+    if paths.is_empty() {
+        return None;
+    }
+    use base64::Engine as _;
+    let mut text = String::from("The images you opened with read_file:");
+    let mut images = vec![];
+    for p in paths {
+        let name = p.display();
+        let bytes = std::fs::read(p).ok();
+        let sniffed = bytes.as_deref().and_then(image::sniff);
+        match (bytes, sniffed) {
+            (Some(b), Some((mime, _, w, h)))
+                if b.len() <= MAX_SHOWN_BYTES && images.len() < MAX_SHOWN_IMAGES =>
+            {
+                text.push_str(&format!("\n{}. {name} ({w}×{h})", images.len() + 1));
+                images.push(llm::ImageData {
+                    mime: mime.into(),
+                    base64: base64::engine::general_purpose::STANDARD.encode(b),
+                });
+            }
+            (Some(b), Some(_)) if b.len() > MAX_SHOWN_BYTES => {
+                text.push_str(&format!("\n- {name}: too large to show (over 5 MB); make it smaller"));
+            }
+            (Some(_), Some(_)) => {
+                text.push_str(&format!(
+                    "\n- {name}: not shown, at most {MAX_SHOWN_IMAGES} images per step"
+                ));
+            }
+            _ => text.push_str(&format!("\n- {name}: could not be read")),
+        }
+    }
+    Some(if images.is_empty() {
+        Msg::User(text)
+    } else {
+        Msg::UserImages { text, images }
+    })
 }
 
 /// A steering message from the user; images attached to it go along.
@@ -326,5 +380,34 @@ pub fn delegate_spec(name: &str) -> ToolSpec {
             },
             "required":["title","task"]
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opened_images_follow_as_a_user_turn() {
+        let d = std::env::temp_dir().join(format!("pl-agent-img-{}", new_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&32u32.to_be_bytes());
+        png.extend_from_slice(&16u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let p = d.join("a.png");
+        std::fs::write(&p, &png).unwrap();
+        assert!(images_msg(&[]).is_none());
+        match images_msg(&[p.clone(), d.join("gone.png")]) {
+            Some(Msg::UserImages { text, images }) => {
+                assert_eq!(images.len(), 1);
+                assert_eq!(images[0].mime, "image/png");
+                assert!(text.contains("(32×16)") && text.contains("gone.png: could not be read"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
