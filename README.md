@@ -44,3 +44,15 @@ Headless driver for scripts and tests: `cargo run -p harness-engine --bin pipeli
 
 Configuration lives in `~/.config/pipeliner/config.toml`; data (SQLite, worktrees, renders) in
 `~/.local/share/pipeliner/`.
+
+## Launcher
+
+The release binary runs outside nix-shell (runtime library paths are baked in). To get a menu
+entry:
+
+```sh
+CARGO_TARGET_DIR=~/.cache/pipeliner/cargo-target nix-shell shell.nix --run 'cargo build --release -p pipeliner'
+sed -e "s|@BIN@|$HOME/.cache/pipeliner/cargo-target/release/pipeliner|" \
+    -e "s|@ICON@|$PWD/packaging/pipeliner.svg|" \
+    packaging/pipeliner.desktop > ~/.local/share/applications/pipeliner.desktop
+```

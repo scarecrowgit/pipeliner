@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pipeliner
+GenericName=AI agent pipelines
+Comment=Chat, agent pipelines, review and a board for coding agents
+Exec=@BIN@
+Icon=@ICON@
+Terminal=false
+Categories=Development;
+StartupWMClass=pipeliner
