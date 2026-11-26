@@ -508,6 +508,20 @@ tbody tr:hover{background:var(--surface-raised)}
 ></svg
 ></button
 ></div
+><form aria-label="Create an agent with AI" class="gr-card" style="padding: 10px; gap: 8px; margin-bottom: 8px; border-radius: var(--radius-lg);"
+><div style="display: flex; align-items: baseline; gap: 8px;"
+><label for="ag-ai" class="lbl" style="flex: 1 1 0%; color: var(--text-secondary); font-weight: 500;">Create with AI</label
+><span class="lbl">opens as a draft</span
+></div
+><textarea id="ag-ai" rows="3" class="field" placeholder="Describe the agent: what it does, what it may touch, what it returns…" style="height: auto; padding: 8px 10px; resize: vertical; font-size: 12px; line-height: 18px; border-radius: var(--radius-md);">Reads CI logs for a failed run and says which test broke and why. Read-only, no code changes.</textarea
+><div style="display: flex; justify-content: flex-end;"
+><button type="submit" class="gr-btn gr-btn--primary gr-btn--sm"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
+></path
+></svg>Draft agent</button
+></div
+></form
 ><div role="group" aria-label="Show" style="display: flex; padding: 2px; gap: 2px; margin-bottom: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised);"
 ><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-pressed="true" style="flex: 1 1 0%; background: var(--surface-hover);">All 9</button
 ><button type="button" class="gr-btn gr-btn--sm gr-btn--ghost" aria-pressed="false" style="flex: 1 1 0%;">Yours 7</button
