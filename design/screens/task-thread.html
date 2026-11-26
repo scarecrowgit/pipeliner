@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1440">
-<meta name="design:size" content="1440x1600">
+<meta name="design:size" content="1440x1840">
 <title>Task thread</title>
 <style>
 /* Design tokens (keep in sync with design/tokens.css). */
@@ -291,7 +291,7 @@ a:focus-visible,input:focus-visible,textarea:focus-visible,button:focus-visible{
 </head>
 <body>
 <div id="dc-root"
-><div style="min-height: 1600px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
+><div style="min-height: 1840px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><div style="flex: 0 0 276px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);"
 ><nav class="gr-nav" aria-label="Main" style="width: 100%; min-height: 800px; gap: 2px; font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0px 8px; border: 0px; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer; text-align: left;"
@@ -770,7 +770,12 @@ a:focus-visible,input:focus-visible,textarea:focus-visible,button:focus-visible{
 ></div
 ></div
 ><form style="margin: 0px; padding: 16px 24px 20px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--bg-sidebar);"
+><div class="phead"
+><span class="gr-badge"
+><span class="gr-dot gr-dot--running gr-dot--sm" aria-hidden="true"
+></span>running</span
 ><label for="task-msg" class="lbl">Message Fixer B · lands in its next turn as prompt layer 6</label
+></div
 ><textarea id="task-msg" rows="3" placeholder="Steer it, answer a question, or ask why it chose this…" style="resize: vertical; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text); font: inherit;"
 ></textarea
 ><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;"
@@ -786,6 +791,37 @@ a:focus-visible,input:focus-visible,textarea:focus-visible,button:focus-visible{
 ><button type="button" class="gr-btn gr-btn--primary">Send to Fixer B</button
 ></div
 ></form
+><div aria-label="Same composer once Fixer B is done" style="padding: 16px 24px 20px; border-top: 1px dashed var(--line-strong); display: flex; flex-direction: column; gap: 10px;"
+><span class="lbl" style="text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px;">Same box, after Fixer B is done</span
+><div class="ev">12:02 · done · 3 files changed · 14/14 tests passed · $0.16 of $0.20</div
+><form style="margin: 0px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-xl); display: flex; flex-direction: column; gap: 8px; background: var(--bg-sidebar);"
+><div class="phead"
+><span class="gr-badge gr-badge--success"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M20 6 9 17l-5-5"
+></path
+></svg>done</span
+><label for="task-msg-done" class="lbl">Message Fixer B · starts a new turn with this whole thread, on the same branch</label
+></div
+><textarea id="task-msg-done" rows="3" placeholder="Ask for a change, a follow-up, or why it chose this…" style="resize: vertical; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text); font: inherit;"
+></textarea
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;"
+><span class="lbl num">$0.04 left of $0.20 · its output updates when it finishes again</span
+><div style="flex: 1 1 0%;"
+></div
+><span class="lbl" style="display: inline-flex; align-items: center; gap: 4px;"
+><kbd class="gr-kbd">⌘</kbd
+><kbd class="gr-kbd">↵</kbd> send</span
+><button type="button" class="gr-btn gr-btn--primary"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="m22 2-7 20-4-9-9-4Z"
+></path
+><path d="M22 2 11 13"
+></path
+></svg>Send follow-up</button
+></div
+></form
+></div
 ></section
 ><aside aria-label="What Fixer B sees" style="flex: 1 1 340px; min-width: 0px; box-sizing: border-box; border-left: 1px solid var(--line); display: flex; flex-direction: column;"
 ><div class="sec" style="border-top: 0px;"
