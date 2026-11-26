@@ -252,9 +252,27 @@ impl ChatScreen {
             .map(|c| c.id.clone())
             .unwrap_or_else(|| owner.id.clone());
         let open = self.expanded.contains(&key);
-        let summary = call
-            .map(|c| data::args_summary(&c.arguments))
-            .unwrap_or_default();
+        // A tool result without its call (e.g. after a restart) still says what it is.
+        let name = if name.trim().is_empty() {
+            "tool".to_string()
+        } else {
+            name
+        };
+        let summary = match call {
+            Some(c) => data::args_summary(&c.arguments),
+            None => result
+                .map(|r| {
+                    r.content
+                        .lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .unwrap_or("")
+                        .chars()
+                        .take(120)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
         let working = result.is_none() && self.task_status().is_some_and(|s| s == Status::Running);
         let failed = result.is_some_and(|r| r.content.starts_with("Error"));
         let state_icon = if working {
@@ -299,7 +317,7 @@ impl ChatScreen {
                             .min_w_0()
                             .text_mono()
                             .fg_muted()
-                            .truncate()
+                            .ellipsis()
                             .child(summary),
                     )
                     .child(
@@ -422,7 +440,7 @@ impl ChatScreen {
                                 .flex_1()
                                 .min_w_0()
                                 .text_body_strong()
-                                .truncate()
+                                .ellipsis()
                                 .child(t.title.clone()),
                         )
                         .child(div().text_label().fg_muted().child(t.actor.clone())),
@@ -930,8 +948,8 @@ fn subtask_item(t: &Task) -> impl IntoElement {
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .child(div().text_label().fg().truncate().child(t.title.clone()))
-                .child(div().text_mono_sm().fg_muted().truncate().child(format!(
+                .child(div().text_label().fg().ellipsis().child(t.title.clone()))
+                .child(div().text_mono_sm().fg_muted().ellipsis().child(format!(
                     "{} · {}",
                     t.actor,
                     ui::fmt_usd(t.cost_usd)
@@ -1104,7 +1122,7 @@ fn sent_image(message: &str, ix: usize, a: &harness_core::Attachment) -> impl In
                 .bg(theme::SCRIM)
                 .text_color(theme::TEXT_SECONDARY)
                 .text_mono_sm()
-                .truncate()
+                .ellipsis()
                 .child(tag),
         )
 }

@@ -148,7 +148,7 @@ impl Render for DragGhost {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
+                            .ellipsis()
                             .text_body_strong()
                             .fg()
                             .child(self.title.clone()),
@@ -731,7 +731,7 @@ impl BoardScreen {
                     .text_mono_sm()
                     .fg_muted()
                     .child(
-                        div().min_w_0().truncate().child(
+                        div().min_w_0().ellipsis().child(
                             c.run_chip
                                 .clone()
                                 .unwrap_or_else(|| SharedString::from(c.kind.label())),
@@ -754,7 +754,7 @@ impl BoardScreen {
                             .min_w_0()
                             .text_body_strong()
                             .fg()
-                            .line_clamp(2)
+                            .clamp_lines(2)
                             .child(c.title.clone()),
                     ),
             )
@@ -769,7 +769,7 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .fg_secondary()
-                        .line_clamp(2)
+                        .clamp_lines(2)
                         .child(c.summary.clone()),
                 )
             })
@@ -778,7 +778,7 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .text_color(theme::DANGER)
-                        .line_clamp(2)
+                        .clamp_lines(2)
                         .child(e),
                 )
             })
@@ -801,7 +801,7 @@ impl BoardScreen {
                             .text_color(status_color)
                             .child(status_text(c.status, c.held)),
                     )
-                    .child(div().flex_1().min_w_0().truncate().child(
+                    .child(div().flex_1().min_w_0().ellipsis().child(
                         match (c.actor.is_empty(), c.model.is_empty()) {
                             (false, false) => format!("· {} · {}", c.actor, c.model),
                             (false, true) => format!("· {}", c.actor),

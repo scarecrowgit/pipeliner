@@ -301,7 +301,7 @@ impl RenderOnce for DiffView {
                 .border_b_1()
                 .border_color(theme::LINE)
                 .child(icon_sized(AppIcon::File, theme::ICON_SM).text_color(theme::TEXT_MUTED))
-                .child(div().fg().truncate().child(f.path.clone()))
+                .child(div().fg().ellipsis().child(f.path.clone()))
                 .child(
                     div()
                         .font_family(theme::sans())

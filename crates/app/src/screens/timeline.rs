@@ -331,6 +331,15 @@ fn draft_title(typed: &str) -> String {
     }
 }
 
+/// Width the "now HH:MM" badge takes on the hour axis (it starts 3px right of the line).
+const NOW_BADGE_W: f32 = 80.;
+
+/// Whether an hour label at `x` would be drawn under the "now" badge at `now_x`.
+fn hidden_by_now_badge(x: f32, now_x: f32) -> bool {
+    // A label is ~40px wide and starts 4px right of its tick.
+    x + 44. > now_x && x < now_x + NOW_BADGE_W
+}
+
 /// Left edge and width (px) of the draft bar: starts at `now_x`, lasts [`DRAFT_MINUTES`] and
 /// never runs past the end of the day.
 fn draft_span(now_x: f32, pxph: f32, lane_w: f32) -> (f32, f32) {
@@ -773,10 +782,13 @@ impl TimelineScreen {
             .border_b_1()
             .border_color(theme::LINE);
         let mut grid_lines = div().absolute().top_0().bottom_0().left_0().w(px(width));
+        // The "now 19:35" badge sits on the hour axis; labels under it are skipped.
+        let now_x = today.then(|| x_of(now));
         let mut m = 0i64;
         while m < 24 * 60 {
             let x = m as f32 / 60.0 * pxph;
-            if m % label_step == 0 {
+            let under_badge = now_x.is_some_and(|nx| hidden_by_now_badge(x, nx));
+            if m % label_step == 0 && !under_badge {
                 let text = if label_step >= 60 && self.zoom == 0 {
                     format!("{:02}", m / 60)
                 } else {
@@ -888,7 +900,7 @@ impl TimelineScreen {
                             .flex_1()
                             .min_w_0()
                             .text_body_strong()
-                            .truncate()
+                            .ellipsis()
                             .child(g.title.clone()),
                     )
                     .when_some(g.status, |d, s| {
@@ -997,7 +1009,7 @@ impl TimelineScreen {
                                         } else {
                                             theme::TEXT
                                         })
-                                        .truncate()
+                                        .ellipsis()
                                         .child(b.title.clone()),
                                 )
                                 .child(
@@ -1006,7 +1018,7 @@ impl TimelineScreen {
                                         .max_w(px(80.))
                                         .text_label()
                                         .fg_muted()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(if sub.is_empty() { b.actor.clone() } else { sub }),
                                 ),
                         )
@@ -1157,7 +1169,7 @@ impl TimelineScreen {
                                     div()
                                         .text_body()
                                         .text_color(theme::ACCENT_TEXT)
-                                        .truncate()
+                                        .ellipsis()
                                         .child(title.clone()),
                                 )
                                 .child(
@@ -1166,7 +1178,7 @@ impl TimelineScreen {
                                         .max_w(px(110.))
                                         .text_label()
                                         .fg_muted()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(format!("draft · {agent}")),
                                 ),
                         )
@@ -1480,6 +1492,18 @@ impl Render for TimelineScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hour_labels_skip_the_now_badge() {
+        // now at 19:35 with 100 px per hour: "20" sits under the badge; "19" ends before it.
+        let px = |h: f32| h * 100.;
+        let now = px(19.0 + 35.0 / 60.0);
+        assert!(hidden_by_now_badge(px(20.), now));
+        assert!(!hidden_by_now_badge(px(19.), now));
+        // now at 19:10: the "19" label (19:00–19:24 at this scale) is covered.
+        assert!(hidden_by_now_badge(px(19.), px(19.0 + 10.0 / 60.0)));
+        assert!(!hidden_by_now_badge(px(21.), now));
+    }
 
     #[test]
     fn overlap_is_clamped_to_zero() {

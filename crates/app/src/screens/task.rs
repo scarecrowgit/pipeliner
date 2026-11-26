@@ -456,6 +456,7 @@ impl TaskScreen {
                 .gap(px(2.))
                 .px(theme::S6)
                 .py(theme::S3)
+                .overflow_hidden()
                 .border_r_1()
                 .border_color(theme::LINE)
                 .child(div().text_label().fg_muted().child(label))
@@ -464,8 +465,11 @@ impl TaskScreen {
                         .flex()
                         .items_baseline()
                         .gap(theme::S2)
-                        .child(div().text_stat_sm().fg().child(value))
-                        .when_some(note, |r, n| r.child(div().text_label().fg_muted().child(n))),
+                        .min_w_0()
+                        .child(div().flex_none().text_stat_sm().fg().child(value))
+                        .when_some(note, |r, n| {
+                            r.child(div().min_w_0().ellipsis().text_label().fg_muted().child(n))
+                        }),
                 )
         };
         div()
@@ -668,7 +672,7 @@ impl TaskScreen {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .truncate()
+                                    .ellipsis()
                                     .fg_muted()
                                     .child(summary.clone()),
                             )
@@ -980,7 +984,7 @@ impl TaskScreen {
                     .text_body()
                     .fg_muted()
                     .child(ui::icon_sized(AppIcon::Lock, theme::ICON))
-                    .child(format!("This task is {}. Steering works only while it is queued, running or waiting.", t.status.label().to_lowercase())),
+                    .child(format!("This task {}. Steering works only while it is queued, running or waiting.", ended_phrase(t.status))),
             );
         }
         let who = if t.actor.is_empty() {
@@ -1032,8 +1036,8 @@ impl TaskScreen {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().truncate().text_body().fg().child(r.title.clone()))
-                        .child(div().truncate().text_label().fg_muted().child(format!(
+                        .child(div().ellipsis().text_body().fg().child(r.title.clone()))
+                        .child(div().ellipsis().text_label().fg_muted().child(format!(
                             "{}{}{}",
                             r.actor,
                             if r.actor.is_empty() { "" } else { " · " },
@@ -1098,7 +1102,7 @@ impl TaskScreen {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
+                            .ellipsis()
                             .text_body()
                             .fg()
                             .child(t.title.clone()),
@@ -1463,7 +1467,7 @@ fn copy_chip(id: &'static str, icon: AppIcon, text: String) -> impl IntoElement 
         .cursor_pointer()
         .hover(|s| s.border_color(theme::TEXT_DISABLED))
         .child(ui::icon_sized(icon, theme::ICON_SM).text_color(theme::TEXT_MUTED))
-        .child(div().min_w_0().truncate().child(text))
+        .child(div().min_w_0().ellipsis().child(text))
         .on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
             state::toast(ToastKind::Info, "Copied to clipboard", cx);
@@ -1484,4 +1488,14 @@ fn caret(id: SharedString) -> impl IntoElement {
                 .with_easing(pulsating_between(0.15, 1.0)),
             |d, t| d.opacity(t),
         )
+}
+
+
+/// "failed", "is done", "was cancelled": how a task that can't be steered ended.
+fn ended_phrase(s: Status) -> String {
+    match s {
+        Status::Failed => "failed".into(),
+        Status::Cancelled => "was cancelled".into(),
+        other => format!("is {}", other.label().to_lowercase()),
+    }
 }

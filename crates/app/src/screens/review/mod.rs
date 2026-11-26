@@ -702,7 +702,7 @@ impl ReviewScreen {
                     .child(
                         div()
                             .flex_1()
-                            .truncate()
+                            .ellipsis()
                             .text_label()
                             .fg_secondary()
                             .child(data::image_name(&z.path)),

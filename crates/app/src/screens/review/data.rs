@@ -253,7 +253,7 @@ impl ReviewData {
                 task_id: t.id.clone(),
                 title: t.title.clone(),
                 run_ref: run_ref(t),
-                error: t.error.as_deref().map(first_line).unwrap_or_default(),
+                error: t.error.as_deref().map(error_teaser).unwrap_or_default(),
                 retryable: t.run_id.is_some() && t.node_id.is_some(),
             })
             .collect();
@@ -684,6 +684,19 @@ fn variant_body(title: &str, summary: &str) -> String {
     }
 }
 
+/// An error on one line for a two-line clamp: "cargo build failed (exit 101):" alone says
+/// nothing, the next lines carry the reason.
+pub fn error_teaser(e: &str) -> String {
+    let joined = e
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate(&joined, 240)
+}
+
 pub fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -789,6 +802,15 @@ mod tests {
         let ok = mk("c", 2, Status::Done, None);
         let later = mk("d", 3, Status::Waiting, None);
         assert_eq!(previous_failure(&later, &[failed, ok, later.clone()]), None);
+    }
+
+    #[test]
+    fn error_teaser_keeps_the_reason() {
+        let e = "cargo build failed (exit 101):\n\nerror[E0425]: cannot find value `x`\n  --> src/a.rs:3";
+        assert_eq!(
+            error_teaser(e),
+            "cargo build failed (exit 101): error[E0425]: cannot find value `x` --> src/a.rs:3"
+        );
     }
 
     #[test]

@@ -1079,7 +1079,7 @@ fn mono_row(id: &'static str, text: String, cx: &mut Context<SettingsScreen>) ->
                 .border_1()
                 .border_color(theme::LINE)
                 .text_mono()
-                .truncate()
+                .ellipsis()
                 .child(text),
         )
         .child(
@@ -1387,7 +1387,7 @@ impl SettingsScreen {
                         .rounded(theme::RADIUS_MD)
                         .border_1()
                         .border_color(theme::LINE)
-                        .child(div().flex_1().min_w_0().text_mono().truncate().child(model))
+                        .child(div().flex_1().min_w_0().text_mono().ellipsis().child(model))
                         .when(is_default, |d| d.child(Badge::new("default").accent()))
                         .child(test_result(st, ix))
                         .child(
@@ -1631,7 +1631,7 @@ impl SettingsScreen {
                             .w(px(180.))
                             .flex_none()
                             .text_mono()
-                            .truncate()
+                            .ellipsis()
                             .child(s.name.clone()),
                     )
                     .child(
@@ -1640,7 +1640,7 @@ impl SettingsScreen {
                             .min_w_0()
                             .text_label()
                             .fg_muted()
-                            .truncate()
+                            .ellipsis()
                             .child(s.description.clone()),
                     )
             }));
@@ -1758,14 +1758,14 @@ impl SettingsScreen {
                     div()
                         .text_mono()
                         .fg_secondary()
-                        .truncate()
+                        .ellipsis()
                         .child(s.head.clone()),
                 )
                 .child(
                     div()
                         .text_label()
                         .fg_muted()
-                        .truncate()
+                        .ellipsis()
                         .child(s.repo.display().to_string()),
                 )
                 .into_any_element(),
@@ -1886,7 +1886,7 @@ fn test_result(st: Option<&TestState>, ix: usize) -> AnyElement {
                 .max_w(px(260.))
                 .text_label()
                 .text_color(theme::DANGER)
-                .truncate()
+                .ellipsis()
                 .child(short)
                 .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
                 .into_any_element()

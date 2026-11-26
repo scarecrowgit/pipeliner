@@ -579,7 +579,7 @@ impl ChatScreen {
                                         .min_w_0()
                                         .text_label()
                                         .fg_muted()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(sg.detail.clone()),
                                 )
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -622,10 +622,10 @@ impl ChatScreen {
                 cx.listener(|this, _, window, cx| this.insert_prefix("@", window, cx)),
             ))
             .when_some(hint, |d, (color, h)| {
-                d.child(div().text_label().text_color(color).truncate().child(h))
+                d.child(div().text_label().text_color(color).ellipsis().child(h))
             })
             .when_some(images_label, |d, l| {
-                d.child(div().text_label().fg_muted().truncate().child(l))
+                d.child(div().text_label().fg_muted().ellipsis().child(l))
             })
             .child(div().flex_1())
             .child(
@@ -796,7 +796,7 @@ impl ChatScreen {
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .truncate()
+                                        .ellipsis()
                                         .text_color(theme::TEXT)
                                         .child(a.name.clone()),
                                 )

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui::{img, Animation, AnimationExt as _, ObjectFit, StyledImage as _};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::Sizable as _;
 
 use super::data::{self, Item, ItemKind, Pill, PillState, RunInfo, VariantView};
 use super::ReviewScreen;
@@ -252,7 +253,7 @@ impl ReviewScreen {
                                     div()
                                         .text_label()
                                         .fg_muted()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(Config::short_model(&v.v.model)),
                                 )
                             })
@@ -263,7 +264,7 @@ impl ReviewScreen {
                         div()
                             .text_body_strong()
                             .fg()
-                            .line_clamp(3)
+                            .clamp_lines(3)
                             .child(v.title.clone()),
                     )
                     .child(
@@ -311,7 +312,7 @@ impl ReviewScreen {
                             .when_some(v.v.branch.clone().filter(|b| !b.is_empty()), |d, b| {
                                 d.child(ui::key_value(
                                     "Branch",
-                                    div().text_mono().truncate().child(b),
+                                    div().text_mono().ellipsis().child(b),
                                 ))
                             }),
                     )
@@ -324,7 +325,7 @@ impl ReviewScreen {
                                 .overflow_hidden()
                                 .text_label()
                                 .fg_muted()
-                                .line_clamp(4)
+                                .clamp_lines(4)
                                 .child(plain_teaser(&v.body)),
                         )
                     })
@@ -434,7 +435,7 @@ impl ReviewScreen {
                                         div()
                                             .text_label()
                                             .fg_secondary()
-                                            .truncate()
+                                            .ellipsis()
                                             .child(v.title.clone()),
                                     ),
                             )
@@ -508,7 +509,7 @@ impl ReviewScreen {
                                 .id("review-pr-link")
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
+                                .ellipsis()
                                 .text_mono()
                                 .fg_accent()
                                 .cursor_pointer()
@@ -739,6 +740,7 @@ impl ReviewScreen {
                                     vv.v.id
                                 )))
                                 .label("Viewed")
+                                .small()
                                 .checked(viewed)
                                 .on_click(cx.listener(
                                     move |this, checked: &bool, _, cx| {
@@ -1008,7 +1010,7 @@ impl ReviewScreen {
                                     div()
                                         .text_label()
                                         .fg_muted()
-                                        .line_clamp(2)
+                                        .clamp_lines(2)
                                         .child(n.detail.clone()),
                                 )
                             }),
@@ -1120,7 +1122,7 @@ fn input_summary(run: &RunInfo) -> impl IntoElement {
                     .flex_none()
                     .text_label()
                     .fg_muted()
-                    .truncate()
+                    .ellipsis()
                     .child(name),
             )
             .child(
@@ -1129,7 +1131,7 @@ fn input_summary(run: &RunInfo) -> impl IntoElement {
                     .min_w_0()
                     .text_body()
                     .fg_secondary()
-                    .truncate()
+                    .ellipsis()
                     .child(text),
             )
             .when_some(cost, |d, c| {

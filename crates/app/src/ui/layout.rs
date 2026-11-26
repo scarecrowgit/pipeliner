@@ -149,7 +149,7 @@ impl RenderOnce for SectionHeader {
                     .child(self.title),
             )
             .when_some(self.meta, |d, m| {
-                d.child(div().text_label().fg_muted().truncate().child(m))
+                d.child(div().text_label().fg_muted().ellipsis().child(m))
             })
             .child(div().flex_1())
             .children(self.right)
@@ -222,7 +222,7 @@ impl RenderOnce for PageHeader {
                         .text_body()
                         .fg_muted()
                         .whitespace_nowrap()
-                        .truncate()
+                        .ellipsis()
                         .child(s),
                 )
             })
@@ -291,7 +291,7 @@ impl EmptyState {
             AppIcon::Lock,
             "Not available yet",
             format!(
-                "{} is not part of this release. Nothing here is hidden from you.",
+                "The {} screen is not part of this release. Nothing here is hidden from you.",
                 what.into()
             ),
         )

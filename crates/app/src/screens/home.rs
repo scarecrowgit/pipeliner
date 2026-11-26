@@ -575,7 +575,7 @@ impl HomeScreen {
                     .child(value),
             )
             .when_some(sub, |d, (s, c)| {
-                d.child(div().text_label().text_color(c).truncate().child(s))
+                d.child(div().text_label().text_color(c).ellipsis().child(s))
             })
     }
 
@@ -701,12 +701,12 @@ impl HomeScreen {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .child(div().text_body_strong().truncate().child(w.title.clone()))
+                            .child(div().text_body_strong().ellipsis().child(w.title.clone()))
                             .child(
                                 div()
                                     .text_label()
                                     .fg_muted()
-                                    .truncate()
+                                    .ellipsis()
                                     .child(w.sub.clone()),
                             ),
                     )
@@ -807,12 +807,12 @@ impl HomeScreen {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(div().text_body_strong().truncate().child(r.title.clone()))
+                        .child(div().text_body_strong().ellipsis().child(r.title.clone()))
                         .child(
                             div()
                                 .text_label()
                                 .fg_muted()
-                                .truncate()
+                                .ellipsis()
                                 .child(r.sub.clone()),
                         ),
                 )
@@ -1023,10 +1023,10 @@ impl HomeScreen {
                                 .child(
                                     div()
                                         .text_body_strong()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(format!("#{} {}", r.number, r.title)),
                                 )
-                                .child(div().text_label().fg_muted().truncate().child(format!(
+                                .child(div().text_label().fg_muted().ellipsis().child(format!(
                                     "{} · {} · {} ago",
                                     r.pipeline,
                                     r.status.label(),

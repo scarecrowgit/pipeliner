@@ -469,6 +469,17 @@ pub trait TextStyles: Styled + Sized {
     fn fg_accent(self) -> Self {
         self.text_color(ACCENT_TEXT)
     }
+    /// One line, cut with "…" at the width the layout gives it. Use this instead of
+    /// gpui's `truncate()`: that one sets `nowrap`, and gpui 0.2.2 then keeps the first
+    /// (unconstrained) measurement, so in flexible boxes the text is clipped mid-glyph
+    /// with no ellipsis. Keeping normal wrapping makes it re-measure at the real width.
+    fn ellipsis(self) -> Self {
+        self.overflow_hidden().text_ellipsis().line_clamp(1)
+    }
+    /// At most `n` lines, the last one ending in "…" when the text is longer.
+    fn clamp_lines(self, n: usize) -> Self {
+        self.overflow_hidden().text_ellipsis().line_clamp(n)
+    }
 }
 
 impl<T: Styled + Sized> TextStyles for T {}

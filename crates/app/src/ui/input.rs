@@ -92,8 +92,11 @@ pub fn text_area(
 
 /// Renders a single-line input: 40px, raised surface, strong border, accent focus ring.
 pub fn field(state: &Entity<InputState>) -> Input {
+    // gpui-component sets the height from its size class after our styles (Medium is
+    // 32px, Large 44px); min/max pin it to the 40px of buttons and selects.
     Input::new(state)
-        .h(theme::CONTROL_H)
+        .min_h(theme::CONTROL_H)
+        .max_h(theme::CONTROL_H)
         .bg(theme::SURFACE_RAISED)
         .rounded(theme::RADIUS_LG)
         .text_size(px(13.))

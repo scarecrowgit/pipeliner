@@ -169,7 +169,7 @@ impl RenderOnce for MeterRow {
                     .flex_none()
                     .text_body()
                     .fg_secondary()
-                    .truncate()
+                    .ellipsis()
                     .child(self.label),
             )
             .child(div().flex_1().child(bar))

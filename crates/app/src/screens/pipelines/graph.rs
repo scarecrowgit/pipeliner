@@ -513,7 +513,7 @@ impl PipelinesScreen {
                     .text_body()
                     .fg_secondary()
                     .child(icon_sized(icon, theme::ICON_SM).text_color(icon_color))
-                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .child(div().flex_1().min_w_0().ellipsis().child(label))
                     .child(div().text_mono_sm().fg_muted().child(hint))
                     .when_some(disabled, |el, why| {
                         el.opacity(0.45)
@@ -874,7 +874,7 @@ impl PipelinesScreen {
                         .left(px(lx + 6.))
                         .top(px(py1 + 3.))
                         .max_w(px(CARD_W - 16.))
-                        .truncate()
+                        .ellipsis()
                         .text_mono_sm()
                         .text_color(if hot {
                             theme::ACCENT_TEXT
@@ -989,7 +989,7 @@ impl PipelinesScreen {
                     .child(
                         div()
                             .min_w_0()
-                            .truncate()
+                            .ellipsis()
                             .text_body_strong()
                             .fg()
                             .child(s.title.clone()),
@@ -1017,7 +1017,7 @@ impl PipelinesScreen {
                 div()
                     .h(px(18.))
                     .flex_none()
-                    .truncate()
+                    .ellipsis()
                     .when(s.desc_mono, |el| {
                         el.text_mono_sm().fg_secondary().line_height(px(18.))
                     })
@@ -1055,7 +1055,7 @@ impl PipelinesScreen {
                             .child(div().fg_secondary().child(op.clone()))
                             .child(
                                 div()
-                                    .truncate()
+                                    .ellipsis()
                                     .fg()
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .child(if value.is_empty() {
@@ -1092,7 +1092,7 @@ impl PipelinesScreen {
                         .text_size(px(11.))
                         .fg_secondary()
                         .child(format!("{} {v}", n.name))
-                        .truncate()
+                        .ellipsis()
                 }),
             ));
         }
@@ -1146,7 +1146,7 @@ impl PipelinesScreen {
                     .border_color(theme::LINE_SUBTLE)
                     .text_size(px(11.))
                     .line_height(px(16.))
-                    .truncate()
+                    .ellipsis()
                     .child(s.footer.clone()),
             );
         }

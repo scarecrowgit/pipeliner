@@ -595,9 +595,9 @@ fn stat_tile(label: &'static str, value: String, sub: Option<String>) -> Div {
         .gap(px(2.))
         .p(theme::S3)
         .child(div().text_label().fg_muted().child(label))
-        .child(div().text_stat_sm().fg().truncate().child(value))
+        .child(div().text_stat_sm().fg().ellipsis().child(value))
         .when_some(sub, |d, s| {
-            d.child(div().text_label().fg_muted().truncate().child(s))
+            d.child(div().text_label().fg_muted().ellipsis().child(s))
         })
 }
 
@@ -755,16 +755,16 @@ impl AgentsScreen {
                                     .flex()
                                     .flex_col()
                                     .child(
-                                        div().text_body_strong().truncate().child(a.name.clone()),
+                                        div().text_body_strong().ellipsis().child(a.name.clone()),
                                     )
-                                    .child(div().text_mono_sm().fg_muted().truncate().child(
+                                    .child(div().text_mono_sm().fg_muted().ellipsis().child(
                                         format!(
                                             "{} · {}",
                                             Config::short_model(&a.model),
                                             a.tools.label()
                                         ),
                                     ))
-                                    .child(div().text_label().fg_muted().truncate().child(usage)),
+                                    .child(div().text_label().fg_muted().ellipsis().child(usage)),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.select(id.clone(), window, cx)
@@ -1058,7 +1058,7 @@ impl AgentsScreen {
                             .flex_1()
                             .min_w_0()
                             .text_body()
-                            .truncate()
+                            .ellipsis()
                             .child(name.clone()),
                     )
                     .child(
@@ -1104,7 +1104,7 @@ impl AgentsScreen {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(div().text_body().truncate().child(t.title.clone()))
+                            .child(div().text_body().ellipsis().child(t.title.clone()))
                             .child(div().text_label().fg_muted().child(format!(
                                 "{} · {} ago",
                                 t.status.label(),
