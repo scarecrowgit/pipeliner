@@ -209,6 +209,9 @@ impl ReviewData {
             .filter(|t| {
                 t.status == Status::Failed && is_today(t.finished_at.unwrap_or(t.created_at))
             })
+            // Sub-agents report to the step that spawned them, and an attempt that was
+            // retried or re-ran has been dealt with: neither needs you.
+            .filter(|t| t.kind != TaskKind::Spawned && store.newer_attempt(t).is_none())
             .collect();
         failed.sort_by_key(|t| std::cmp::Reverse(t.finished_at.unwrap_or(t.created_at)));
         let also = failed

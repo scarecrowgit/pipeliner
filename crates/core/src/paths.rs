@@ -26,6 +26,28 @@ pub fn data_dir() -> PathBuf {
         .join("pipeliner")
 }
 
+/// Installed app binaries (`bin/pipeliner`). The launcher starts this copy, so builds by
+/// agents or by hand never replace the running app; self-update installs here.
+pub fn bin_dir() -> PathBuf {
+    data_dir().join("bin")
+}
+
+/// `~/.cache/pipeliner` (or `$PIPELINER_CACHE_DIR`).
+pub fn cache_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("PIPELINER_CACHE_DIR") {
+        return PathBuf::from(p);
+    }
+    dirs::cache_dir()
+        .unwrap_or_else(|| home().join(".cache"))
+        .join("pipeliner")
+}
+
+/// Scratch space of one run (`{run_cache}` in workdir env), e.g. its cargo target dir.
+/// Removed when the run is done or cancelled.
+pub fn run_cache_dir(run_number: u64) -> PathBuf {
+    cache_dir().join("runs").join(format!("run-{run_number}"))
+}
+
 pub fn worktrees_dir() -> PathBuf {
     data_dir().join("worktrees")
 }

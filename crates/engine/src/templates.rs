@@ -124,7 +124,9 @@ pub fn all(config: &Config) -> Vec<Template> {
     let mut env = std::collections::BTreeMap::new();
     env.insert(
         "CARGO_TARGET_DIR".to_string(),
-        "~/.cache/pipeliner/cargo-target".to_string(),
+        // Per run: parallel runs build different code under the same crate names and would
+        // overwrite each other's artifacts in a shared target dir.
+        "{run_cache}/target".to_string(),
     );
     let app = Workdir {
         id: "app".into(),

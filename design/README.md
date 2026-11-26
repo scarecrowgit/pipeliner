@@ -31,6 +31,8 @@ styles, then screen-specific styles) and plain markup in the body. The intended 
   hard-code a value that has a token. Add a new token to `tokens.css` and to the inline `:root` block of the
   files that use it, never only one of them.
 - Change only what the issue needs. Do not reformat, rename classes or reorder unrelated markup.
+- Keep markup one tag per line (the line break goes inside the tag, before its `>`), so diffs show
+  only what changed. Never collapse a file back into one long line.
 - Keep the file self-contained (CSS inline in the head) and keep `design:size` correct if the height changes.
 - After every edit, re-render the PNG into `renders/` and look at it before asking for approval.
 - Reference only: `--sidebar-width` is 232px in the tokens, but these mockups render the sidebar column
