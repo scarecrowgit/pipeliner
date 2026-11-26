@@ -820,21 +820,19 @@ impl AgentsScreen {
         };
         let no_skills = data.skills.is_empty() && ed.skills.is_empty() && ed.on_demand.is_empty();
         let b = &ed.base;
-        div()
-            .id("agent-editor")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .overflow_y_scroll()
+        // The form keeps a readable width in a wide window (design: ~760px column); the
+        // scroll area still takes the whole middle.
+        let form = div()
             .flex()
             .flex_col()
             .gap(theme::S5)
-            .p(theme::S6)
+            .w_full()
+            .max_w(px(820.))
             .child(
                 div()
                     .flex()
                     .gap(theme::S4)
-                    .child(div().w(px(220.)).flex_none().child(labeled(
+                    .child(div().w(px(280.)).flex_none().child(labeled(
                         "Name",
                         None,
                         input::field(&ed.name),
@@ -869,7 +867,9 @@ impl AgentsScreen {
                                 role.chars().count()
                             ))),
                     )
-                    .child(input::composer_field(&ed.role)),
+                    // A role is a paragraph or a list of rules: show ~8 lines, grow
+                    // with the text (an empty multi-line input collapses to one line).
+                    .child(input::composer_field(&ed.role).min_h(px(8. * 20. + 20.))),
             )
             .child(
                 div()
@@ -967,7 +967,15 @@ impl AgentsScreen {
                             }))
                             .into_any_element()
                     }),
-            )
+            );
+        div()
+            .id("agent-editor")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_y_scroll()
+            .p(theme::S6)
+            .child(form)
     }
 
     /// Right column: stats, where the agent is used, recent tasks.

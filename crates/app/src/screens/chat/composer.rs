@@ -659,17 +659,13 @@ impl ChatScreen {
                 )
             });
 
-        div()
-            .flex_none()
+        let inner = div()
             .flex()
             .flex_col()
             .gap(px(10.))
-            .px(theme::S6)
-            .pt(theme::S4)
-            .pb(theme::S5)
-            .border_t_1()
-            .border_color(theme::LINE)
-            .bg(theme::BG_SIDEBAR)
+            .w_full()
+            // Same column as the messages above it (the band stays full width).
+            .max_w(super::COLUMN_W)
             .child(
                 div()
                     .flex()
@@ -700,7 +696,16 @@ impl ChatScreen {
                     .child(self.render_compose_box(window, cx))
                     .children(popup),
             )
-            .child(actions)
+            .child(actions);
+        div()
+            .flex_none()
+            .px(theme::S6)
+            .pt(theme::S4)
+            .pb(theme::S5)
+            .border_t_1()
+            .border_color(theme::LINE)
+            .bg(theme::BG_SIDEBAR)
+            .child(inner)
     }
 
     /// The message box: image tray, text, and the bar with "Add image".

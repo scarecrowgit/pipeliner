@@ -200,7 +200,11 @@ impl RenderOnce for BarChart {
                         .absolute()
                         .top(relative(top))
                         .right_0()
-                        .mt(px(-18.))
+                        .mt(px(-20.))
+                        .px(px(4.))
+                        .rounded(theme::RADIUS_SM)
+                        // Readable over a tall bar.
+                        .bg(theme::SURFACE)
                         .text_mono_sm()
                         .fg_secondary()
                         .child(label),
@@ -223,7 +227,8 @@ impl RenderOnce for BarChart {
                             .justify_between()
                             .items_end()
                             .w(px(36.))
-                            .h(self.height)
+                            // Each 16px label centred on its gridline: top, middle, base.
+                            .h(self.height + px(16.))
                             .mt(px(-8.))
                             .mb(px(-8.))
                             .child(axis_label(max))

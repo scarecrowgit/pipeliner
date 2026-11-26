@@ -28,7 +28,10 @@ impl ReviewScreen {
             .flex_col()
             .gap(theme::S4)
             .p(theme::S6)
-            .max_w(px(1180.));
+            // A definite width: without it the wrapping rows (breadcrumb, title, step
+            // chain) were sized at their narrowest and stayed that tall in a wide window.
+            .w_full()
+            .max_w(px(1400.));
         col = col
             .child(self.breadcrumb(item))
             .child(self.title_row(item, cx));
@@ -105,6 +108,7 @@ impl ReviewScreen {
         let mut row = div()
             .flex()
             .flex_wrap()
+            .content_start()
             .items_center()
             .gap(px(6.))
             .text_label()
@@ -145,6 +149,7 @@ impl ReviewScreen {
             .flex()
             .items_center()
             .flex_wrap()
+            .content_start()
             .gap(theme::S3)
             .child(div().text_title().fg().child(t.title.clone()))
             .when_some(
@@ -204,6 +209,7 @@ impl ReviewScreen {
         div()
             .flex()
             .flex_wrap()
+            .content_start()
             .gap(theme::S4)
             .children(item.variants.iter().enumerate().map(|(pos, v)| {
                 let is_picked = picked == Some(v.v.index) && multi;
@@ -900,6 +906,7 @@ impl ReviewScreen {
                     div()
                         .flex()
                         .flex_wrap()
+                        .content_start()
                         .items_center()
                         .gap(theme::S2)
                         .child(div().text_label().fg_muted().child("Common reasons"))
@@ -1000,6 +1007,7 @@ impl ReviewScreen {
                                 div()
                                     .flex()
                                     .flex_wrap()
+                                    .content_start()
                                     .items_baseline()
                                     .gap(theme::S2)
                                     .child(div().text_body_strong().fg().child(n.name.clone()))
@@ -1172,6 +1180,7 @@ fn chain(run: &RunInfo) -> impl IntoElement {
     div()
         .flex()
         .flex_wrap()
+        .content_start()
         .items_center()
         .gap(theme::S2)
         .children(run.chain.iter().enumerate().flat_map(|(i, p)| {

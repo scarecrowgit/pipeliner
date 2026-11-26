@@ -336,15 +336,31 @@ const NOW_BADGE_W: f32 = 9. * MONO_SM_CHAR + 8.;
 /// Advance of one character in the 11px mono face.
 const MONO_SM_CHAR: f32 = 6.6;
 
+/// Day zoom: the 24h fill a lane `w` px wide (a pixel short, so nothing scrolls), but
+/// never narrower than `min` per hour.
+fn day_px_per_hour(w: f32, min: f32) -> f32 {
+    ((w - 1.) / 24.).floor().max(min)
+}
+
 /// Width of an axis label in the small mono face.
 fn label_w(text: &str) -> f32 {
     text.chars().count() as f32 * MONO_SM_CHAR
 }
 
+/// Left edge of the "now" badge: 3px right of the now line, or 3px left of it when it
+/// would run past the end of the lane (`lane_w`).
+fn now_badge_left(now_x: f32, lane_w: f32) -> f32 {
+    if now_x + 3. + NOW_BADGE_W > lane_w {
+        (now_x - 3. - NOW_BADGE_W).max(0.)
+    } else {
+        now_x + 3.
+    }
+}
+
 /// Whether an axis label `w` px wide at tick `x` (it starts 4px right of the tick) would
-/// be drawn under the "now" badge, which starts 3px right of `now_x`.
-fn hidden_by_now_badge(x: f32, w: f32, now_x: f32) -> bool {
-    x + 4. + w + 4. > now_x + 3. && x + 4. < now_x + 3. + NOW_BADGE_W
+/// be drawn under the "now" badge starting at `badge_x`.
+fn hidden_by_now_badge(x: f32, w: f32, badge_x: f32) -> bool {
+    x + 4. + w + 4. > badge_x && x + 4. < badge_x + NOW_BADGE_W
 }
 
 /// Left edge and width (px) of the draft bar: starts at `now_x`, lasts [`DRAFT_MINUTES`] and
@@ -630,7 +646,7 @@ impl TimelineScreen {
             });
             return;
         }
-        let pxph = ZOOMS[self.zoom].1 as f64;
+        let pxph = self.px_per_hour() as f64;
         let ds = day_start(self.day);
         let anchor_secs = if self.day == Local::now().date_naive() {
             (Utc::now() - ds).num_seconds() as f64
@@ -755,10 +771,22 @@ impl TimelineScreen {
             )
     }
 
+    /// Pixels per hour. "Day" fits the whole day into the visible lane (at least its
+    /// nominal 40px/h); the other zooms are fixed and scroll.
+    fn px_per_hour(&self) -> f32 {
+        let nominal = ZOOMS[self.zoom].1;
+        if self.zoom != 0 {
+            return nominal;
+        }
+        let w: f32 = self.scroll.bounds().size.width.into();
+        day_px_per_hour(w, nominal)
+    }
+
     /// The label column, the hour-tick header and every row.
     fn grid(&self, d: &DayData, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let _ = window;
-        let (_, pxph, label_step, line_step) = ZOOMS[self.zoom];
+        let (_, _, label_step, line_step) = ZOOMS[self.zoom];
+        let pxph = self.px_per_hour();
         let width = pxph * 24.0;
         let ds = day_start(self.day);
         let now = Utc::now();
@@ -790,7 +818,8 @@ impl TimelineScreen {
             .border_color(theme::LINE);
         let mut grid_lines = div().absolute().top_0().bottom_0().left_0().w(px(width));
         // The "now 19:35" badge sits on the hour axis; labels under it are skipped.
-        let now_x = today.then(|| x_of(now));
+        // Where the badge starts: right of the line, or left of it near the day's end.
+        let badge_x = today.then(|| now_badge_left(x_of(now), width));
         let mut m = 0i64;
         while m < 24 * 60 {
             let x = m as f32 / 60.0 * pxph;
@@ -801,7 +830,7 @@ impl TimelineScreen {
                     format!("{:02}:{:02}", m / 60, m % 60)
                 };
                 let under_badge =
-                    now_x.is_some_and(|nx| hidden_by_now_badge(x, label_w(&text), nx));
+                    badge_x.is_some_and(|bx| hidden_by_now_badge(x, label_w(&text), bx));
                 if !under_badge {
                     lane_head = lane_head.child(
                         div()
@@ -841,12 +870,11 @@ impl TimelineScreen {
             }
             m += line_step.min(label_step);
         }
-        if today {
-            let x = x_of(now);
+        if let Some(bx) = badge_x {
             lane_head = lane_head.child(
                 div()
                     .absolute()
-                    .left(px(x + 3.))
+                    .left(px(bx))
                     .top(px(8.))
                     .px(px(4.))
                     .rounded(theme::RADIUS_SM)
@@ -1504,17 +1532,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn day_zoom_fills_the_lane() {
+        assert_eq!(day_px_per_hour(1300., 40.), 54.);
+        // Not laid out yet, or a narrow window: the nominal scale.
+        assert_eq!(day_px_per_hour(0., 40.), 40.);
+        assert_eq!(day_px_per_hour(700., 40.), 40.);
+    }
+
+    #[test]
     fn hour_labels_skip_the_now_badge() {
-        // 40 px per hour (day zoom), two-digit labels; now at 19:45.
+        // 40 px per hour (day zoom), two-digit labels; now at 19:45, lane 960px.
         let px = |h: f32| h * 40.;
         let w = label_w("19");
-        let now = px(19.75);
-        assert!(!hidden_by_now_badge(px(19.), w, now), "19 ends before the badge");
-        assert!(hidden_by_now_badge(px(20.), w, now));
-        assert!(hidden_by_now_badge(px(21.), w, now));
-        assert!(!hidden_by_now_badge(px(22.), w, now), "22 starts after the badge");
+        let bx = now_badge_left(px(19.75), 960.);
+        assert_eq!(bx, px(19.75) + 3.);
+        assert!(!hidden_by_now_badge(px(19.), w, bx), "19 ends before the badge");
+        assert!(hidden_by_now_badge(px(20.), w, bx));
+        assert!(hidden_by_now_badge(px(21.), w, bx));
+        assert!(!hidden_by_now_badge(px(22.), w, bx), "22 starts after the badge");
         // now at 19:05: "19" is right under it.
-        assert!(hidden_by_now_badge(px(19.), w, px(19.0 + 5.0 / 60.0)));
+        let bx = now_badge_left(px(19.0 + 5.0 / 60.0), 960.);
+        assert!(hidden_by_now_badge(px(19.), w, bx));
+    }
+
+    #[test]
+    fn now_badge_flips_left_at_the_end_of_the_day() {
+        let px = |h: f32| h * 40.;
+        let bx = now_badge_left(px(23.5), 960.);
+        assert!(bx + NOW_BADGE_W <= px(23.5), "drawn left of the line");
+        assert!(hidden_by_now_badge(px(22.), label_w("22"), bx));
     }
 
     #[test]

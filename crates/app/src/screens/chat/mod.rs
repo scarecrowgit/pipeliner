@@ -65,6 +65,9 @@ enum Form {
     SavePlan { message: Id, steps: Vec<String> },
 }
 
+/// Width of the conversation column: messages and the composer line up on it.
+const COLUMN_W: gpui::Pixels = gpui::px(880.);
+
 pub struct ChatScreen {
     // ---- data
     rows: Option<Vec<ChatRow>>,

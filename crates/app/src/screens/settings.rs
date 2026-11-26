@@ -1170,7 +1170,7 @@ impl Render for SettingsScreen {
                     .pb(px(96.))
                     .child(
                         div()
-                            .max_w(px(760.))
+                            .max_w(px(880.))
                             .flex()
                             .flex_col()
                             .gap(theme::S4)
