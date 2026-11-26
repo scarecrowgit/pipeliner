@@ -208,6 +208,10 @@ pub fn merge_pr(cwd: &Path, url: &str, method: &str) -> Result<String> {
         "rebase" => "--rebase",
         _ => "--squash",
     };
+    // Merged already (on GitHub, or by an earlier approve whose reply got lost): done.
+    if pr_state(cwd, url).as_deref() == Some("MERGED") {
+        return Ok(format!("{url} is already merged"));
+    }
     // A draft PR can't be merged; mark it ready first.
     let _ = run(cwd, "gh", &["pr", "ready", url]);
     run(
@@ -215,6 +219,14 @@ pub fn merge_pr(cwd: &Path, url: &str, method: &str) -> Result<String> {
         "gh",
         &["pr", "merge", url, flag, "--delete-branch=false"],
     )
+}
+
+/// `OPEN`, `MERGED` or `CLOSED`; None when gh can't tell.
+pub fn pr_state(cwd: &Path, url: &str) -> Option<String> {
+    run(cwd, "gh", &["pr", "view", url, "--json", "state", "-q", ".state"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 pub fn slug(s: &str) -> String {

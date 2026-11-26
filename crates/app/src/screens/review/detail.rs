@@ -35,6 +35,9 @@ impl ReviewScreen {
             col = col.child(input_summary(run));
             col = col.child(chain(run));
         }
+        if let Some(err) = &item.last_failure {
+            col = col.child(last_failure(item.kind, err));
+        }
         match item.kind {
             ItemKind::Pick => {
                 col = col.child(self.variant_cards(item, cx));
@@ -660,8 +663,12 @@ impl ReviewScreen {
             .into_any_element()
     }
 
-    /// The diff, one block per file; a file marked Viewed collapses to its header.
+    /// The diff, one block per file. A file marked Viewed collapses to its header; files
+    /// past the first few hundred lines (and very big ones) start folded behind a
+    /// "Show diff" row, so a large PR doesn't redraw thousands of rows every frame.
     fn diff_files(&self, vv: &VariantView, cx: &mut Context<Self>) -> impl IntoElement {
+        let sizes: Vec<usize> = vv.files.iter().map(|f| f.files[0].lines.len()).collect();
+        let auto = data::open_by_default(&sizes);
         div()
             .flex()
             .flex_col()
@@ -669,7 +676,11 @@ impl ReviewScreen {
                 let file = &f.files[0];
                 let key = (vv.v.id.clone(), file.path.clone());
                 let viewed = self.viewed.contains(&key);
-                let shown: Arc<ParsedDiff> = if viewed {
+                let open = !viewed && (auto[ix] || self.opened.contains(&key));
+                let folded = !viewed && !open;
+                let shown: Arc<ParsedDiff> = if open {
+                    f.clone()
+                } else {
                     Arc::new(ParsedDiff {
                         files: vec![DiffFile {
                             path: file.path.clone(),
@@ -679,12 +690,41 @@ impl ReviewScreen {
                             lines: vec![],
                         }],
                     })
-                } else {
-                    f.clone()
                 };
+                let open_key = key.clone();
                 div()
                     .relative()
                     .child(DiffView::new(shown).max_lines(1500))
+                    .when(folded, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(theme::S3)
+                                .px(theme::S4)
+                                .py(theme::S2)
+                                .border_b_1()
+                                .border_color(theme::LINE)
+                                .text_label()
+                                .fg_muted()
+                                .child(format!("{} lines folded", file.lines.len()))
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "review-open-file-{}-{ix}",
+                                            vv.v.id
+                                        )),
+                                        "Show diff",
+                                    )
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.opened.insert(open_key.clone());
+                                        cx.notify();
+                                    })),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .absolute()
@@ -978,6 +1018,42 @@ impl ReviewScreen {
 }
 
 /// Markdown flattened to one wrapping paragraph: markers dropped, lines joined.
+/// "Your last approve didn't go through": the previous attempt's error and what to do.
+fn last_failure(kind: ItemKind, err: &str) -> impl IntoElement {
+    let hint = match kind {
+        ItemKind::ApprovePr => {
+            "The PR is still open. Resolve it on GitHub (or send it back) and approve again."
+        }
+        _ => "This step is asking again.",
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(theme::S2)
+        .p(theme::S4)
+        .rounded(theme::RADIUS_XL)
+        .border_1()
+        .border_color(theme::alpha(theme::DANGER, 0.35))
+        .bg(theme::DANGER_SOFT)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::S2)
+                .text_body_strong()
+                .text_color(theme::DANGER)
+                .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
+                .child("Your last decision didn't go through"),
+        )
+        .child(
+            div()
+                .text_mono()
+                .fg_secondary()
+                .child(data::truncate(err.trim(), 600)),
+        )
+        .child(div().text_label().fg_muted().child(hint))
+}
+
 fn plain_teaser(md: &str) -> String {
     md.lines()
         .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>']).trim())

@@ -1,7 +1,7 @@
 //! Review queue data: everything the screen shows, derived from the Store on a background
 //! thread (`ReviewData::query`) so `render()` only reads plain structs.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
@@ -92,16 +92,7 @@ pub struct VariantView {
 
 impl VariantView {
     fn new(v: Variant) -> Self {
-        let diff = ParsedDiff::parse(&v.diff);
-        let files = diff
-            .files
-            .iter()
-            .map(|f| {
-                Arc::new(ParsedDiff {
-                    files: vec![f.clone()],
-                })
-            })
-            .collect();
+        let (diff, files) = parsed(&v);
         let first = first_line(&v.summary);
         let title = if v.title.trim().is_empty() {
             first.clone()
@@ -121,6 +112,43 @@ impl VariantView {
     }
 }
 
+type Parsed = (Arc<ParsedDiff>, Vec<Arc<ParsedDiff>>);
+
+/// Parsed diffs by variant id (and diff length, which changes when a variant is redone).
+/// The queue is re-read on every task change while runs work; a PR diff can be megabytes.
+static PARSED: std::sync::LazyLock<std::sync::Mutex<HashMap<Id, (usize, Parsed)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn parsed(v: &Variant) -> Parsed {
+    if let Some((len, p)) = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&v.id) {
+        if *len == v.diff.len() {
+            return p.clone();
+        }
+    }
+    let diff = ParsedDiff::parse(&v.diff);
+    let files = diff
+        .files
+        .iter()
+        .map(|f| {
+            Arc::new(ParsedDiff {
+                files: vec![f.clone()],
+            })
+        })
+        .collect();
+    let p = (diff, files);
+    PARSED.lock().unwrap_or_else(|e| e.into_inner()).insert(v.id.clone(), (v.diff.len(), p.clone()));
+    p
+}
+
+/// Forgets parsed diffs of variants no longer in the queue.
+fn prune_parsed(items: &[Item]) {
+    let keep: HashSet<&str> = items
+        .iter()
+        .flat_map(|i| i.variants.iter().map(|v| v.v.id.as_str()))
+        .collect();
+    PARSED.lock().unwrap_or_else(|e| e.into_inner()).retain(|id, _| keep.contains(id.as_str()));
+}
+
 /// A waiting item in the queue.
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -137,6 +165,9 @@ pub struct Item {
     pub back_to: Option<Id>,
     pub pr_url: Option<String>,
     pub has_images: bool,
+    /// Why the previous attempt at this step failed (e.g. "Merge failed: …"): the engine
+    /// asks again, and without this the card just seemed to come back.
+    pub last_failure: Option<String>,
 }
 
 /// A failed task from today (Retry / Open).
@@ -192,7 +223,8 @@ impl ReviewData {
         let items = waiting
             .into_iter()
             .map(|t| build_item(store, t, &runs, &pipelines, &tasks))
-            .collect();
+            .collect::<Vec<_>>();
+        prune_parsed(&items);
 
         let today = Local::now().date_naive();
         let is_today = |d: DateTime<Utc>| d.with_timezone(&Local).date_naive() == today;
@@ -352,6 +384,7 @@ fn build_item(
             .filter(|u| u.starts_with("http"))
     });
     let run_info = run.map(|r| run_info(store, r, t, pipelines, tasks));
+    let last_failure = previous_failure(t, tasks);
     Item {
         task: t.clone(),
         kind,
@@ -363,7 +396,28 @@ fn build_item(
         back_to: gate.and_then(|g| g.back_to),
         pr_url,
         has_images,
+        last_failure,
     }
+}
+
+/// The error of the attempt just before `t` at the same step, when that attempt failed.
+pub fn previous_failure(t: &Task, tasks: &[Task]) -> Option<String> {
+    t.run_id.as_ref()?;
+    t.node_id.as_ref()?;
+    tasks
+        .iter()
+        .filter(|o| {
+            o.id != t.id
+                && o.run_id == t.run_id
+                && o.node_id == t.node_id
+                && o.variant == t.variant
+                && o.kind == t.kind
+                && o.created_at < t.created_at
+        })
+        .max_by_key(|o| o.created_at)
+        .filter(|o| o.status == Status::Failed)
+        .and_then(|o| o.error.clone())
+        .filter(|e| !e.trim().is_empty())
 }
 
 fn run_info(
@@ -597,6 +651,28 @@ pub fn send_back_reasons(decisions: &[Decision]) -> Vec<(String, usize)> {
 }
 
 /// First non-empty line, markdown heading marks removed.
+/// Diff lines drawn up front across all files of a variant.
+pub const DIFF_OPEN_BUDGET: usize = 400;
+/// A file bigger than this starts folded even when it would fit the budget.
+pub const DIFF_FILE_AUTO_MAX: usize = 250;
+
+/// Which files of a diff (by line count, in order) are unfolded when it opens: small
+/// files, in order, until [`DIFF_OPEN_BUDGET`] lines are drawn. Drawing every row of a
+/// big PR on each animation frame is what made Review crawl.
+pub fn open_by_default(sizes: &[usize]) -> Vec<bool> {
+    let mut left = DIFF_OPEN_BUDGET;
+    sizes
+        .iter()
+        .map(|&n| {
+            let open = n <= DIFF_FILE_AUTO_MAX && n <= left;
+            if open {
+                left -= n;
+            }
+            open
+        })
+        .collect()
+}
+
 pub fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -677,6 +753,44 @@ mod tests {
         let g = graph();
         assert_eq!(upstream_order(&g, "g"), vec!["a", "b"]);
         assert_eq!(downstream_order(&g, "g"), vec!["c", "d"]);
+    }
+
+    #[test]
+    fn previous_failure_is_the_last_attempt_only() {
+        let mk = |id: &str, secs: i64, status: Status, err: Option<&str>| {
+            let mut t = Task::new(TaskKind::Gate, "Approve PR");
+            t.id = id.into();
+            t.run_id = Some("r".into());
+            t.node_id = Some("gate".into());
+            t.created_at = DateTime::from_timestamp(secs, 0).unwrap();
+            t.status = status;
+            t.error = err.map(String::from);
+            t
+        };
+        let failed = mk("a", 1, Status::Failed, Some("Merge failed: conflict"));
+        let now = mk("b", 2, Status::Waiting, None);
+        let tasks = vec![failed.clone(), now.clone()];
+        assert_eq!(
+            previous_failure(&now, &tasks).as_deref(),
+            Some("Merge failed: conflict")
+        );
+        // An older failure followed by a good attempt isn't shown.
+        let ok = mk("c", 2, Status::Done, None);
+        let later = mk("d", 3, Status::Waiting, None);
+        assert_eq!(previous_failure(&later, &[failed, ok, later.clone()]), None);
+    }
+
+    #[test]
+    fn big_diffs_open_folded() {
+        assert_eq!(open_by_default(&[10, 20]), vec![true, true]);
+        // A huge file stays folded; the small one after it still opens.
+        assert_eq!(open_by_default(&[5000, 30]), vec![false, true]);
+        // The budget runs out: later files fold even when small.
+        let sizes = vec![200; 5];
+        let open = open_by_default(&sizes);
+        assert_eq!(open, vec![true, true, false, false, false]);
+        let drawn: usize = sizes.iter().zip(&open).filter(|(_, o)| **o).map(|(n, _)| n).sum();
+        assert!(drawn <= DIFF_OPEN_BUDGET);
     }
 
     #[test]

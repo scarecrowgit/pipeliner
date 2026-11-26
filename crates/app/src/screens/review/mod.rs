@@ -48,6 +48,8 @@ pub struct ReviewScreen {
     image_tab: usize,
     /// (variant id, file path) of diff files marked "Viewed".
     viewed: HashSet<(Id, String)>,
+    /// (variant id, file path) of folded diff files you unfolded.
+    opened: HashSet<(Id, String)>,
     /// Decided rows still sliding out (or waiting for the engine to pick the decision up).
     leaving: HashSet<Id>,
     zoom: Option<Zoom>,
@@ -59,6 +61,9 @@ pub struct ReviewScreen {
     note: Entity<InputState>,
     target: Entity<SelectState<Options>>,
     load: Option<Task<()>>,
+    /// A read is running / another one is due when it ends.
+    loading: bool,
+    reload_again: bool,
     /// Re-renders every 30s so ages ("6m") keep ticking.
     _ticker: Task<()>,
     _subs: Vec<Subscription>,
@@ -122,6 +127,7 @@ impl ReviewScreen {
             detail_tab: 0,
             image_tab: 0,
             viewed: HashSet::new(),
+            opened: HashSet::new(),
             leaving: HashSet::new(),
             zoom: None,
             synced: None,
@@ -129,6 +135,8 @@ impl ReviewScreen {
             note,
             target,
             load: None,
+            loading: false,
+            reload_again: false,
             _ticker: ticker,
             _subs: subs,
         };
@@ -136,12 +144,24 @@ impl ReviewScreen {
         this
     }
 
+    /// Re-reads the queue. While a read is running, changes only mark it stale and one
+    /// more read follows: a busy run changes tasks every few hundred ms, and restarting
+    /// the read each time kept the screen from ever loading.
     fn reload(&mut self, cx: &mut Context<Self>) {
-        self.load = Some(load(cx, ReviewData::query, |this, data, _| {
+        if self.loading {
+            self.reload_again = true;
+            return;
+        }
+        self.loading = true;
+        self.load = Some(load(cx, ReviewData::query, |this, data, cx| {
             // Rows the engine has consumed are gone: stop animating them.
             this.leaving
                 .retain(|id| data.items.iter().any(|i| &i.task.id == id));
             this.data = Some(data);
+            this.loading = false;
+            if std::mem::take(&mut this.reload_again) {
+                this.reload(cx);
+            }
         }));
     }
 
