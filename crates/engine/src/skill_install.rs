@@ -451,8 +451,11 @@ pub fn staged_files_dir(id: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn data_dir() {
+    /// Points the data dir at a temp folder and holds a lock for the test: the tests share
+    /// one staging folder, and one counts what is left in it.
+    fn data_dir() -> std::sync::MutexGuard<'static, ()> {
         static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         DIR.get_or_init(|| {
             let d =
                 std::env::temp_dir().join(format!("pl-skill-install-{}", harness_core::new_id()));
@@ -460,6 +463,7 @@ mod tests {
             std::env::set_var("PIPELINER_DATA_DIR", &d);
             d
         });
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn cfg(dir: &Path) -> Config {
@@ -558,7 +562,7 @@ mod tests {
 
     #[test]
     fn stages_a_command_run_in_a_temp_home() {
-        data_dir();
+        let _staging = data_dir();
         let mine = tmp("mine");
         let c = cfg(&mine);
         let set = stage_command(
@@ -590,7 +594,7 @@ mod tests {
 
     #[test]
     fn failing_command_reports_output_and_leaves_nothing() {
-        data_dir();
+        let _staging = data_dir();
         let c = cfg(&tmp("mine2"));
         let before = skills::staged(&c).len();
         let e = stage_command(&c, "echo boom >&2; exit 3", None).unwrap_err();
@@ -608,7 +612,7 @@ mod tests {
 
     #[test]
     fn stages_a_local_git_folder() {
-        data_dir();
+        let _staging = data_dir();
         let repo = tmp("repo");
         let sh = |cmd: &str| {
             let r = Command::new("sh")

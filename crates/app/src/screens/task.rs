@@ -793,8 +793,9 @@ impl TaskScreen {
             .flex()
             .flex_col()
             .gap(theme::S4)
-            .max_w(px(860.))
-            .mx_auto()
+            // Left-aligned with the header and composer (design: max-width 800px, no
+            // auto margins); centring left a 250px gutter on each side in a wide window.
+            .max_w(px(880.))
             .w_full();
         if skip > 0 {
             col = col.child(
@@ -858,7 +859,7 @@ impl TaskScreen {
                             .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
                             .child("This task failed"),
                     )
-                    .child(div().text_mono().fg_secondary().child(err)),
+                    .child(div().w_full().min_w_0().text_mono().fg_secondary().child(err)),
             );
         }
         if t.status == Status::Done && !t.summary.trim().is_empty() {
@@ -1092,7 +1093,7 @@ impl TaskScreen {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(300.))
+            .w(px(340.))
             .gap(theme::S1)
             .p(theme::S3)
             .border_l_1()

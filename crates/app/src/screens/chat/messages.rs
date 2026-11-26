@@ -144,9 +144,11 @@ impl ChatScreen {
             .track_scroll(&self.scroll)
             .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| cx.notify()))
             .child(
+                // An explicit width (not w_full + max_w): text is then measured at the
+                // width it is drawn at, so long lines wrap inside the column.
                 div()
-                    .w_full()
-                    .max_w(px(760.))
+                    .w(super::COLUMN_W)
+                    .max_w_full()
                     .flex()
                     .flex_col()
                     .gap(theme::S5)
@@ -196,6 +198,8 @@ impl ChatScreen {
             .flex()
             .flex_col()
             .gap(px(6.))
+            .w_full()
+            .min_w_0()
             .child(
                 div()
                     .flex()
@@ -230,7 +234,13 @@ impl ChatScreen {
                     .child(clock(m.created_at)),
             )
             .when(!text.is_empty(), |d| {
-                d.child(ui::markdown(eid("msg-md", &m.id), text, window, cx))
+                // The column's width, so a long URL wraps instead of running past it.
+                d.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .child(ui::markdown(eid("msg-md", &m.id), text, window, cx)),
+                )
             })
             .when(m.partial, |d| d.child(caret(&m.id)))
             .children(m.tool_calls.iter().map(|c| {
