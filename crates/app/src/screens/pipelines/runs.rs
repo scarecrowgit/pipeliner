@@ -182,7 +182,7 @@ impl PipelinesScreen {
                     .flex_col()
                     .child(
                         div()
-                            .truncate()
+                            .ellipsis()
                             .text_body()
                             .fg()
                             .child(if run.title.is_empty() {
@@ -212,7 +212,7 @@ impl PipelinesScreen {
                         |el, e| {
                             el.child(
                                 div()
-                                    .truncate()
+                                    .ellipsis()
                                     .text_label()
                                     .text_color(theme::DANGER)
                                     .child(e),
@@ -228,7 +228,7 @@ impl PipelinesScreen {
             .child(
                 div()
                     .w(px(150.))
-                    .truncate()
+                    .ellipsis()
                     .text_label()
                     .fg_secondary()
                     .child(r.current.clone().unwrap_or_else(|| "—".into())),
@@ -354,7 +354,7 @@ fn task_row(run_ix: usize, ix: usize, t: &HTask) -> impl IntoElement {
             div()
                 .flex_1()
                 .min_w_0()
-                .truncate()
+                .ellipsis()
                 .text_body()
                 .fg()
                 .child(match t.variant {
@@ -372,7 +372,7 @@ fn task_row(run_ix: usize, ix: usize, t: &HTask) -> impl IntoElement {
         .child(
             div()
                 .w(px(160.))
-                .truncate()
+                .ellipsis()
                 .text_label()
                 .fg_muted()
                 .child(who),

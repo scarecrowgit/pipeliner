@@ -851,7 +851,7 @@ impl PipelinesScreen {
                             div()
                                 .text_label()
                                 .fg_muted()
-                                .truncate()
+                                .ellipsis()
                                 .child(parts.join(" · ")),
                         )
                         .when_some(invalid, |el, e| {
@@ -1180,7 +1180,7 @@ fn list_row(ix: usize, r: &ListRow, _cx: &mut Context<PipelinesScreen>) -> impl 
                             div()
                                 .text_body_strong()
                                 .fg()
-                                .truncate()
+                                .ellipsis()
                                 .child(p.name.clone()),
                         )
                         .when(!p.description.is_empty(), |el| {
@@ -1188,7 +1188,7 @@ fn list_row(ix: usize, r: &ListRow, _cx: &mut Context<PipelinesScreen>) -> impl 
                                 div()
                                     .text_label()
                                     .fg_muted()
-                                    .truncate()
+                                    .ellipsis()
                                     .child(p.description.clone()),
                             )
                         }),

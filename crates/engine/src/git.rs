@@ -18,12 +18,29 @@ pub fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<String> {
     if !out.status.success() {
         bail!(
             "{program} {} failed: {}{}",
-            args.join(" "),
+            short_args(args),
             String::from_utf8_lossy(&out.stderr).trim(),
             String::from_utf8_lossy(&out.stdout).trim()
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// Arguments as shown in an error: long or multi-line ones (a PR body) are clipped, so
+/// the reason after "failed:" stays readable.
+fn short_args(args: &[&str]) -> String {
+    args.iter()
+        .map(|a| {
+            let first = a.lines().next().unwrap_or("");
+            if first.chars().count() > 60 || a.contains('\n') {
+                let head: String = first.chars().take(40).collect();
+                format!("\"{head}…\"")
+            } else {
+                a.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn git(cwd: &Path, args: &[&str]) -> Result<String> {
@@ -120,6 +137,17 @@ pub fn diff_against(cwd: &Path, base: &str) -> String {
     let _ = git(cwd, &["add", "-A", "--intent-to-add"]);
 
     git(cwd, &["diff", "--no-color", base]).unwrap_or_default()
+}
+
+/// The commit where `cwd`'s branch left `base_branch` (local branch, else `origin/…`).
+pub fn fork_point(cwd: &Path, base_branch: &str) -> Option<String> {
+    if base_branch.is_empty() {
+        return None;
+    }
+    [base_branch.to_string(), format!("origin/{base_branch}")]
+        .iter()
+        .find_map(|b| git(cwd, &["merge-base", "HEAD", b]).ok())
+        .filter(|s| !s.is_empty())
 }
 
 /// Files changed in the working tree + commits since `base`.
@@ -247,6 +275,29 @@ pub fn slug(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn errors_clip_long_arguments() {
+        let body = "Opened by Pipeliner\n\n## Task\n\nlots of text";
+        let shown = short_args(&["pr", "create", "--body", body, "--draft"]);
+        assert_eq!(shown, "pr create --body \"Opened by Pipeliner…\" --draft");
+    }
+
+    #[test]
+    fn fork_point_survives_new_commits() {
+        let dir = std::env::temp_dir().join(format!("pl-fork-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let g = |args: &[&str]| git(&dir, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "a"]);
+        let start = g(&["rev-parse", "HEAD"]);
+        g(&["checkout", "-q", "-b", "work"]);
+        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b"]);
+        assert_eq!(fork_point(&dir, "main").as_deref(), Some(start.as_str()));
+        assert_eq!(fork_point(&dir, ""), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn slugs() {
         assert_eq!(

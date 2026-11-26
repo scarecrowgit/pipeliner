@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui::{img, Animation, AnimationExt as _, ObjectFit, StyledImage as _};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::Sizable as _;
 
 use super::data::{self, Item, ItemKind, Pill, PillState, RunInfo, VariantView};
 use super::ReviewScreen;
@@ -252,7 +253,7 @@ impl ReviewScreen {
                                     div()
                                         .text_label()
                                         .fg_muted()
-                                        .truncate()
+                                        .ellipsis()
                                         .child(Config::short_model(&v.v.model)),
                                 )
                             })
@@ -263,8 +264,11 @@ impl ReviewScreen {
                         div()
                             .text_body_strong()
                             .fg()
-                            .line_clamp(3)
-                            .child(v.title.clone()),
+                            .child(ui::Clamped::new(
+                                SharedString::from(format!("variant-title-{}", v.v.id)),
+                                v.title.clone(),
+                                3,
+                            )),
                     )
                     .child(
                         div()
@@ -311,7 +315,7 @@ impl ReviewScreen {
                             .when_some(v.v.branch.clone().filter(|b| !b.is_empty()), |d, b| {
                                 d.child(ui::key_value(
                                     "Branch",
-                                    div().text_mono().truncate().child(b),
+                                    div().text_mono().ellipsis().child(b),
                                 ))
                             }),
                     )
@@ -324,8 +328,11 @@ impl ReviewScreen {
                                 .overflow_hidden()
                                 .text_label()
                                 .fg_muted()
-                                .line_clamp(4)
-                                .child(plain_teaser(&v.body)),
+                                .child(ui::Clamped::new(
+                                    SharedString::from(format!("variant-teaser-{}", v.v.id)),
+                                    plain_teaser(&v.body),
+                                    4,
+                                )),
                         )
                     })
                     .child(div().flex_1())
@@ -434,7 +441,7 @@ impl ReviewScreen {
                                         div()
                                             .text_label()
                                             .fg_secondary()
-                                            .truncate()
+                                            .ellipsis()
                                             .child(v.title.clone()),
                                     ),
                             )
@@ -508,7 +515,7 @@ impl ReviewScreen {
                                 .id("review-pr-link")
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
+                                .ellipsis()
                                 .text_mono()
                                 .fg_accent()
                                 .cursor_pointer()
@@ -739,6 +746,7 @@ impl ReviewScreen {
                                     vv.v.id
                                 )))
                                 .label("Viewed")
+                                .small()
                                 .checked(viewed)
                                 .on_click(cx.listener(
                                     move |this, checked: &bool, _, cx| {
@@ -1008,8 +1016,11 @@ impl ReviewScreen {
                                     div()
                                         .text_label()
                                         .fg_muted()
-                                        .line_clamp(2)
-                                        .child(n.detail.clone()),
+                                        .child(ui::Clamped::new(
+                                            SharedString::from(format!("next-{}", n.name)),
+                                            n.detail.clone(),
+                                            2,
+                                        )),
                                 )
                             }),
                     )
@@ -1058,10 +1069,29 @@ fn plain_teaser(md: &str) -> String {
     md.lines()
         .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>']).trim())
         .filter(|l| !l.is_empty())
-        .map(|l| l.replace("**", "").replace('`', ""))
+        .map(|l| clip_words(&l.replace("**", "").replace('`', ""), TEASER_WORD_MAX))
         .collect::<Vec<_>>()
         .join(" · ")
 }
+
+/// Longest word a teaser shows whole. Text only wraps at spaces, so one longer word (a
+/// path, URL or hash) made the clamped teaser render as nothing.
+const TEASER_WORD_MAX: usize = 32;
+
+fn clip_words(s: &str, max: usize) -> String {
+    s.split(' ')
+        .map(|w| {
+            if w.chars().count() > max {
+                let head: String = w.chars().take(max - 1).collect();
+                format!("{head}…")
+            } else {
+                w.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 
 /// A markdown block with a stable id.
 fn markdown_of(id: String, text: &str, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -1101,7 +1131,7 @@ fn input_summary(run: &RunInfo) -> impl IntoElement {
                     .flex_none()
                     .text_label()
                     .fg_muted()
-                    .truncate()
+                    .ellipsis()
                     .child(name),
             )
             .child(
@@ -1110,7 +1140,7 @@ fn input_summary(run: &RunInfo) -> impl IntoElement {
                     .min_w_0()
                     .text_body()
                     .fg_secondary()
-                    .truncate()
+                    .ellipsis()
                     .child(text),
             )
             .when_some(cost, |d, c| {
@@ -1193,4 +1223,17 @@ fn pill(p: &Pill) -> Div {
         .when(!p.detail.is_empty(), |d| {
             d.child(div().fg_muted().child(p.detail.clone()))
         })
+}
+
+#[cfg(test)]
+mod teaser_tests {
+    use super::*;
+
+    #[test]
+    fn long_words_are_clipped() {
+        let t = plain_teaser(&format!("**Swimlanes** see {}", "a".repeat(100)));
+        assert!(t.starts_with("Swimlanes see aaaa"));
+        assert!(t.split(' ').all(|w| w.chars().count() <= TEASER_WORD_MAX));
+        assert!(t.ends_with('…'));
+    }
 }

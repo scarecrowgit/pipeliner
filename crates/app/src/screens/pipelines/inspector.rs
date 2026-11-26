@@ -669,7 +669,7 @@ impl PipelinesScreen {
                         .child(
                             div()
                                 .min_w_0()
-                                .truncate()
+                                .ellipsis()
                                 .text_heading()
                                 .fg()
                                 .child(node.name.clone()),
@@ -1369,7 +1369,7 @@ impl PipelinesScreen {
                                 .id(("pl-conn-go", ix))
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
+                                .ellipsis()
                                 .text_body()
                                 .fg()
                                 .cursor_pointer()

@@ -160,7 +160,7 @@ impl ChatScreen {
                         div()
                             .text_body_strong()
                             .fg()
-                            .truncate()
+                            .ellipsis()
                             .child(r.chat.title.clone()),
                     )
                     .child(
@@ -177,7 +177,7 @@ impl ChatScreen {
                                         .small(),
                                 )
                             })
-                            .child(div().min_w_0().truncate().child(meta.join(" · "))),
+                            .child(div().min_w_0().ellipsis().child(meta.join(" · "))),
                     ),
             )
             .child(if live == Some(Status::Waiting) {

@@ -673,7 +673,7 @@ impl Shell {
                                     ring_el(theme::TEXT_MUTED, px(8.))
                                 }),
                         )
-                        .child(div().flex_1().min_w_0().truncate().child(p.name.clone()))
+                        .child(div().flex_1().min_w_0().ellipsis().child(p.name.clone()))
                         .when(p.waiting > 0, |d| d.child(count_pill(p.waiting)))
                         .on_click(move |_, _, cx| {
                             state::navigate(
@@ -830,11 +830,13 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .justify_between()
+                    .gap_x(theme::S3)
                     .text_label()
                     .fg_muted()
-                    .child(format!("{} running", d.running))
-                    .child(month),
+                    .child(div().flex_none().child(format!("{} running", d.running)))
+                    .child(div().flex_none().child(month)),
             );
 
         div()
@@ -912,7 +914,7 @@ impl Shell {
                             .min_w_0()
                             .text_body()
                             .fg()
-                            .truncate()
+                            .ellipsis()
                             .child(it.title.clone()),
                     )
                     .child(

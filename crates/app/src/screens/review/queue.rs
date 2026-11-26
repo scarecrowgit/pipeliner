@@ -160,7 +160,7 @@ impl ReviewScreen {
                             .gap(theme::S2)
                             .text_mono_sm()
                             .fg_muted()
-                            .child(div().truncate().child(ref_text))
+                            .child(div().ellipsis().child(ref_text))
                             .child(
                                 div()
                                     .flex_none()
@@ -169,7 +169,7 @@ impl ReviewScreen {
                             ),
                     )
                     .child(div().text_body_strong().fg().child(item.kind_line.clone()))
-                    .child(div().text_label().fg_muted().truncate().child(sub)),
+                    .child(div().text_label().fg_muted().ellipsis().child(sub)),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)));
 
@@ -240,7 +240,11 @@ fn also_row(a: &AlsoRow, cx: &mut Context<ReviewScreen>) -> impl IntoElement {
                 .gap(px(2.))
                 .child(div().text_body().fg().child(a.title.clone()))
                 .when(!sub.is_empty(), |d| {
-                    d.child(div().text_label().fg_muted().line_clamp(2).child(sub))
+                    d.child(div().text_label().fg_muted().child(ui::Clamped::new(
+                        SharedString::from(format!("also-sub-{}", a.task_id)),
+                        sub,
+                        2,
+                    )))
                 })
                 .child(
                     div()
@@ -317,8 +321,11 @@ fn decided_row(ix: usize, r: &DecidedRow) -> impl IntoElement {
                 .min_w_0()
                 .text_label()
                 .fg_secondary()
-                .line_clamp(2)
-                .child(r.what.clone()),
+                .child(ui::Clamped::new(
+                    SharedString::from(format!("decided-{}", r.task_id)),
+                    r.what.clone(),
+                    2,
+                )),
         )
         .when(!r.run_ref.is_empty(), |d| {
             d.child(

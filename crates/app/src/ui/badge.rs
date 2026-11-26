@@ -304,8 +304,10 @@ impl StatusPill {
         self
     }
     /// Appended after the label: `"6m"` -> "Waiting for you · 6m".
+    /// Text after the status ("Running · 3m"). Empty text adds nothing (no stray "·").
     pub fn suffix(mut self, s: impl Into<SharedString>) -> Self {
-        self.suffix = Some(s.into());
+        let s: SharedString = s.into();
+        self.suffix = (!s.trim().is_empty()).then_some(s);
         self
     }
 }

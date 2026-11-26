@@ -99,7 +99,7 @@ impl VariantView {
         } else {
             v.title.clone()
         };
-        let body = rest_after_first_line(&v.summary);
+        let body = variant_body(&v.title, &v.summary);
         VariantView {
             title,
             body,
@@ -253,7 +253,7 @@ impl ReviewData {
                 task_id: t.id.clone(),
                 title: t.title.clone(),
                 run_ref: run_ref(t),
-                error: t.error.as_deref().map(first_line).unwrap_or_default(),
+                error: t.error.as_deref().map(error_teaser).unwrap_or_default(),
                 retryable: t.run_id.is_some() && t.node_id.is_some(),
             })
             .collect();
@@ -673,6 +673,30 @@ pub fn open_by_default(sizes: &[usize]) -> Vec<bool> {
         .collect()
 }
 
+/// The summary minus what the title already says: the first line when it *is* the title
+/// (no separate title, or the same text); otherwise all of it.
+fn variant_body(title: &str, summary: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() || first_line(summary).trim() == title {
+        rest_after_first_line(summary)
+    } else {
+        summary.trim().to_string()
+    }
+}
+
+/// An error on one line for a two-line clamp: "cargo build failed (exit 101):" alone says
+/// nothing, the next lines carry the reason.
+pub fn error_teaser(e: &str) -> String {
+    let joined = e
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate(&joined, 240)
+}
+
 pub fn first_line(s: &str) -> String {
     s.lines()
         .map(str::trim)
@@ -781,6 +805,15 @@ mod tests {
     }
 
     #[test]
+    fn error_teaser_keeps_the_reason() {
+        let e = "cargo build failed (exit 101):\n\nerror[E0425]: cannot find value `x`\n  --> src/a.rs:3";
+        assert_eq!(
+            error_teaser(e),
+            "cargo build failed (exit 101): error[E0425]: cannot find value `x` --> src/a.rs:3"
+        );
+    }
+
+    #[test]
     fn big_diffs_open_folded() {
         assert_eq!(open_by_default(&[10, 20]), vec![true, true]);
         // A huge file stays folded; the small one after it still opens.
@@ -791,6 +824,13 @@ mod tests {
         assert_eq!(open, vec![true, true, false, false, false]);
         let drawn: usize = sizes.iter().zip(&open).filter(|(_, o)| **o).map(|(n, _)| n).sum();
         assert!(drawn <= DIFF_OPEN_BUDGET);
+    }
+
+    #[test]
+    fn variant_body_keeps_text_under_its_own_title() {
+        assert_eq!(variant_body("Swimlanes", "One line only."), "One line only.");
+        assert_eq!(variant_body("", "Title\nBody"), "Body");
+        assert_eq!(variant_body("Title", "Title\nBody"), "Body");
     }
 
     #[test]

@@ -61,7 +61,7 @@ impl ChatScreen {
                 .rounded(theme::RADIUS_SM)
                 .text_heading()
                 .fg()
-                .truncate()
+                .ellipsis()
                 .cursor_text()
                 .hover(|s| s.bg(theme::SURFACE_RAISED))
                 .tooltip(|window, cx| {

@@ -56,8 +56,14 @@ has each screen next to its mockup render. One shot takes ~15 s.
 
 Layout rules that the screenshots keep catching:
 
-- Text in a flex row needs `min_w_0()` on itself or its parent, plus `truncate()` or a
+- Text in a flex row needs `min_w_0()` on itself or its parent, plus `ellipsis()` or a
   width, or a long word pushes the row (and the whole column) wider.
+- Cut one line with `ellipsis()` from `theme::TextStyles`, never gpui's `truncate()`: in
+  gpui 0.2.2 it keeps the first, unconstrained measurement, so text is clipped mid-letter
+  with no "…". For several lines use `ui::Clamped::new(id, text, n)`: gpui's
+  `line_clamp(n)` drops the extra lines (and its "…") silently.
+- gpui-component's `Input` sets its height from its size class after your styles; pin it
+  with `min_h`/`max_h` (see `ui::input::field`).
 - Text that should wrap needs a width (`w_full()`/`flex_1()`); words without spaces never
   wrap. Clip or truncate long tokens (paths, URLs, hashes).
 - Never render an unbounded list or diff in full: GPUI re-renders the whole view on every

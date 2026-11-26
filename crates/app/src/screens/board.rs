@@ -148,7 +148,7 @@ impl Render for DragGhost {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
+                            .ellipsis()
                             .text_body_strong()
                             .fg()
                             .child(self.title.clone()),
@@ -627,6 +627,7 @@ impl BoardScreen {
             .child(
                 div()
                     .w(px(260.))
+                    .flex_none()
                     .child(
                         input::field_sm(&self.search).prefix(
                             ui::icon_sized(AppIcon::Search, theme::ICON_SM)
@@ -634,11 +635,13 @@ impl BoardScreen {
                         ),
                     ),
             )
-            .child(select::select_sm(&self.pipeline_select).w(px(190.)))
-            .child(select::select_sm(&self.kind_select).w(px(160.)))
+            .child(div().flex_none().w(px(190.)).child(select::select_sm(&self.pipeline_select)))
+            .child(div().flex_none().w(px(160.)).child(select::select_sm(&self.kind_select)))
+            .child(div().flex_1())
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(2.))
                     .child(time_btn("board-t-today", "Today", TimeFilter::Today, cx))
@@ -728,7 +731,7 @@ impl BoardScreen {
                     .text_mono_sm()
                     .fg_muted()
                     .child(
-                        div().min_w_0().truncate().child(
+                        div().min_w_0().ellipsis().child(
                             c.run_chip
                                 .clone()
                                 .unwrap_or_else(|| SharedString::from(c.kind.label())),
@@ -751,8 +754,11 @@ impl BoardScreen {
                             .min_w_0()
                             .text_body_strong()
                             .fg()
-                            .line_clamp(2)
-                            .child(c.title.clone()),
+                            .child(ui::Clamped::new(
+                                SharedString::from(format!("card-title-{}", c.id)),
+                                c.title.clone(),
+                                2,
+                            )),
                     ),
             )
             .when_some(c.spawn.clone(), |d, s| {
@@ -766,8 +772,11 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .fg_secondary()
-                        .line_clamp(2)
-                        .child(c.summary.clone()),
+                        .child(ui::Clamped::new(
+                            SharedString::from(format!("card-sum-{}", c.id)),
+                            c.summary.clone(),
+                            2,
+                        )),
                 )
             })
             .when_some(c.error.clone(), |d, e| {
@@ -775,8 +784,11 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .text_color(theme::DANGER)
-                        .line_clamp(2)
-                        .child(e),
+                        .child(ui::Clamped::new(
+                            SharedString::from(format!("card-err-{}", c.id)),
+                            e,
+                            2,
+                        )),
                 )
             })
             // Footer: status, actor · model, cost.
@@ -798,7 +810,7 @@ impl BoardScreen {
                             .text_color(status_color)
                             .child(status_text(c.status, c.held)),
                     )
-                    .child(div().flex_1().min_w_0().truncate().child(
+                    .child(div().flex_1().min_w_0().ellipsis().child(
                         match (c.actor.is_empty(), c.model.is_empty()) {
                             (false, false) => format!("· {} · {}", c.actor, c.model),
                             (false, true) => format!("· {}", c.actor),
