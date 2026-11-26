@@ -66,6 +66,7 @@ app_icons! {
     Image => "image",
     Inbox => "inbox",
     Info => "info",
+    Link => "link",
     Loader => "loader",
     Lock => "lock",
     Pause => "pause",

@@ -15,11 +15,13 @@ use gpui_component::select::SelectState;
 use gpui_component::tooltip::Tooltip;
 use harness_core::config::Price;
 use harness_core::config::Provider;
-use harness_core::skills::Skill;
 use harness_engine::update::UpdateStatus;
 use harness_engine::{templates, update};
 
 use super::prelude::*;
+#[path = "settings_skills.rs"]
+mod skills_ui;
+use skills_ui::SkillsUi;
 use crate::ui::input::{self, InputEvent};
 use crate::ui::select::{self as sel, Options, SelectEvent, SelectOption};
 
@@ -32,6 +34,7 @@ type Errors = HashMap<String, String>;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
     Models,
+    Skills,
     Rules,
     Budgets,
     Execution,
@@ -40,8 +43,9 @@ enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
         Section::Models,
+        Section::Skills,
         Section::Rules,
         Section::Budgets,
         Section::Execution,
@@ -52,6 +56,7 @@ impl Section {
     fn label(self) -> &'static str {
         match self {
             Section::Models => "Models & providers",
+            Section::Skills => "Skills",
             Section::Rules => "Workspace rules",
             Section::Budgets => "Budgets",
             Section::Execution => "Execution",
@@ -62,6 +67,7 @@ impl Section {
     fn icon(self) -> AppIcon {
         match self {
             Section::Models => AppIcon::Bot,
+            Section::Skills => AppIcon::Sparkles,
             Section::Rules => AppIcon::File,
             Section::Budgets => AppIcon::Activity,
             Section::Execution => AppIcon::Terminal,
@@ -439,7 +445,7 @@ pub struct SettingsScreen {
     form: Form,
     section: Section,
     tests: HashMap<String, TestState>,
-    skills: Vec<Skill>,
+    sk: SkillsUi,
     upd: UpdateUi,
     detected_repo: String,
     v1_available: bool,
@@ -454,7 +460,7 @@ impl SettingsScreen {
             if let AppEvent::StoreChanged { changes, .. } = ev {
                 if changes
                     .iter()
-                    .any(|c| matches!(c, Change::Config | Change::External))
+                    .any(|c| matches!(c, Change::Config | Change::Skills | Change::External))
                 {
                     this.config_changed(window, cx);
                 }
@@ -477,9 +483,15 @@ impl SettingsScreen {
             saved,
             errors: Errors::new(),
             form,
-            section: Section::Models,
+            section: if std::env::var("PIPELINER_ROUTE")
+                .is_ok_and(|r| r.eq_ignore_ascii_case("settings:skills"))
+            {
+                Section::Skills
+            } else {
+                Section::Models
+            },
             tests: HashMap::new(),
-            skills: vec![],
+            sk: SkillsUi::new(window, cx),
             upd: UpdateUi::default(),
             detected_repo,
             v1_available,
@@ -603,6 +615,8 @@ impl SettingsScreen {
     }
 
     fn config_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Skills and staged sets change without the config changing.
+        self.load_skills(cx);
         let new = state::engine(cx).config();
         if new == self.saved {
             return;
@@ -618,7 +632,6 @@ impl SettingsScreen {
             self.saved = new;
             self.recompute(cx);
         }
-        self.load_skills(cx);
     }
 
     fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -783,19 +796,6 @@ impl SettingsScreen {
     }
 
     // ---- execution / prices ---------------------------------------------------------
-
-    fn load_skills(&mut self, cx: &mut Context<Self>) {
-        let engine = state::engine(cx);
-        let job = cx.background_spawn(async move { engine.skills() });
-        cx.spawn(async move |this, cx| {
-            let skills = job.await;
-            let _ = this.update(cx, |this, cx| {
-                this.skills = skills;
-                cx.notify();
-            });
-        })
-        .detach();
-    }
 
     /// Lets the user pick a skills folder with the native directory dialog, then saves it.
     /// If the dialog is unavailable, falls back to an empty, focused full-width input row.
@@ -1131,12 +1131,22 @@ impl Render for SettingsScreen {
                             .hover(|s| s.bg(theme::SURFACE_RAISED).text_color(theme::TEXT))
                     })
                     .child(icon_sized(s.icon(), theme::ICON_SM))
-                    .child(s.label())
+                    .child(div().flex_1().min_w_0().ellipsis().child(s.label()))
+                    .when(s == Section::Skills && !self.sk.rows.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .text_label()
+                                .fg_muted()
+                                .child(self.sk.rows.len().to_string()),
+                        )
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| this.select_section(s, cx)))
             }));
 
         let content = match self.section {
             Section::Models => self.render_models(cx).into_any_element(),
+            Section::Skills => self.render_skills(cx).into_any_element(),
             Section::Rules => self.render_rules(cx).into_any_element(),
             Section::Budgets => self.render_budgets(cx).into_any_element(),
             Section::Execution => self.render_execution(cx).into_any_element(),
@@ -1558,29 +1568,8 @@ impl SettingsScreen {
 
     // ---- Execution --------------------------------------------------------------------
 
-    fn render_execution(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_execution(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let f = &self.form;
-        let dir_rows = f.skill_dirs.iter().map(|(uid, e)| {
-            let uid = *uid;
-            div()
-                .flex()
-                .items_center()
-                .gap(theme::S2)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(block_plain(input::field_sm(e), None)),
-                )
-                .child(
-                    IconButton::new(("dir-del", uid), AppIcon::X)
-                        .small()
-                        .tooltip("Remove folder")
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.remove_skill_dir(uid, cx)),
-                        ),
-                )
-        });
         let run = card()
             .gap(theme::S4)
             .child(SectionHeader::new("Execution").icon(AppIcon::Terminal))
@@ -1598,58 +1587,7 @@ impl SettingsScreen {
             ))
             .child(hint("Placeholders: {in} input HTML file, {out} output PNG, {w} width, {h} height. Empty uses chromium from PATH, else nix-shell -p chromium."));
 
-        let skills = card()
-            .gap(theme::S3)
-            .child(
-                SectionHeader::new("Skills")
-                    .icon(AppIcon::Sparkles)
-                    .meta(format!("{} found", self.skills.len()))
-                    .child(
-                        Button::new("dir-add", "Add folder")
-                            .small()
-                            .icon(AppIcon::Plus)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.add_skill_dir(window, cx)),
-                            ),
-                    ),
-            )
-            .child(hint(
-                "Folders with <name>/SKILL.md. Earlier folders win on name clashes.",
-            ))
-            .children(dir_rows)
-            .child(divider())
-            .when(self.skills.is_empty(), |d| {
-                d.child(hint("No skills found in the saved folders."))
-            })
-            .children(self.skills.iter().map(|s| {
-                div()
-                    .flex()
-                    .items_baseline()
-                    .gap(theme::S3)
-                    .child(
-                        div()
-                            .w(px(180.))
-                            .flex_none()
-                            .text_mono()
-                            .ellipsis()
-                            .child(s.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_label()
-                            .fg_muted()
-                            .ellipsis()
-                            .child(s.description.clone()),
-                    )
-            }));
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme::S4)
-            .child(run)
-            .child(skills)
+        run
     }
 
     // ---- Prices -------------------------------------------------------------------------

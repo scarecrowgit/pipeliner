@@ -42,6 +42,8 @@ pub enum Change {
     /// Another process wrote to the database: re-query everything.
     External,
     Config,
+    /// Skills were staged, installed or discarded.
+    Skills,
 }
 
 pub struct Store {

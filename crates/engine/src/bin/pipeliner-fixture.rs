@@ -47,6 +47,8 @@ fn main() -> Result<()> {
     }
     std::fs::create_dir_all(&data)?;
     std::fs::create_dir_all(&conf)?;
+    // Absolute, so the skill folders below don't depend on the working directory.
+    let (data, conf) = (data.canonicalize()?, conf.canonicalize()?);
     // Everything below (Config::save, paths) resolves against these.
     std::env::set_var("PIPELINER_DATA_DIR", &data);
     std::env::set_var("PIPELINER_CONFIG_DIR", &conf);
@@ -63,13 +65,16 @@ fast_model = "local/claude-haiku-test"
 daily_budget_usd = 40.0
 monthly_budget_usd = 600.0
 self_repo = "{}"
+skill_dirs = ["{}", "{}"]
 
 [[providers]]
 id = "local"
 kind = "openai"
 base_url = "http://127.0.0.1:9/v1"
 "#,
-            repo.display()
+            repo.display(),
+            conf.join("skills").display(),
+            data.parent().unwrap_or(&data).join("home-skills").display()
         ),
     )?;
     let config = Config::load();
@@ -97,6 +102,7 @@ base_url = "http://127.0.0.1:9/v1"
     f.pick_run()?;
     f.pr_run()?;
     f.chat()?;
+    skills_fixture(&store, &conf, &data, &f.routes)?;
 
     std::fs::write(dir.join("routes.json"), serde_json::to_string_pretty(&f.routes)?)?;
     println!("{}", serde_json::to_string_pretty(&f.routes)?);
@@ -454,6 +460,170 @@ impl Fixture {
         }
         Ok(())
     }
+}
+
+/// Installed skills in the fixture's own folders (the user's real ones are never read),
+/// agents using some of them, and two staged sets waiting for review.
+fn skills_fixture(
+    store: &Arc<Store>,
+    conf: &std::path::Path,
+    data: &std::path::Path,
+    routes: &BTreeMap<String, String>,
+) -> Result<()> {
+    use harness_core::skills::{self, Provenance, SourceKind};
+    let mine = conf.join("skills");
+    let home = data.parent().unwrap_or(data).join("home-skills");
+    let write = |dir: &std::path::Path, name: &str, desc: &str, prov: Option<Provenance>| -> Result<()> {
+        let d = dir.join(name);
+        std::fs::create_dir_all(&d)?;
+        std::fs::write(
+            d.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {desc}\n---\n\nFollow the {name} conventions.\n"),
+        )?;
+        if let Some(p) = prov {
+            std::fs::write(d.join(skills::PROVENANCE_FILE), serde_json::to_string_pretty(&p)?)?;
+        }
+        Ok(())
+    };
+    let prov = |source: &str, kind, label: &str, commit: Option<&str>, mins: i64, chat: Option<&str>, actor: Option<&str>| Provenance {
+        source: source.into(),
+        kind,
+        label: label.into(),
+        commit: commit.map(String::from),
+        installed_at: ago(mins),
+        chat_title: chat.map(String::from),
+        actor: actor.map(String::from),
+    };
+    write(&mine, "code-review", "Review a diff for bugs, risky changes and missing tests before it goes to a human.", None)?;
+    write(
+        &mine,
+        "brand-voice",
+        "Write in the house voice: plain words, short sentences, no exclamation marks, no hype, and always spell out what the reader should do next. Use it for release notes, emails to customers, docs intros and anything else a customer reads, and never for internal commit messages.",
+        None,
+    )?;
+    write(
+        &mine,
+        "git-conventions",
+        "Branch names, commit messages and PR descriptions the way this team writes them.",
+        Some(prov(
+            "https://github.com/acme/team-skills/tree/main/git-conventions",
+            SourceKind::Link,
+            "acme/team-skills/git-conventions",
+            Some("b41d7e0"),
+            60 * 24 * 12,
+            None,
+            None,
+        )),
+    )?;
+    write(
+        &home,
+        "sql-style",
+        "Форматирование SQL: ключевые слова в верхнем регистре, один JOIN на строку, CTE вместо вложенных подзапросов.",
+        Some(prov(
+            "npx skills add dbt-labs/sql-style",
+            SourceKind::Command,
+            "npx skills add dbt-labs/sql-style",
+            None,
+            60 * 24 * 5,
+            None,
+            None,
+        )),
+    )?;
+    write(
+        &home,
+        "web-research",
+        "Search the web, read the sources and report what is known, with links.",
+        Some(prov(
+            "https://github.com/acme/agent-skills/tree/main/research",
+            SourceKind::Link,
+            "acme/agent-skills/research",
+            Some("3f9c2a1"),
+            60 * 30,
+            Some("Settings feels crowded — can we split it into tabs and keep keyboard navigation?"),
+            Some("Orchestrator"),
+        )),
+    )?;
+    write(&home, "changelog", "Keep CHANGELOG.md in the Keep a Changelog format.", None)?;
+
+    // Agents use some of them.
+    let agents = store.agents();
+    for (i, a) in agents.iter().take(4).enumerate() {
+        let mut a = a.clone();
+        match i {
+            0 => {
+                a.skills = vec!["code-review".into(), "git-conventions".into()];
+                a.skills_on_demand = vec!["web-research".into()];
+            }
+            1 => a.skills_on_demand = vec!["code-review".into(), "sql-style".into(), "brand-voice".into()],
+            2 => a.skills = vec!["brand-voice".into()],
+            _ => a.skills_on_demand = vec!["changelog".into()],
+        }
+        store.put_agent(&a)?;
+    }
+
+    // Staged: a link, with one name that clashes with an installed skill.
+    let config = Config::load();
+    let stage = |source: &str,
+                 kind: SourceKind,
+                 label: &str,
+                 commit: Option<&str>,
+                 files: &[(&str, &str, &str)],
+                 extra: &[(&str, &str)],
+                 mins: i64|
+     -> Result<skills::StagedSet> {
+        let (id, src) = skills::begin_staging()?;
+        for (name, desc, _) in files {
+            let d = src.join(name);
+            std::fs::create_dir_all(&d)?;
+            std::fs::write(d.join("SKILL.md"), format!("---\nname: {name}\ndescription: {desc}\n---\n\nSteps for {name}.\n"))?;
+        }
+        for (path, text) in extra {
+            let p = src.join(path);
+            std::fs::create_dir_all(p.parent().unwrap_or(&src))?;
+            std::fs::write(p, text)?;
+        }
+        let mut set = skills::build_staged(&config, &id, source, kind, label, commit.map(String::from), &src);
+        set.created_at = ago(mins);
+        Ok(set)
+    };
+    let set = stage(
+        "https://github.com/acme/agent-skills/tree/main/documents",
+        SourceKind::Link,
+        "acme/agent-skills/documents",
+        Some("3f9c2a1"),
+        &[
+            ("pdf-tools", "Read, split and fill PDF forms; extract tables to CSV.", ""),
+            ("spreadsheets", "Edit .xlsx and .csv files, keep formulas, write charts.", ""),
+            ("brand-voice", "Acme's voice for documents: formal, second person, no jargon.", ""),
+        ],
+        &[
+            ("spreadsheets/scripts/fill.py", "import sys\nprint(sys.argv)\n"),
+            ("spreadsheets/scripts/chart.sh", "#!/bin/sh\necho chart\n"),
+            ("pdf-tools/forms.md", "# Forms\n"),
+        ],
+        8,
+    )?;
+    skills::save_staged(&set)?;
+
+    // Staged by the Orchestrator in the fixture's chat.
+    let chat_title = routes
+        .get("chat")
+        .and_then(|id| store.chat(id))
+        .map(|c| c.title);
+    let mut set = stage(
+        "npx skills add keep-a-changelog/skill",
+        SourceKind::Command,
+        "npx skills add keep-a-changelog/skill",
+        None,
+        &[("release-notes", "Turn merged PRs into release notes grouped by area.", "")],
+        &[],
+        70,
+    )?;
+    set.actor = Some("Orchestrator".into());
+    set.chat_id = routes.get("chat").cloned();
+    set.chat_title = chat_title;
+    skills::save_staged(&set)?;
+    Ok(())
 }
 
 fn kind_of(run: &Run, node: &str) -> TaskKind {

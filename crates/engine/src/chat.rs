@@ -345,6 +345,11 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
                 parameters: json!({"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}}},"required":["steps"]}),
             });
             extra.push(delegate_spec("worker"));
+            extra.push(ToolSpec {
+                name: "stage_skill",
+                description: "Fetch an agent skill for the user to review: pass a GitHub repo/folder link, a SKILL.md link, a .zip link or an install command (e.g. `npx skills add owner/repo`). Nothing is installed; the user installs from Settings › Skills. Returns the skills found or the error.".into(),
+                parameters: json!({"type":"object","properties":{"source":{"type":"string"}},"required":["source"]}),
+            });
             max_steps = 80;
         }
     }
@@ -368,6 +373,7 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let mut handler = |run: &AgentRun, call: &llm::Call, args: &Value| -> Option<Handled> {
         match call.name.as_str() {
             "propose_plan" => Some(propose_plan(run, args)),
+            "stage_skill" => Some(stage_skill(run, args)),
             "delegate" => Some(delegate(
                 run,
                 args,
@@ -395,11 +401,48 @@ pub fn shell_for(cwd: Option<&std::path::Path>) -> String {
 const ORCHESTRATOR_ROLE: &str = "You are an orchestrator. First understand the request (read files if a folder is attached), \
 then call propose_plan with short concrete steps and wait for approval. After approval, hand each step to a worker with \
 `delegate` (exact files, change, acceptance criteria), review their reports, and send follow-ups until done. \
-Finish with a short summary of what changed and what is left.";
+Finish with a short summary of what changed and what is left. \
+If the user only wants an agent skill, don't plan: find a candidate (GitHub link, SKILL.md link, .zip or an install \
+command) and call stage_skill with it; the user reviews it in Settings › Skills.";
 
 pub const DELEGATE_ROLE: &str = "You do one focused task given by an orchestrator. Read the relevant code first, make focused \
 changes in the existing style (edit_file for small edits), check your work (build/test as the project instructions say), \
 and reply with a short report: what you changed (files), how you checked it, anything left. Do not commit.";
+
+/// Orchestrator tool: stages skills from a link or command for the user to review.
+fn stage_skill(run: &AgentRun, args: &Value) -> Handled {
+    let Some(source) = args["source"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Handled::Continue("Error: source is empty".into());
+    };
+    let origin = crate::skill_install::Origin {
+        chat_id: Some(run.thread_id.clone()),
+        chat_title: run.engine.store().chat(&run.thread_id).map(|c| c.title),
+        actor: Some("Orchestrator".into()),
+    };
+    Handled::Continue(match run.engine.stage_skill_from(source, Some(&origin)) {
+        Ok(set) => {
+            let list: Vec<String> = set
+                .skills
+                .iter()
+                .map(|s| match &s.clash {
+                    Some(_) => format!("{} (already installed)", s.name),
+                    None => s.name.clone(),
+                })
+                .collect();
+            format!(
+                "Staged {} skill(s) from {}: {}. The user reviews and installs them in Settings › Skills.",
+                set.skills.len(),
+                set.label,
+                list.join(", ")
+            )
+        }
+        Err(e) => format!("Error: {e:#}"),
+    })
+}
 
 fn propose_plan(run: &AgentRun, args: &Value) -> Handled {
     let store = run.engine.store();

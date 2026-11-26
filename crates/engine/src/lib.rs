@@ -10,6 +10,7 @@ pub mod llm;
 pub mod pipeline;
 pub mod prompt;
 pub mod render;
+pub mod skill_install;
 pub mod tasks;
 pub mod templates;
 pub mod tools;
@@ -210,6 +211,125 @@ impl Engine {
 
     pub fn skills(&self) -> Vec<harness_core::skills::Skill> {
         harness_core::skills::list(&self.config())
+    }
+
+    // ---- installing skills ---------------------------------------------------
+    // Blocking: call from a background task. Views refresh on `Change::Skills`.
+
+    /// Fetches skills from a link or runs an install command (words: use
+    /// [`Engine::ask_agent_for_skill`]) into the staging area. Nothing is installed.
+    pub fn stage_skill(&self, input: &str) -> Result<skills::StagedSet> {
+        self.stage_skill_from(input, None)
+    }
+
+    /// Like [`Engine::stage_skill`], recording who asked (agents pass the chat).
+    pub fn stage_skill_from(
+        &self,
+        input: &str,
+        origin: Option<&skill_install::Origin>,
+    ) -> Result<skills::StagedSet> {
+        let config = self.config();
+        let set = match skills::classify(input) {
+            (skills::SourceKind::Link, _) => skill_install::stage_link(&config, input, origin),
+            (skills::SourceKind::Command, _) => {
+                skill_install::stage_command(&config, input, origin)
+            }
+            (skills::SourceKind::Words, _) => {
+                bail!("That is a request, not a link or a command: ask an agent to find the skill instead")
+            }
+        }?;
+        let by = set
+            .actor
+            .as_deref()
+            .map(|a| format!(" (staged by {a})"))
+            .unwrap_or_default();
+        self.store.log(
+            "skill.staged",
+            None,
+            None,
+            format!(
+                "{} skill{} from {} waiting for review{by}",
+                set.skills.len(),
+                if set.skills.len() == 1 { "" } else { "s" },
+                set.label
+            ),
+        );
+        self.store.emit(Change::Skills);
+        Ok(set)
+    }
+
+    /// Staged skill sets waiting for review, newest first.
+    pub fn staged_skills(&self) -> Vec<skills::StagedSet> {
+        skills::staged(&self.config())
+    }
+
+    /// Installs the picked skills of a staged set into `into` (see
+    /// `harness_core::skills::install_staged`), then drops the staged set.
+    pub fn install_skills(
+        &self,
+        id: &str,
+        picks: &[(String, skills::Clash)],
+        into: &std::path::Path,
+    ) -> Result<Vec<std::path::PathBuf>> {
+        let config = self.config();
+        let label = skills::staged_set(&config, id)
+            .map(|s| s.label)
+            .unwrap_or_default();
+        let out = skills::install_staged(&config, id, picks, into)?;
+        let names: Vec<String> = out
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+        self.store.log(
+            "skill.installed",
+            None,
+            None,
+            if names.is_empty() {
+                format!("Nothing installed from {label}")
+            } else {
+                format!("Installed {} from {label}", names.join(", "))
+            },
+        );
+        self.store.emit(Change::Skills);
+        Ok(out)
+    }
+
+    /// Throws a staged set away.
+    pub fn discard_staged(&self, id: &str) -> Result<()> {
+        let label = skills::staged_set(&self.config(), id).map(|s| s.label);
+        skills::discard_staged(id)?;
+        if let Some(label) = label {
+            self.store.log(
+                "skill.discarded",
+                None,
+                None,
+                format!("Discarded staged skills from {label}"),
+            );
+        }
+        self.store.emit(Change::Skills);
+        Ok(())
+    }
+
+    /// Opens an Orchestrator chat that looks for a skill matching `text` and stages
+    /// what it finds. Returns the chat id.
+    pub fn ask_agent_for_skill(&self, text: &str) -> Result<Id> {
+        let text = text.trim();
+        if text.is_empty() {
+            bail!("say what kind of skill you need");
+        }
+        let mut chat = self.new_chat(ChatMode::Orchestrator)?;
+        let short: String = text.chars().take(50).collect();
+        chat.title = format!("Skill: {short}");
+        self.store.put_chat(&chat)?;
+        self.send(
+            &chat.id,
+            &format!(
+                "Find an agent skill for: {text}. When you have a candidate (a GitHub link, SKILL.md link, \
+.zip or an install command such as `npx skills add owner/repo`), call stage_skill with it. \
+The user reviews and installs staged skills in Settings › Skills; nothing installs before that."
+            ),
+        )?;
+        Ok(chat.id)
     }
 
     // ---- chats ---------------------------------------------------------------
