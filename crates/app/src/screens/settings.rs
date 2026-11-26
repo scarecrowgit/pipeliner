@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use gpui::{Animation, AnimationExt as _, ClipboardItem};
+use gpui::{Animation, AnimationExt as _, ClipboardItem, PathPromptOptions};
 use gpui_component::input::InputState;
 use gpui_component::select::SelectState;
 use gpui_component::tooltip::Tooltip;
@@ -797,16 +797,79 @@ impl SettingsScreen {
         .detach();
     }
 
+    /// Lets the user pick a skills folder with the native directory dialog, then saves it.
+    /// If the dialog is unavailable, falls back to an empty, focused full-width input row.
     fn add_skill_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let uid = self.form.uid();
-        let e = make_input(&mut self.form._subs, "~/skills", "", false, window, cx);
-        self.form.skill_dirs.push((uid, e));
-        self.recompute(cx);
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add skills folder".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let paths = match picked.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => return, // cancelled
+                _ => vec![],            // dialog failed or is unavailable: type the path instead
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let path = paths
+                    .first()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let uid = this.form.uid();
+                let e = make_input(
+                    &mut this.form._subs,
+                    "~/skills",
+                    path.clone(),
+                    false,
+                    window,
+                    cx,
+                );
+                this.form.skill_dirs.push((uid, e.clone()));
+                this.recompute(cx);
+                if path.is_empty() {
+                    e.update(cx, |s, cx| s.focus(window, cx));
+                } else {
+                    this.save_skill_dirs(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn remove_skill_dir(&mut self, uid: usize, cx: &mut Context<Self>) {
         self.form.skill_dirs.retain(|(u, _)| *u != uid);
         self.recompute(cx);
+        self.save_skill_dirs(cx);
+    }
+
+    /// Saves only the skill folders (other unsaved edits stay in the draft), then rescans.
+    /// Empty rows are dropped by `collect`; repeats are ignored.
+    fn save_skill_dirs(&mut self, cx: &mut Context<Self>) {
+        let mut dirs: Vec<String> = vec![];
+        for d in &self.draft.skill_dirs {
+            if !dirs.contains(d) {
+                dirs.push(d.clone());
+            }
+        }
+        if dirs == self.saved.skill_dirs {
+            return;
+        }
+        let mut cfg = self.saved.clone();
+        cfg.skill_dirs = dirs;
+        let job = state::run_engine(cx, move |e| e.set_config(cfg));
+        cx.spawn(async move |this, cx| {
+            let ok = job.await.is_some();
+            let _ = this.update(cx, |this, cx| {
+                if ok {
+                    this.load_skills(cx);
+                    state::toast(ToastKind::Success, "Skill folders saved", cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn add_price(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1503,7 +1566,12 @@ impl SettingsScreen {
                 .flex()
                 .items_center()
                 .gap(theme::S2)
-                .child(div().flex_1().min_w_0().child(input::field_sm(e)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(block_plain(input::field_sm(e), None)),
+                )
                 .child(
                     IconButton::new(("dir-del", uid), AppIcon::X)
                         .small()

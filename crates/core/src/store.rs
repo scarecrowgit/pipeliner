@@ -414,6 +414,36 @@ impl Store {
     pub fn runs(&self) -> Vec<Run> {
         self.all()
     }
+    /// Deletes a run and everything that belongs to it: its tasks, their threads,
+    /// variants and decisions, artifacts, chat cards pointing at it and its event log.
+    /// Worktrees and branches on disk are the caller's business.
+    pub fn delete_run(&self, run_id: &str) -> Result<()> {
+        {
+            let mut c = self.conn.lock();
+            let tx = c.transaction()?;
+            let tasks = "SELECT id FROM docs WHERE kind='task' AND parent=?1";
+            tx.execute(
+                &format!("DELETE FROM docs WHERE kind IN ('message','variant','decision') AND parent IN ({tasks})"),
+                params![run_id],
+            )?;
+            tx.execute(
+                "DELETE FROM docs WHERE kind='message' AND json_extract(data,'$.card.run_id')=?1",
+                params![run_id],
+            )?;
+            tx.execute(
+                "DELETE FROM docs WHERE kind IN ('task','artifact') AND parent=?1",
+                params![run_id],
+            )?;
+            tx.execute(
+                "DELETE FROM docs WHERE kind='run' AND id=?1",
+                params![run_id],
+            )?;
+            tx.execute("DELETE FROM events WHERE run_id=?1", params![run_id])?;
+            tx.commit()?;
+        }
+        self.notify(Change::Run(run_id.into()));
+        Ok(())
+    }
     pub fn runs_for_pipeline(&self, pipeline_id: &str) -> Vec<Run> {
         self.by_parent(pipeline_id)
     }
@@ -625,5 +655,38 @@ mod tests {
         assert_eq!(s.next_number("run"), 2);
         s.log("test", None, None, "hello");
         assert_eq!(s.events(10)[0].text, "hello");
+    }
+
+    #[test]
+    fn delete_run_removes_only_that_run() {
+        let s = Store::open_in_memory().unwrap();
+        let task = |run: &str| {
+            let mut t = Task::new(TaskKind::Agent, "x");
+            t.run_id = Some(run.into());
+            s.put_task(&t).unwrap();
+            t
+        };
+        let (a, b) = (task("r1"), task("r2"));
+        s.put_message(&Message::new(&a.id, Role::Assistant, "a"))
+            .unwrap();
+        s.put_message(&Message::new(&b.id, Role::Assistant, "b"))
+            .unwrap();
+        let mut card = Message::new("chat1", Role::System, "Started run");
+        card.card = Some(Card::Run {
+            run_id: "r1".into(),
+        });
+        s.put_message(&card).unwrap();
+        s.log("run.started", Some("r1"), None, "one");
+        s.log("run.started", Some("r2"), None, "two");
+
+        s.delete_run("r1").unwrap();
+
+        assert!(s.tasks_for_run("r1").is_empty());
+        assert!(s.messages(&a.id).is_empty());
+        assert!(s.messages("chat1").is_empty());
+        assert_eq!(s.tasks_for_run("r2").len(), 1);
+        assert_eq!(s.messages(&b.id).len(), 1);
+        let ev: Vec<String> = s.events(10).into_iter().map(|e| e.text).collect();
+        assert_eq!(ev, vec!["two".to_string()]);
     }
 }
