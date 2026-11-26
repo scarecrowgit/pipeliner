@@ -496,6 +496,28 @@ tbody tr:hover{background:var(--surface-raised)}
 ></path
 ></svg>Save as v8</button
 ></header
+><form aria-label="Create an agent with AI" style="display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; box-sizing: border-box; border-bottom: 1px solid var(--line);"
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"
+><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon" style="color: var(--accent-text);"
+><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
+></path
+></svg
+><label for="ag-ai" class="head" style="font-size: 15px;">Create an agent with AI</label
+><span class="lbl">describe what it should do; AI writes the name, role prompt, tools and model as a new draft you review before saving</span
+></div
+><textarea id="ag-ai" rows="3" class="field" placeholder="Describe the agent you want…" style="height: auto; padding: 10px 12px; resize: vertical; font-size: 14px; line-height: 22px;">Reads CI logs for a failed run and says which test broke and why. Never edits code; returns the failing test, the error line and a one-paragraph guess at the cause.</textarea
+><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;"
+><span class="lbl">Uses the workspace model · nothing is saved until you press Save</span
+><div style="flex: 1 1 0%;"
+></div
+><button type="button" class="gr-btn gr-btn--ghost">New blank agent</button
+><button type="submit" class="gr-btn gr-btn--primary"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
+></path
+></svg>Create with AI</button
+></div
+></form
 ><div style="flex: 1 1 0%; display: flex; flex-wrap: wrap; min-height: 0px;"
 ><nav aria-label="Agent library" style="flex: 1 1 260px; min-width: 0px; padding: 16px 12px; box-sizing: border-box; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px;"
 ><div style="display: flex; gap: 8px; margin-bottom: 8px;"
@@ -730,14 +752,6 @@ tbody tr:hover{background:var(--surface-raised)}
 ></button
 ></div
 ><div style="padding: 24px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;"
-><form aria-label="Create an agent with AI" style="display: flex; gap: 8px; align-items: center;"
-><input id="ag-ai" aria-label="Describe an agent for AI to fill in" class="field" placeholder="Describe an agent and AI fills the fields below…" value="Reads CI logs for a failed run and says which test broke and why" style="flex: 1 1 0%; min-width: 0px;"
-><button type="submit" class="gr-btn gr-btn--secondary"
-><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
-><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"
-></path
-></svg>Fill with AI</button
-></form
 ><div style="display: flex; flex-wrap: wrap; gap: 16px;"
 ><div class="fgroup" style="flex: 1 1 180px;"
 ><label for="ag-name" class="lbl">Name</label
