@@ -38,6 +38,34 @@ crate names and break each other's builds. Never install or replace the app bina
 (`~/.local/share/pipeliner/bin/pipeliner` is what the user runs). Don't run the GUI from an agent;
 check logic with tests or the CLI (`cargo run -p harness-engine --bin pipeliner-cli -- help`).
 
+## Look at what you changed
+
+Tests don't see layout. After any UI change, take screenshots of the real app and look at
+them (and include what you saw in your report):
+
+```sh
+scripts/shoot.sh -o /tmp/shots                     # every screen
+scripts/shoot.sh -o /tmp/shots board review:@review_pr
+```
+
+It runs the app headless (a private cage compositor, software Vulkan, grim): no window
+appears on the user's screen and the user's data is never used. The data is a fixture from
+`pipeliner-fixture` with deliberately awkward content: long titles, a 10k-line diff, a
+minified one-line file, unbroken URLs, nested sub-agents, non-Latin text. `<out>/compare/`
+has each screen next to its mockup render. One shot takes ~15 s.
+
+Layout rules that the screenshots keep catching:
+
+- Text in a flex row needs `min_w_0()` on itself or its parent, plus `truncate()` or a
+  width, or a long word pushes the row (and the whole column) wider.
+- Text that should wrap needs a width (`w_full()`/`flex_1()`); words without spaces never
+  wrap. Clip or truncate long tokens (paths, URLs, hashes).
+- Never render an unbounded list or diff in full: GPUI re-renders the whole view on every
+  animation frame. Fold, paginate or virtualize (`uniform_list`/`list`) past a few hundred
+  rows.
+- Fixed-width inputs and stat tiles must not shrink below their content; give them
+  `flex_none()` or a `min_w`.
+
 ## Rules
 
 - No mock or sample data in the app. Every view reads the Store; when there is nothing, show an
