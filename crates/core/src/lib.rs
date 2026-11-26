@@ -2,6 +2,7 @@
 //! No UI and no network code lives here.
 
 pub mod config;
+pub mod image;
 pub mod model;
 pub mod paths;
 pub mod skills;

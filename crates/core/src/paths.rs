@@ -37,3 +37,8 @@ pub fn renders_dir() -> PathBuf {
 pub fn logs_dir() -> PathBuf {
     data_dir().join("logs")
 }
+
+/// Images attached to chat messages.
+pub fn attachments_dir() -> PathBuf {
+    data_dir().join("attachments")
+}
