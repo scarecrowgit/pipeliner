@@ -16,6 +16,8 @@
 # Output: <out>/<route>.png, plus <out>/compare/<route>.png — the app next to the mockup
 # render (design/renders/<screen>.png) when there is one.
 #
+# Tool rows in task threads opened: PIPELINER_EXPAND_TOOLS=1 scripts/shoot.sh ... task:@task_running
+#
 # Options: -b <dir with the pipeliner and pipeliner-fixture binaries> (default: build
 # debug ones with cargo), -s WxH (1440x900), -w seconds to wait before the shot (8).
 set -euo pipefail
@@ -25,7 +27,7 @@ out="" dir="" bin="" size="1440x900" wait_s=8
 while getopts "o:d:b:s:w:h" o; do
   case $o in
     o) out=$OPTARG ;; d) dir=$OPTARG ;; b) bin=$OPTARG ;; s) size=$OPTARG ;; w) wait_s=$OPTARG ;;
-    *) sed -n '2,22p' "$0"; exit 0 ;;
+    *) sed -n '2,24p' "$0"; exit 0 ;;
   esac
 done
 shift $((OPTIND - 1))

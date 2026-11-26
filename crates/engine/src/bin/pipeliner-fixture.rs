@@ -190,6 +190,32 @@ impl Fixture {
         tr.tool_call_id = Some("c1".into());
         tr.created_at = t.created_at + Duration::seconds(21);
         self.store.put_message(&tr)?;
+        // Several files in one read, then a two-part edit (shown as a diff when expanded).
+        let mut b = Message::new(t.id.clone(), Role::Assistant, "");
+        b.author = t.actor.clone();
+        b.tool_calls = vec![
+            ToolCall {
+                id: "c2".into(),
+                name: "read_file".into(),
+                arguments: r#"{"files":[{"path":"crates/app/src/theme.rs","offset":160,"limit":20},{"path":"crates/app/src/ui/badge.rs"}]}"#.into(),
+            },
+            ToolCall {
+                id: "c3".into(),
+                name: "edit_file".into(),
+                arguments: r#"{"path":"crates/app/src/screens/board.rs","edits":[{"old":"        .gap(px(8.))","new":"        .gap(theme::S2)"},{"old":"    .w(px(260.))\n    .child(search)","new":"    .w(px(260.))\n    .flex_none()\n    .child(search)"}]}"#.into(),
+            },
+        ];
+        b.created_at = t.created_at + Duration::seconds(40);
+        self.store.put_message(&b)?;
+        for (id, text, secs) in [
+            ("c2", "==> crates/app/src/theme.rs (lines 160–179) <==\n  160\tpub const S2: Pixels = px(8.);\n", 41),
+            ("c3", "Edited crates/app/src/screens/board.rs: lines 214, 388", 42),
+        ] {
+            let mut r = Message::new(t.id.clone(), Role::Tool, text);
+            r.tool_call_id = Some(id.into());
+            r.created_at = t.created_at + Duration::seconds(secs);
+            self.store.put_message(&r)?;
+        }
         if !summary.is_empty() {
             let mut d = Message::new(t.id.clone(), Role::Assistant, summary);
             d.author = t.actor.clone();

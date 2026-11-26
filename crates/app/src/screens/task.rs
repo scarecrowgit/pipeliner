@@ -627,7 +627,9 @@ impl TaskScreen {
                 result,
                 failed,
             } => {
-                let open = self.expanded.contains(id);
+                // PIPELINER_EXPAND_TOOLS: every tool row open (headless screenshots).
+                let open = self.expanded.contains(id)
+                    || std::env::var_os("PIPELINER_EXPAND_TOOLS").is_some();
                 let pending = result.is_none() && running;
                 let key = id.clone();
                 let accent = if *failed {
