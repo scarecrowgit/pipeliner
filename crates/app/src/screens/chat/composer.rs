@@ -277,7 +277,7 @@ impl ChatScreen {
     }
 
     /// Adds image files (picked or dropped), as many as fit.
-    fn add_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(super) fn add_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let free = self.free_slots();
         if free == 0 {
             Self::warn_full(cx);
@@ -841,21 +841,39 @@ impl ChatScreen {
                                     .bg(theme::ACCENT_GLOW)
                             })
                             .tooltip(|window, cx| Tooltip::new("Add an image").build(window, cx))
-                            .child(icon_sized(AppIcon::Image, theme::ICON_SM))
+                            // Three short lines that fit the 136px tile even with "Ctrl"
+                            // (one line of "Drop or paste Ctrl V" ran past the border).
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap(px(4.))
-                                    .child("Drop or paste")
-                                    .child(kbd(mod_key))
-                                    .child(kbd("V")),
+                                    .max_w_full()
+                                    .child(icon_sized(AppIcon::Image, theme::ICON_SM).flex_none())
+                                    .child(div().min_w_0().ellipsis().child("Drop or paste")),
                             )
                             .child(
                                 div()
-                                    .whitespace_nowrap()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .max_w_full()
+                                    .child(kbd(mod_key))
+                                    .child(kbd("V"))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .ellipsis()
+                                            .text_color(theme::TEXT_DISABLED)
+                                            .child(format!("· {free} more")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .max_w_full()
+                                    .ellipsis()
                                     .text_color(theme::TEXT_DISABLED)
-                                    .child(format!("PNG, JPG, WebP · {free} more")),
+                                    .child("PNG, JPG, WebP"),
                             )
                             .on_click(cx.listener(|this, _, _, cx| this.pick_files(cx))),
                     )
