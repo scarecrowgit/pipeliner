@@ -1,8 +1,6 @@
-//! Image attachments for chat messages: saving, loading for the model, and screenshots.
+//! Image attachments for chat messages: saving and loading for the model.
 
-use std::io::Read as _;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use base64::Engine as _;
@@ -94,112 +92,10 @@ pub fn images_for(attachments: &[Attachment], mut text: String) -> (String, Vec<
     (text, images)
 }
 
-// ---- screenshots -----------------------------------------------------------
-
-const CANCELLED: &str = "Screenshot cancelled";
-
-fn find_tool(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|p| p.is_file())
-}
-
-/// Takes an interactive region screenshot with the first tool available. Blocks until the
-/// user selects a region or cancels, so call it from a background thread.
-pub fn capture_screenshot() -> Result<Attachment> {
-    let dir = paths::attachments_dir();
-    std::fs::create_dir_all(&dir)?;
-    let tmp = dir.join(format!("capture-{}.png", new_id()));
-    let res = capture_to(&tmp);
-    let bytes = match res {
-        Ok(Some(raw)) => raw,
-        Ok(None) => std::fs::read(&tmp).unwrap_or_default(),
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-    };
-    let _ = std::fs::remove_file(&tmp);
-    if bytes.is_empty() {
-        bail!(CANCELLED);
-    }
-    save_bytes(&bytes, Some(&screenshot_name()), false)
-}
-
-fn run_ok(cmd: &mut Command) -> bool {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Runs a capture tool. Returns `Some(bytes)` for tools that print the image to stdout,
-/// `None` when the image was written to `file`.
-fn capture_to(file: &Path) -> Result<Option<Vec<u8>>> {
-    let f = file.to_string_lossy().into_owned();
-    let ok = if cfg!(target_os = "macos") {
-        if find_tool("screencapture").is_none() {
-            bail!(NO_TOOL);
-        }
-        run_ok(Command::new("screencapture").args(["-i", &f]))
-    } else if let (true, Some(_), Some(_)) = (
-        std::env::var_os("WAYLAND_DISPLAY").is_some(),
-        find_tool("grim"),
-        find_tool("slurp"),
-    ) {
-        let out = Command::new("slurp")
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .context("running slurp")?;
-        let geom = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !out.status.success() || geom.is_empty() {
-            bail!(CANCELLED);
-        }
-        run_ok(Command::new("grim").args(["-g", &geom, &f]))
-    } else if find_tool("gnome-screenshot").is_some() {
-        run_ok(Command::new("gnome-screenshot").args(["-a", "-f", &f]))
-    } else if find_tool("spectacle").is_some() {
-        run_ok(Command::new("spectacle").args(["-b", "-n", "-r", "-o", &f]))
-    } else if find_tool("flameshot").is_some() {
-        // `flameshot gui --raw` prints the PNG to stdout.
-        let mut child = Command::new("flameshot")
-            .args(["gui", "--raw"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("running flameshot")?;
-        let mut buf = vec![];
-        if let Some(mut out) = child.stdout.take() {
-            let _ = out.read_to_end(&mut buf);
-        }
-        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-        if !ok {
-            buf.clear();
-        }
-        return Ok(Some(buf));
-    } else if find_tool("scrot").is_some() {
-        run_ok(Command::new("scrot").args(["-s", &f]))
-    } else if find_tool("import").is_some() {
-        run_ok(Command::new("import").arg(&f))
-    } else {
-        bail!(NO_TOOL);
-    };
-    if !ok {
-        bail!(CANCELLED);
-    }
-    Ok(None)
-}
-
-const NO_TOOL: &str = "No screenshot tool found (install grim+slurp, gnome-screenshot, spectacle, flameshot, scrot or ImageMagick)";
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn png(w: u32, h: u32) -> Vec<u8> {
         let mut b = b"\x89PNG\r\n\x1a\n".to_vec();

@@ -262,11 +262,6 @@ impl Engine {
         attachments::discard(path)
     }
 
-    /// Interactive region screenshot. Blocks: call from a background thread.
-    pub fn capture_screenshot(&self) -> Result<Attachment> {
-        attachments::capture_screenshot()
-    }
-
     // ---- runs ----------------------------------------------------------------
 
     /// Starts a pipeline run with `input` (issue text) as its source item.
