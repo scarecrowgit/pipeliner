@@ -482,6 +482,27 @@ impl Store {
     pub fn tasks(&self) -> Vec<Task> {
         self.all()
     }
+    /// A later attempt at the same pipeline step as `t` (same run, node, variant, kind and
+    /// depth), newest first. Set when `t` was retried or the step re-ran after a send-back.
+    pub fn newer_attempt(&self, t: &Task) -> Option<Task> {
+        // Sub-agents of one step are separate tasks, not attempts of each other.
+        if t.kind == TaskKind::Spawned {
+            return None;
+        }
+        let (run, node) = (t.run_id.as_deref()?, t.node_id.as_deref()?);
+        self.tasks_for_run(run)
+            .into_iter()
+            .filter(|o| {
+                o.id != t.id
+                    && o.node_id.as_deref() == Some(node)
+                    && o.variant == t.variant
+                    && o.kind == t.kind
+                    && o.depth == t.depth
+                    && o.created_at > t.created_at
+            })
+            .max_by_key(|o| o.created_at)
+    }
+
     pub fn tasks_for_run(&self, run_id: &str) -> Vec<Task> {
         self.by_parent(run_id)
     }
@@ -655,6 +676,27 @@ mod tests {
         assert_eq!(s.next_number("run"), 2);
         s.log("test", None, None, "hello");
         assert_eq!(s.events(10)[0].text, "hello");
+    }
+
+    #[test]
+    fn newer_attempt_finds_the_retry() {
+        let s = Store::open_in_memory().unwrap();
+        let step = |kind: TaskKind, depth: u32| {
+            let mut t = Task::new(kind, "x");
+            t.run_id = Some("r".into());
+            t.node_id = Some("build".into());
+            t.depth = depth;
+            s.put_task(&t).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            t
+        };
+        let first = step(TaskKind::Agent, 0);
+        let sub1 = step(TaskKind::Spawned, 1);
+        let second = step(TaskKind::Agent, 0);
+        step(TaskKind::Spawned, 1);
+        assert_eq!(s.newer_attempt(&first).unwrap().id, second.id);
+        assert!(s.newer_attempt(&second).is_none());
+        assert!(s.newer_attempt(&sub1).is_none());
     }
 
     #[test]

@@ -294,8 +294,21 @@ impl Engine {
         let (Some(run_id), Some(node_id)) = (t.run_id.clone(), t.node_id.clone()) else {
             bail!("only pipeline steps can be retried");
         };
-        if self.active_runs.lock().contains(&run_id) {
-            bail!("this run is still stopping; try again in a moment");
+        if t.kind == TaskKind::Spawned {
+            bail!("a sub-agent can't be retried on its own; retry the step that spawned it");
+        }
+        if let Some(n) = self.store.newer_attempt(&t) {
+            bail!(
+                "this step already has a newer attempt ({}); open that one instead",
+                n.status.as_str()
+            );
+        }
+        let run = self.store.run(&run_id).context("run not found")?;
+        if run.status == Status::Done {
+            bail!("run #{} has finished; start a new run instead", run.number);
+        }
+        if self.active_runs.lock().contains(&run_id) || run.status == Status::Running {
+            bail!("run #{} is already running", run.number);
         }
         self.store.update_run(&run_id, |r| {
             r.status = Status::Running;

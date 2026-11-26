@@ -240,6 +240,17 @@ fn no_branch_skips_design() {
     assert!(!r.outputs.contains_key("design"));
     assert_eq!(r.outputs["build"].summary, "built it");
     assert!(r.cost_usd > 0.0);
+
+    // A finished run can't be re-driven by retrying one of its steps.
+    let build = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("build"))
+        .unwrap();
+    let err = e.retry(&build.id).unwrap_err().to_string();
+    assert!(err.contains("has finished"), "{err}");
+    assert_eq!(e.store().run(&r.id).unwrap().status, Status::Done);
 }
 
 #[test]

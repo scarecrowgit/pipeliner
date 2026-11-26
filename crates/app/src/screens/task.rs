@@ -81,6 +81,8 @@ struct ThreadData {
     crumbs: Vec<Crumb>,
     parent: Option<Rel>,
     children: Vec<Rel>,
+    /// A later attempt at the same step (this one was retried or re-ran).
+    newer: Option<(Id, Status)>,
 }
 
 pub struct TaskScreen {
@@ -277,7 +279,12 @@ impl TaskScreen {
 
     // ---- rendering ----------------------------------------------------------------
 
-    fn header(&self, t: &CoreTask, cx: &mut Context<Self>) -> PageHeader {
+    fn header(
+        &self,
+        t: &CoreTask,
+        newer: Option<(Id, Status)>,
+        cx: &mut Context<Self>,
+    ) -> PageHeader {
         let back = IconButton::new("task-back", AppIcon::ArrowLeft)
             .tooltip("Back")
             .on_click(|_, _, cx| state::back(cx));
@@ -315,9 +322,27 @@ impl TaskScreen {
                     }),
             );
         }
-        if matches!(t.status, Status::Failed | Status::Cancelled)
+        if let Some((nid, status)) = newer.filter(|_| !t.status.is_active()) {
+            // Retried or re-ran: point at the newer attempt instead of offering Retry.
+            h = h.meta(
+                div()
+                    .text_label()
+                    .fg_muted()
+                    .child("A newer attempt replaced this one"),
+            );
+            h = h.action(
+                Button::new(
+                    "task-newer",
+                    format!("Open newer attempt · {}", status.as_str()),
+                )
+                .primary()
+                .icon_right(AppIcon::ChevronRight)
+                .on_click(move |_, _, cx| state::open_task(nid.clone(), cx)),
+            );
+        } else if matches!(t.status, Status::Failed | Status::Cancelled)
             && t.run_id.is_some()
             && t.node_id.is_some()
+            && t.kind != TaskKind::Spawned
         {
             let tid = id.clone();
             h = h.action(
@@ -325,8 +350,16 @@ impl TaskScreen {
                     .icon(AppIcon::RotateCcw)
                     .on_click(move |_, _, cx| {
                         let tid = tid.clone();
-                        state::run_engine(cx, move |e| e.retry(&tid)).detach();
-                        state::toast(ToastKind::Info, "Retrying the step", cx);
+                        // run_engine shows the engine's reason when it refuses.
+                        let job = state::run_engine(cx, move |e| e.retry(&tid));
+                        cx.spawn(async move |cx| {
+                            if job.await.is_some() {
+                                let _ = cx.update(|cx| {
+                                    state::toast(ToastKind::Info, "Retrying the step", cx)
+                                });
+                            }
+                        })
+                        .detach();
                     }),
             );
         }
@@ -1113,7 +1146,7 @@ impl Render for TaskScreen {
                 )))
                 .into_any_element(),
             Some(t) => {
-                let header = self.header(t, cx);
+                let header = self.header(t, data.newer.clone(), cx);
                 let meta = self.meta_row(t, &data);
                 let stats = self.stats(t, &data);
                 let thread = self.thread(&data, t, window, cx);
@@ -1163,8 +1196,10 @@ fn query(s: &Store, id: &str) -> ThreadData {
             crumbs: vec![],
             parent: None,
             children: vec![],
+            newer: None,
         };
     };
+    let newer = s.newer_attempt(&task).map(|n| (n.id, n.status));
     let thread_id = if task.kind == TaskKind::Chat {
         task.chat_id.clone().unwrap_or_else(|| task.id.clone())
     } else {
@@ -1233,6 +1268,7 @@ fn query(s: &Store, id: &str) -> ThreadData {
         crumbs,
         thread_id,
         task: Some(task),
+        newer,
     }
 }
 
