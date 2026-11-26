@@ -77,11 +77,18 @@ impl Stack {
     }
 }
 
+/// How to work with files; part of every prompt that has a working directory.
+pub const FILE_TOOLS_RULE: &str = "Look at files with read_file (several at once with `files`), \
+find_files and search; change them with edit_file (several changes with `edits`) and write_file. \
+Keep run_command for builds, tests, git and other programs, not for cat, sed, grep, find or \
+heredocs.\n";
+
 /// Describes a working folder and includes its project instructions (AGENTS.md / CLAUDE.md).
 pub fn environment(cwd: Option<&Path>, shell: &str, other_workdirs: &[(String, String)]) -> String {
     let mut s = String::new();
     if let Some(cwd) = cwd {
         s.push_str(&format!("Working directory: {}\n", cwd.display()));
+        s.push_str(FILE_TOOLS_RULE);
         if !shell.is_empty() {
             s.push_str(&format!(
                 "Commands you run with run_command are wrapped as: {shell} '<command>' (so build tools are available).\n"

@@ -41,19 +41,38 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
         return v;
     }
     if ctx.cwd.is_some() {
+        let range = json!({"type":"object","properties":{
+            "path":{"type":"string"},
+            "offset":{"type":"integer","description":"first line, 1-based"},
+            "limit":{"type":"integer","description":"number of lines (default 2000)"}
+        },"required":["path"]});
         v.push(spec(
             "read_file",
-            "Read a text file. Paths are relative to the working directory. Use offset/limit (lines) for big files.",
-            json!({"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}),
+            "Read text files with line numbers. Use this, not cat/sed/head/tail in run_command. \
+             One file: `path` (+ `offset`/`limit` lines). Several files or ranges in one call: `files`.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "offset":{"type":"integer","description":"first line, 1-based"},
+                "limit":{"type":"integer","description":"number of lines (default 2000)"},
+                "files":{"type":"array","items":range,"description":"several files or ranges at once"}
+            }}),
         ));
         v.push(spec(
             "list_dir",
-            "List a directory (default: the working directory). Shows sizes; directories end with /.",
+            "List one directory (default: the working directory). Shows sizes; directories end with /. \
+             For files across folders use find_files.",
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         ));
         v.push(spec(
+            "find_files",
+            "Find files by glob, recursively (`**/*.rs`, `crates/*/src/**/mod.rs`). Skips .git, target \
+             and node_modules. Use this, not find/ls -R in run_command.",
+            json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"folder to search from, default ."}},"required":["pattern"]}),
+        ));
+        v.push(spec(
             "search",
-            "Search file contents with a regular expression (ripgrep/grep). Returns file:line: text.",
+            "Search file contents with a regular expression (ripgrep). Returns file:line: text. \
+             Use this, not grep/rg in run_command.",
             json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"file or folder, default ."},"glob":{"type":"string","description":"e.g. *.rs"}},"required":["pattern"]}),
         ));
     }
@@ -74,20 +93,34 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
     if ctx.cwd.is_some() && matches!(ctx.access, ToolAccess::ReadAndRun | ToolAccess::Full) {
         v.push(spec(
             "run_command",
-            "Run a shell command in the working directory. Returns exit code and output (truncated). Default timeout 600s.",
+            "Run a shell command in the working directory: builds, tests, git, scripts. Returns exit code and \
+             output (truncated). Default timeout 600s. Don't use it to read, find, search or edit files \
+             (cat, sed, grep, find, heredocs): the file tools do that, show in the thread as reads and \
+             edits, and edit_file fails loudly when its text isn't there.",
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ));
     }
     if ctx.cwd.is_some() && ctx.access == ToolAccess::Full {
         v.push(spec(
             "write_file",
-            "Create or overwrite a file with the given content.",
+            "Create or overwrite a file with the given content (no shell quoting involved: use this, not \
+             cat > file <<EOF). For changes to an existing file prefer edit_file.",
             json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         ));
         v.push(spec(
             "edit_file",
-            "Replace an exact snippet in a file. `old` must match exactly once unless replace_all is true. Prefer this for small changes.",
-            json!({"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old","new"]}),
+            "Replace exact text in a file: `old` must match exactly once unless replace_all is true. \
+             Several changes to one file in one call: `edits` (applied in order; nothing is written if any \
+             fails). Use this, not sed -i or scripts in run_command.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "old":{"type":"string"},
+                "new":{"type":"string"},
+                "replace_all":{"type":"boolean"},
+                "edits":{"type":"array","items":{"type":"object","properties":{
+                    "old":{"type":"string"},"new":{"type":"string"},"replace_all":{"type":"boolean"}
+                },"required":["old","new"]}}
+            },"required":["path"]}),
         ));
     }
     v
@@ -138,8 +171,19 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
     };
     match name {
         "read_file" => {
-            let p = resolve(&cwd()?, arg(args, "path")?);
-            read_text(&p, args["offset"].as_u64(), args["limit"].as_u64())
+            let base = cwd()?;
+            match args.get("files").and_then(|f| f.as_array()).filter(|f| !f.is_empty()) {
+                Some(files) => Ok(read_many(&base, files)),
+                None => read_text(
+                    &resolve(&base, arg(args, "path")?),
+                    args["offset"].as_u64(),
+                    args["limit"].as_u64(),
+                ),
+            }
+        }
+        "find_files" => {
+            let base = cwd()?;
+            find_files(&base, arg(args, "pattern")?, args["path"].as_str().unwrap_or("."))
         }
         "list_dir" => {
             let base = cwd()?;
@@ -190,14 +234,20 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
                 bail!("run_command is not allowed for this agent");
             }
             let timeout = args["timeout_secs"].as_u64().unwrap_or(600).clamp(5, 3600);
-            run_command(
+            let command = arg(args, "command")?;
+            let out = run_command(
                 &cwd()?,
                 &ctx.shell,
                 &ctx.env,
-                arg(args, "command")?,
+                command,
                 Duration::from_secs(timeout),
                 &ctx.cancel,
-            )
+            )?;
+            Ok(if is_file_only_command(command) {
+                format!("{out}\n\n{FILE_TOOLS_HINT}")
+            } else {
+                out
+            })
         }
         "write_file" => {
             ensure_write(ctx)?;
@@ -222,35 +272,14 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
             ensure_inside(&base, &p)?;
             let text = std::fs::read_to_string(&p)
                 .with_context(|| format!("reading {}", rel(&base, &p)))?;
-            let old = arg(args, "old")?;
-            let new = arg(args, "new")?;
-            if old.is_empty() {
-                bail!("`old` is empty");
-            }
-            let n = text.matches(old).count();
-            let all = args["replace_all"].as_bool().unwrap_or(false);
-            if n == 0 {
-                bail!(
-                    "`old` not found in {}; read the file again and copy the exact text",
-                    rel(&base, &p)
-                );
-            }
-            if n > 1 && !all {
-                bail!(
-                    "`old` matches {n} times in {}; add more context or set replace_all",
-                    rel(&base, &p)
-                );
-            }
-            let out = if all {
-                text.replace(old, new)
-            } else {
-                text.replacen(old, new, 1)
-            };
+            let edits = edits_of(args)?;
+            let (out, lines) = apply_edits(&text, &edits)
+                .map_err(|e| anyhow!("{e} in {}; nothing was written", rel(&base, &p)))?;
             std::fs::write(&p, out)?;
             Ok(format!(
-                "Edited {} ({n} replacement{})",
+                "Edited {}: {}",
                 rel(&base, &p),
-                if n == 1 { "" } else { "s" }
+                edited_lines_note(&lines)
             ))
         }
         other => bail!("unknown tool `{other}`"),
@@ -380,6 +409,278 @@ fn search(base: &Path, pattern: &str, path: &str, glob: Option<&str>) -> Result<
         .join("\n"))
 }
 
+/// Total characters `read_file` returns for several files at once.
+const READ_MANY_MAX: usize = 120_000;
+
+/// `read_file` with `files`: each file or range under a `==> path <==` header; a file that
+/// can't be read says why and the others still come back.
+fn read_many(base: &Path, files: &[Value]) -> String {
+    let mut out = String::new();
+    for f in files {
+        let Some(path) = f["path"].as_str() else {
+            out.push_str("==> ? <==\nError: missing `path`\n\n");
+            continue;
+        };
+        let (off, lim) = (f["offset"].as_u64(), f["limit"].as_u64());
+        let head = match (off, lim) {
+            (Some(o), Some(l)) => format!("==> {path} (lines {o}–{}) <==\n", o + l.max(1) - 1),
+            (Some(o), None) => format!("==> {path} (from line {o}) <==\n"),
+            _ => format!("==> {path} <==\n"),
+        };
+        out.push_str(&head);
+        match read_text(&resolve(base, path), off, lim) {
+            Ok(t) => out.push_str(&t),
+            Err(e) => out.push_str(&format!("Error: {e:#}\n")),
+        }
+        out.push('\n');
+        if out.len() > READ_MANY_MAX {
+            out.truncate(READ_MANY_MAX);
+            out.push_str("\n… output limit reached; read the remaining files in another call\n");
+            break;
+        }
+    }
+    out
+}
+
+/// Folders `find_files` never descends into.
+const SKIP_DIRS: [&str; 3] = [".git", "target", "node_modules"];
+const FIND_MAX: usize = 300;
+
+fn find_files(base: &Path, pattern: &str, path: &str) -> Result<String> {
+    let root = resolve(base, path);
+    let full = root.join(pattern);
+    let full = full.to_string_lossy();
+    let mut hits: Vec<String> = glob::glob(&full)
+        .map_err(|e| anyhow!("bad pattern `{pattern}`: {e}"))?
+        .filter_map(|r| r.ok())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            !p.strip_prefix(&root)
+                .unwrap_or(p)
+                .components()
+                .any(|c| SKIP_DIRS.contains(&c.as_os_str().to_string_lossy().as_ref()))
+        })
+        .map(|p| rel(base, &p))
+        .collect();
+    hits.sort();
+    if hits.is_empty() {
+        return Ok(format!("No files match `{pattern}` under {path}."));
+    }
+    let n = hits.len();
+    let mut out = hits.into_iter().take(FIND_MAX).collect::<Vec<_>>().join("\n");
+    if n > FIND_MAX {
+        out.push_str(&format!("\n… {} more; narrow the pattern", n - FIND_MAX));
+    }
+    Ok(out)
+}
+
+/// One replacement of `edit_file`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Edit {
+    pub old: String,
+    pub new: String,
+    pub replace_all: bool,
+}
+
+/// The edits of an `edit_file` call: `edits`, or the single `old`/`new`.
+pub fn edits_of(args: &Value) -> Result<Vec<Edit>> {
+    let one = |v: &Value| -> Result<Edit> {
+        Ok(Edit {
+            old: arg(v, "old")?.to_string(),
+            new: arg(v, "new")?.to_string(),
+            replace_all: v["replace_all"].as_bool().unwrap_or(false),
+        })
+    };
+    match args.get("edits").and_then(|e| e.as_array()) {
+        Some(list) if !list.is_empty() => list.iter().map(one).collect(),
+        _ => Ok(vec![one(args)?]),
+    }
+}
+
+/// Applies `edits` in order. Returns the new text and, per edit, the line (1-based, in the
+/// text as it was when that edit applied) where its first replacement starts.
+pub fn apply_edits(text: &str, edits: &[Edit]) -> std::result::Result<(String, Vec<usize>), String> {
+    let mut text = text.to_string();
+    let mut lines = vec![];
+    let many = edits.len() > 1;
+    for (i, e) in edits.iter().enumerate() {
+        let which = if many { format!("edit {}: ", i + 1) } else { String::new() };
+        if e.old.is_empty() {
+            return Err(format!("{which}`old` is empty"));
+        }
+        let n = text.matches(e.old.as_str()).count();
+        if n == 0 {
+            return Err(format!(
+                "{which}`old` not found (read the file again and copy the exact text)"
+            ));
+        }
+        if n > 1 && !e.replace_all {
+            return Err(format!(
+                "{which}`old` matches {n} times; add more context or set replace_all"
+            ));
+        }
+        let at = text.find(e.old.as_str()).unwrap_or(0);
+        lines.push(text[..at].matches('\n').count() + 1);
+        text = if e.replace_all {
+            text.replace(e.old.as_str(), &e.new)
+        } else {
+            text.replacen(e.old.as_str(), &e.new, 1)
+        };
+    }
+    Ok((text, lines))
+}
+
+/// "line 42", "lines 42, 87".
+fn edited_lines_note(lines: &[usize]) -> String {
+    let list = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ");
+    if lines.len() == 1 {
+        format!("line {list}")
+    } else {
+        format!("lines {list}")
+    }
+}
+
+/// Appended to a run_command that only read, listed or edited files.
+pub const FILE_TOOLS_HINT: &str = "[Tip: read_file (several files at once with `files`), \
+find_files, search, edit_file (several changes with `edits`) and write_file do this without a \
+shell. Use them next time: they're faster and show in the thread as reads and edits.]";
+
+/// Programs that only read, list or edit files: work for the file tools.
+const FILE_PROGRAMS: [&str; 12] = [
+    "cat", "head", "tail", "sed", "grep", "rg", "egrep", "find", "ls", "wc", "nl", "awk",
+];
+
+/// Whether a shell command only reads, lists, searches or edits files (`sed -n 1,80p a.rs;
+/// grep -n x b.rs | head`, `cat > f <<'EOF'`), so the file tools would have done it.
+pub fn is_file_only_command(command: &str) -> bool {
+    // A heredoc's body is data: look at the command line only.
+    let line = if command.contains("<<") {
+        command.lines().next().unwrap_or("")
+    } else {
+        command
+    };
+    let mut any = false;
+    for seg in line.split(['\n', ';', '|', '&']) {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        let prog = seg
+            .split_whitespace()
+            .find(|w| !w.contains('='))
+            .unwrap_or("");
+        let prog = prog.rsplit('/').next().unwrap_or(prog);
+        if !FILE_PROGRAMS.contains(&prog) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// One line for a tool call in a thread: what it read, found, ran or changed.
+pub fn describe_call(name: &str, arguments: &str) -> String {
+    let Ok(args) = serde_json::from_str::<Value>(arguments) else {
+        return first_line(arguments);
+    };
+    let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
+    let range = |v: &Value| -> String {
+        let p = v["path"].as_str().unwrap_or("?");
+        match (v["offset"].as_u64(), v["limit"].as_u64()) {
+            (Some(o), Some(l)) => format!("{p}:{o}–{}", o + l.max(1) - 1),
+            (Some(o), None) => format!("{p}:{o}–"),
+            (None, Some(l)) => format!("{p}:1–{l}"),
+            _ => p.to_string(),
+        }
+    };
+    match name {
+        "read_file" => match args["files"].as_array().filter(|f| !f.is_empty()) {
+            Some(files) => files.iter().map(range).collect::<Vec<_>>().join(", "),
+            None => range(&args),
+        },
+        "find_files" => match args["path"].as_str().filter(|p| *p != "." && !p.is_empty()) {
+            Some(p) => format!("{} in {p}", s("pattern")),
+            None => s("pattern"),
+        },
+        "search" => {
+            let mut out = format!("\"{}\"", s("pattern"));
+            if let Some(p) = args["path"].as_str().filter(|p| *p != "." && !p.is_empty()) {
+                out.push_str(&format!(" in {p}"));
+            }
+            if let Some(g) = args["glob"].as_str().filter(|g| !g.is_empty()) {
+                out.push_str(&format!(" ({g})"));
+            }
+            out
+        }
+        "edit_file" => {
+            let n = args["edits"].as_array().map(|e| e.len()).filter(|n| *n > 1);
+            match n {
+                Some(n) => format!("{} · {n} edits", s("path")),
+                None => s("path"),
+            }
+        }
+        "write_file" => format!("{} · {} lines", s("path"), s("content").lines().count()),
+        "run_command" => first_line(&s("command")),
+        _ => {
+            let pick = ["path", "command", "pattern", "query", "title", "name", "url"]
+                .iter()
+                .find_map(|k| args[*k].as_str().map(first_line));
+            pick.or_else(|| {
+                args.as_object()
+                    .and_then(|m| m.values().find_map(|v| v.as_str().map(first_line)))
+            })
+            .unwrap_or_default()
+        }
+    }
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or("").chars().take(200).collect()
+}
+
+/// An `edit_file` / `write_file` call as a unified diff (for showing it in a thread).
+/// `result` is the tool's reply ("Edited a.rs: lines 42, 87") and gives the line numbers.
+pub fn call_diff(name: &str, arguments: &str, result: Option<&str>) -> Option<String> {
+    let args: Value = serde_json::from_str(arguments).ok()?;
+    let path = args["path"].as_str()?;
+    let mut out = format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n");
+    match name {
+        "write_file" => {
+            let content = args["content"].as_str()?;
+            let n = content.lines().count();
+            out.push_str(&format!("@@ -0,0 +1,{n} @@\n"));
+            for l in content.lines() {
+                out.push_str(&format!("+{l}\n"));
+            }
+        }
+        "edit_file" => {
+            let edits = edits_of(&args).ok()?;
+            let starts: Vec<usize> = result
+                .and_then(|r| r.rsplit(": line").next())
+                .map(|t| {
+                    t.trim_start_matches('s')
+                        .split(',')
+                        .filter_map(|n| n.trim().parse().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (i, e) in edits.iter().enumerate() {
+                let at = starts.get(i).copied().unwrap_or(1);
+                let (o, n) = (e.old.lines().count(), e.new.lines().count());
+                out.push_str(&format!("@@ -{at},{o} +{at},{n} @@\n"));
+                for l in e.old.lines() {
+                    out.push_str(&format!("-{l}\n"));
+                }
+                for l in e.new.lines() {
+                    out.push_str(&format!("+{l}\n"));
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(out)
+}
+
 fn which(bin: &str) -> bool {
     std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
@@ -504,6 +805,14 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    /// A fresh scratch folder for one test.
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("pl-tools-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     fn ctx(dir: &Path) -> ToolContext {
         ToolContext {
             cwd: Some(dir.to_path_buf()),
@@ -561,5 +870,112 @@ mod tests {
             "{out}"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_file_reads_several_files_and_ranges() {
+        let d = tmp("readmany");
+        std::fs::write(d.join("a.txt"), "a1\na2\na3\n").unwrap();
+        std::fs::write(d.join("b.txt"), "b1\nb2\n").unwrap();
+        let out = execute(
+            &ctx(&d),
+            "read_file",
+            &json!({"files":[{"path":"a.txt","offset":2,"limit":1},{"path":"b.txt"},{"path":"nope.txt"}]}),
+        );
+        assert!(out.contains("==> a.txt (lines 2–2) <=="), "{out}");
+        assert!(out.contains("    2\ta2") && !out.contains("a1"), "{out}");
+        assert!(out.contains("==> b.txt <==") && out.contains("    2\tb2"), "{out}");
+        assert!(out.contains("==> nope.txt <==\nError:"), "{out}");
+        // The single-file form still works.
+        assert!(execute(&ctx(&d), "read_file", &json!({"path":"b.txt"})).contains("b1"));
+    }
+
+    #[test]
+    fn find_files_globs_recursively_and_skips_build_dirs() {
+        let d = tmp("find");
+        for f in ["src/a.rs", "src/x/b.rs", "target/debug/c.rs", "README.md"] {
+            let p = d.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let out = execute(&ctx(&d), "find_files", &json!({"pattern":"**/*.rs"}));
+        assert_eq!(out, "src/a.rs\nsrc/x/b.rs");
+        let out = execute(&ctx(&d), "find_files", &json!({"pattern":"*.txt"}));
+        assert!(out.starts_with("No files match"), "{out}");
+    }
+
+    #[test]
+    fn edit_file_applies_several_edits_or_none() {
+        let d = tmp("edits");
+        std::fs::write(d.join("f.rs"), "one\ntwo\nthree\n").unwrap();
+        let out = execute(
+            &ctx(&d),
+            "edit_file",
+            &json!({"path":"f.rs","edits":[{"old":"two","new":"TWO"},{"old":"three","new":"3"}]}),
+        );
+        assert_eq!(out, "Edited f.rs: lines 2, 3");
+        assert_eq!(std::fs::read_to_string(d.join("f.rs")).unwrap(), "one\nTWO\n3\n");
+        // A failing edit leaves the file as it was.
+        let out = execute(
+            &ctx(&d),
+            "edit_file",
+            &json!({"path":"f.rs","edits":[{"old":"one","new":"1"},{"old":"missing","new":"x"}]}),
+        );
+        assert!(out.starts_with("Error: edit 2: `old` not found"), "{out}");
+        assert!(out.contains("nothing was written"), "{out}");
+        assert_eq!(std::fs::read_to_string(d.join("f.rs")).unwrap(), "one\nTWO\n3\n");
+        // Single old/new form.
+        let out = execute(&ctx(&d), "edit_file", &json!({"path":"f.rs","old":"one","new":"1"}));
+        assert_eq!(out, "Edited f.rs: line 1");
+    }
+
+    #[test]
+    fn spots_shell_commands_that_only_touch_files() {
+        for c in [
+            "sed -n 1,130p crates/engine/src/chat.rs; grep -n \"name\" tools.rs | head -30",
+            "cat > crates/engine/src/skill_install.rs <<'EOF'\nfn main() {}\nEOF",
+            "sed -i 's/a/b/' x.rs",
+            "find . -name '*.rs' | wc -l",
+        ] {
+            assert!(is_file_only_command(c), "{c}");
+        }
+        for c in [
+            "cargo test -p harness-engine",
+            "git diff --stat",
+            "cat Cargo.toml && cargo build",
+            "python3 - <<'EOF'\nprint(1)\nEOF",
+            "",
+        ] {
+            assert!(!is_file_only_command(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn describes_calls_and_turns_edits_into_diffs() {
+        assert_eq!(
+            describe_call("read_file", r#"{"files":[{"path":"a.rs","offset":10,"limit":5},{"path":"b.rs"}]}"#),
+            "a.rs:10–14, b.rs"
+        );
+        assert_eq!(describe_call("read_file", r#"{"path":"a.rs"}"#), "a.rs");
+        assert_eq!(
+            describe_call("search", r#"{"pattern":"fn x","path":"crates","glob":"*.rs"}"#),
+            "\"fn x\" in crates (*.rs)"
+        );
+        assert_eq!(
+            describe_call("edit_file", r#"{"path":"a.rs","edits":[{"old":"a","new":"b"},{"old":"c","new":"d"}]}"#),
+            "a.rs · 2 edits"
+        );
+        assert_eq!(describe_call("run_command", r#"{"command":"cargo test\necho"}"#), "cargo test");
+        let d = call_diff(
+            "edit_file",
+            r#"{"path":"a.rs","edits":[{"old":"x","new":"y\nz"},{"old":"p","new":"q"}]}"#,
+            Some("Edited a.rs: lines 4, 9"),
+        )
+        .unwrap();
+        assert!(d.contains("@@ -4,1 +4,2 @@\n-x\n+y\n+z\n"), "{d}");
+        assert!(d.contains("@@ -9,1 +9,1 @@\n-p\n+q\n"), "{d}");
+        let w = call_diff("write_file", r#"{"path":"n.rs","content":"a\nb\n"}"#, None).unwrap();
+        assert!(w.contains("@@ -0,0 +1,2 @@\n+a\n+b\n"), "{w}");
+        assert_eq!(call_diff("read_file", r#"{"path":"a.rs"}"#, None), None);
     }
 }

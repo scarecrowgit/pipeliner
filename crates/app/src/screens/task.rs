@@ -10,6 +10,7 @@
 //!   uses the task id as thread id.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -18,6 +19,7 @@ use gpui::{
 };
 use gpui_component::input::InputState;
 use harness_core::{Message, Role, Task as CoreTask, TaskKind};
+use harness_engine::tools;
 use serde_json::Value;
 
 use super::prelude::*;
@@ -49,6 +51,8 @@ enum Entry {
         name: SharedString,
         summary: SharedString,
         args: SharedString,
+        /// edit_file / write_file as a diff (shown instead of the raw arguments).
+        diff: Option<Arc<ui::ParsedDiff>>,
         result: Option<SharedString>,
         failed: bool,
     },
@@ -619,10 +623,13 @@ impl TaskScreen {
                 name,
                 summary,
                 args,
+                diff,
                 result,
                 failed,
             } => {
-                let open = self.expanded.contains(id);
+                // PIPELINER_EXPAND_TOOLS: every tool row open (headless screenshots).
+                let open = self.expanded.contains(id)
+                    || std::env::var_os("PIPELINER_EXPAND_TOOLS").is_some();
                 let pending = result.is_none() && running;
                 let key = id.clone();
                 let accent = if *failed {
@@ -707,14 +714,33 @@ impl TaskScreen {
                                 .p(theme::S3)
                                 .border_t_1()
                                 .border_color(theme::LINE)
-                                .child(div().text_label().fg_muted().child("Arguments"))
-                                .child(
-                                    CodeBlock::new(
-                                        SharedString::from(format!("{id}-args")),
-                                        args.clone(),
-                                    )
-                                    .max_height(px(220.)),
-                                )
+                                .child(match diff {
+                                    Some(d) => div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme::S2)
+                                        .child(div().text_label().fg_muted().child("Change"))
+                                        .child(
+                                            div()
+                                                .rounded(theme::RADIUS_MD)
+                                                .border_1()
+                                                .border_color(theme::LINE)
+                                                .overflow_hidden()
+                                                .child(ui::DiffView::new(d.clone()).max_lines(300)),
+                                        ),
+                                    None => div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme::S2)
+                                        .child(div().text_label().fg_muted().child("Arguments"))
+                                        .child(
+                                            CodeBlock::new(
+                                                SharedString::from(format!("{id}-args")),
+                                                args.clone(),
+                                            )
+                                            .max_height(px(220.)),
+                                        ),
+                                })
                                 .child(div().text_label().fg_muted().child("Result"))
                                 .child(match result {
                                     Some(r) => CodeBlock::new(
@@ -1340,8 +1366,9 @@ fn entries(messages: &[Message], task: &CoreTask) -> Vec<Entry> {
                     out.push(Entry::Tool {
                         id: format!("t-{}-{}", m.id, c.id).into(),
                         name: c.name.clone().into(),
-                        summary: args_summary(&c.arguments).into(),
+                        summary: tools::describe_call(&c.name, &c.arguments).into(),
                         args: pretty_json(&c.arguments).into(),
+                        diff: tool_diff(&c.name, &c.arguments, result.as_deref()),
                         failed: result.as_deref().is_some_and(|r| r.starts_with("Error")),
                         result: result.map(Into::into),
                     });
@@ -1360,6 +1387,8 @@ fn entries(messages: &[Message], task: &CoreTask) -> Vec<Entry> {
                     .first()
                     .map(|c| (c.name.clone(), c.arguments.clone()))
                     .unwrap_or((m.author.clone(), String::new()));
+                let summary = tools::describe_call(&name, &args);
+                let diff = tool_diff(&name, &args, Some(&m.content));
                 out.push(Entry::Tool {
                     id: format!("t-{}", m.id).into(),
                     name: if name.is_empty() {
@@ -1367,7 +1396,8 @@ fn entries(messages: &[Message], task: &CoreTask) -> Vec<Entry> {
                     } else {
                         name.into()
                     },
-                    summary: args_summary(&args).into(),
+                    summary: summary.into(),
+                    diff,
                     args: pretty_json(&args).into(),
                     failed: m.content.starts_with("Error"),
                     result: Some(m.content.clone().into()),
@@ -1378,31 +1408,12 @@ fn entries(messages: &[Message], task: &CoreTask) -> Vec<Entry> {
     out
 }
 
-/// The most telling argument on one line: `path`, `command`, ... or the first scalar.
-fn args_summary(arguments: &str) -> String {
-    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(arguments) else {
-        return arguments
-            .lines()
-            .next()
-            .unwrap_or("")
-            .chars()
-            .take(100)
-            .collect();
-    };
-    let scalar = |v: &Value| match v {
-        Value::String(s) => Some(s.lines().next().unwrap_or("").to_string()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    };
-    [
-        "path", "command", "pattern", "title", "url", "query", "name",
-    ]
-    .iter()
-    .find_map(|k| map.get(*k).and_then(scalar))
-    .or_else(|| map.values().find_map(scalar))
-    .map(|s| s.chars().take(100).collect())
-    .unwrap_or_default()
+/// A successful edit_file / write_file call as a diff.
+fn tool_diff(name: &str, arguments: &str, result: Option<&str>) -> Option<Arc<ui::ParsedDiff>> {
+    if result.is_some_and(|r| r.starts_with("Error")) {
+        return None;
+    }
+    tools::call_diff(name, arguments, result).map(|d| ui::ParsedDiff::parse(&d))
 }
 
 fn pretty_json(arguments: &str) -> String {

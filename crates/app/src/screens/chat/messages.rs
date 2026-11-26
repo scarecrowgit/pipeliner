@@ -259,7 +259,10 @@ impl ChatScreen {
             name
         };
         let summary = match call {
-            Some(c) => data::args_summary(&c.arguments),
+            Some(c) => match harness_engine::tools::describe_call(&c.name, &c.arguments) {
+                s if s.trim().is_empty() => data::args_summary(&c.arguments),
+                s => s,
+            },
             None => result
                 .map(|r| {
                     r.content
@@ -348,13 +351,36 @@ impl ChatScreen {
                         .border_t_1()
                         .border_color(theme::LINE_SUBTLE)
                         .when_some(call, |d, c| {
-                            d.child(label("Arguments")).child(
-                                CodeBlock::new(
-                                    eid("tool-args", &c.id),
-                                    data::pretty_args(&c.arguments),
-                                )
-                                .max_height(px(220.)),
-                            )
+                            // A successful edit shows as a diff, other calls as their arguments.
+                            let diff = result
+                                .filter(|r| !r.content.starts_with("Error"))
+                                .and_then(|r| {
+                                    harness_engine::tools::call_diff(
+                                        &c.name,
+                                        &c.arguments,
+                                        Some(&r.content),
+                                    )
+                                });
+                            match diff {
+                                Some(text) => d.child(label("Change")).child(
+                                    div()
+                                        .rounded(theme::RADIUS_MD)
+                                        .border_1()
+                                        .border_color(theme::LINE)
+                                        .overflow_hidden()
+                                        .child(
+                                            crate::ui::DiffView::new(crate::ui::ParsedDiff::parse(&text))
+                                                .max_lines(300),
+                                        ),
+                                ),
+                                None => d.child(label("Arguments")).child(
+                                    CodeBlock::new(
+                                        eid("tool-args", &c.id),
+                                        data::pretty_args(&c.arguments),
+                                    )
+                                    .max_height(px(220.)),
+                                ),
+                            }
                         })
                         .child(label(if result.is_some() {
                             "Result"
