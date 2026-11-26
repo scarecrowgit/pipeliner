@@ -167,6 +167,54 @@ fn pipeline(engine: &Engine) -> Pipeline {
 }
 
 #[test]
+fn template_agents_are_saved_and_referenced() {
+    let e = engine("http://127.0.0.1:9/v1");
+    let t = e
+        .templates()
+        .into_iter()
+        .find(|t| t.id == "design-gpui")
+        .unwrap();
+    let p = e.create_pipeline(&t, "").unwrap();
+    let agents = e.store().agents();
+    assert_eq!(
+        agents.len(),
+        3,
+        "{:?}",
+        agents.iter().map(|a| &a.name).collect::<Vec<_>>()
+    );
+    let NodeKind::Agent(build) = &p.graph.node("build").unwrap().kind else {
+        panic!()
+    };
+    assert!(agents.iter().any(|a| Some(&a.id) == build.agent.as_ref()));
+    let coder = build
+        .delegate
+        .as_ref()
+        .and_then(|d| d.agent.clone())
+        .unwrap();
+    assert_eq!(e.store().agent(&coder).unwrap().name, "Coder");
+    // A second pipeline from the same template reuses the saved agents.
+    e.create_pipeline(&t, "again").unwrap();
+    assert_eq!(e.store().agents().len(), 3);
+}
+
+#[test]
+fn adopt_agents_saves_inline_steps() {
+    let e = engine("http://127.0.0.1:9/v1");
+    let p = pipeline(&e);
+    let names = e.adopt_agents(&p.id).unwrap();
+    assert_eq!(names, vec!["design".to_string(), "build".to_string()]);
+    let p = e.store().pipeline(&p.id).unwrap();
+    assert_eq!(p.version, 2);
+    for id in ["design", "build"] {
+        let NodeKind::Agent(a) = &p.graph.node(id).unwrap().kind else {
+            panic!()
+        };
+        assert!(e.store().agent(a.agent.as_ref().unwrap()).is_some());
+    }
+    assert!(e.adopt_agents(&p.id).unwrap().is_empty());
+}
+
+#[test]
 fn no_branch_skips_design() {
     let url = serve(|body| {
         if body.contains("needs design?")

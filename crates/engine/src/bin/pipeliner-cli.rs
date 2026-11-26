@@ -9,6 +9,7 @@
 //!   pipeliner-cli runs
 //!   pipeliner-cli show <run number>
 //!   pipeliner-cli waiting
+//!   pipeliner-cli adopt-agents <pipeline>  (inline agent steps -> saved agents)
 //!   pipeliner-cli delete-run <run number>  (removes the run, its worktrees, branches, renders)
 //!   pipeliner-cli decide <task id> pick <n> | approve | back <note...> | reject
 //!   pipeliner-cli chat <text...>          (direct chat, prints the reply)
@@ -122,6 +123,24 @@ fn main() -> Result<()> {
         "show" => {
             let r = find_run(&store, rest.first().context("run number")?)?;
             print_run(&store, &r);
+        }
+        "adopt-agents" => {
+            let name = rest.join(" ");
+            let p = store
+                .pipelines()
+                .into_iter()
+                .find(|p| p.name == name || p.id == name)
+                .context("no such pipeline")?;
+            let names = engine.adopt_agents(&p.id)?;
+            println!(
+                "{}: {}",
+                p.name,
+                if names.is_empty() {
+                    "nothing to adopt".into()
+                } else {
+                    names.join(", ")
+                }
+            );
         }
         "delete-run" => {
             let r = find_run(&store, rest.first().context("run number")?)?;

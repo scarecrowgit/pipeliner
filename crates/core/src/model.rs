@@ -355,6 +355,10 @@ impl Default for AgentNode {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DelegateConfig {
+    /// Saved agent to delegate to; its role, model and skills apply, fields below override
+    /// when non-empty.
+    #[serde(default)]
+    pub agent: Option<Id>,
     pub name: String,
     pub model: String,
     #[serde(default)]

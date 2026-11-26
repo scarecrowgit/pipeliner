@@ -853,6 +853,41 @@ struct Resolved {
     max_steps: u32,
 }
 
+/// The delegate's effective settings: the saved agent (if any) with the node's
+/// non-empty fields on top. `instructions` becomes the role when the agent has none.
+fn resolve_delegate(engine: &Engine, d: &DelegateConfig) -> DelegateConfig {
+    let Some(def) = d.agent.as_deref().and_then(|id| engine.store().agent(id)) else {
+        return d.clone();
+    };
+    let mut skills = def.skills_on_demand.clone();
+    for s in def.skills.iter().chain(&d.skills_on_demand) {
+        if !skills.contains(s) {
+            skills.push(s.clone());
+        }
+    }
+    let role = match (def.role.trim().is_empty(), d.instructions.trim().is_empty()) {
+        (false, false) => format!("{}\n\n{}", def.role.trim(), d.instructions.trim()),
+        (false, true) => def.role.clone(),
+        _ => d.instructions.clone(),
+    };
+    DelegateConfig {
+        agent: d.agent.clone(),
+        name: if d.name.trim().is_empty() {
+            def.name
+        } else {
+            d.name.clone()
+        },
+        model: if d.model.trim().is_empty() {
+            def.model
+        } else {
+            d.model.clone()
+        },
+        instructions: role,
+        skills_on_demand: skills,
+        max_steps: d.max_steps.max(def.max_steps),
+    }
+}
+
 fn resolve_agent(engine: &Engine, node: &Node, a: &AgentNode) -> Resolved {
     let def = a.agent.as_deref().and_then(|id| engine.store().agent(id));
     let config = engine.config();
@@ -1070,7 +1105,7 @@ fn run_variant(
     let workdirs = other_workdirs(run, a.workdir.as_deref());
     let mut extra = vec![];
     if let Some(d) = &a.delegate {
-        extra.push(delegate_spec(&d.name));
+        extra.push(delegate_spec(&resolve_delegate(engine, d).name));
     }
     let agent = AgentRun {
         engine,
@@ -1115,7 +1150,7 @@ fn run_variant(
         if call.name != "delegate" {
             return None;
         }
-        let d = delegate_cfg.as_ref()?;
+        let d = resolve_delegate(engine, delegate_cfg.as_ref()?);
         let role = if d.instructions.is_empty() {
             crate::chat::DELEGATE_ROLE
         } else {
