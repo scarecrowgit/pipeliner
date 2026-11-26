@@ -522,8 +522,8 @@ fn mono_box(text: impl Into<SharedString>) -> Div {
         .border_color(theme::LINE)
         .text_mono()
         .fg()
-        .ellipsis()
-        .child(text.into())
+        // The text in its own box, so it is cut with "…" at the box's width.
+        .child(div().min_w_0().ellipsis().child(text.into()))
 }
 
 impl SettingsScreen {

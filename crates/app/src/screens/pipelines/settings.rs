@@ -561,8 +561,8 @@ impl PipelinesScreen {
             .items_center()
             .child(
                 div()
-                    .w_full()
-                    .max_w(px(760.))
+                    .w(px(760.))
+                    .max_w_full()
                     .flex()
                     .flex_col()
                     .gap(theme::S6)

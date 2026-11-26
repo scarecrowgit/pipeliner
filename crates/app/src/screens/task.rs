@@ -795,8 +795,8 @@ impl TaskScreen {
             .gap(theme::S4)
             // Left-aligned with the header and composer (design: max-width 800px, no
             // auto margins); centring left a 250px gutter on each side in a wide window.
-            .max_w(px(880.))
-            .w_full();
+            .w(px(880.))
+            .max_w_full();
         if skip > 0 {
             col = col.child(
                 Button::new(
