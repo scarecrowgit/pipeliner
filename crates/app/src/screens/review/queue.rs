@@ -258,8 +258,20 @@ fn also_row(a: &AlsoRow, cx: &mut Context<ReviewScreen>) -> impl IntoElement {
                                 .on_click(cx.listener(
                                     move |_, _, _, cx| {
                                         let id = retry_id.clone();
-                                        state::run_engine(cx, move |e| e.retry(&id)).detach();
-                                        state::toast(ToastKind::Info, "Retrying the step", cx);
+                                        // run_engine toasts the engine's reason if it refuses.
+                                        let job = state::run_engine(cx, move |e| e.retry(&id));
+                                        cx.spawn(async move |_, cx| {
+                                            if job.await.is_some() {
+                                                let _ = cx.update(|cx| {
+                                                    state::toast(
+                                                        ToastKind::Info,
+                                                        "Retrying the step",
+                                                        cx,
+                                                    )
+                                                });
+                                            }
+                                        })
+                                        .detach();
                                     },
                                 )),
                             )

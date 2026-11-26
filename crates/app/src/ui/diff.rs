@@ -167,7 +167,7 @@ impl ParsedDiff {
                     continue;
                 }
             };
-            let text: SharedString = body.replace('\t', "    ").into();
+            let text: SharedString = clip_line(&body.replace('\t', "    ")).into();
             let line = match kind {
                 DiffLineKind::Add => {
                     f.added += 1;
@@ -366,8 +366,38 @@ impl RenderOnce for DiffView {
     }
 }
 
+/// Longest diff line shown in full. Minified or generated files can have lines of
+/// hundreds of kilobytes; laying those out wraps into thousands of rows and blows up
+/// the page, so the rest is replaced with a count.
+const MAX_LINE_CHARS: usize = 400;
+
+fn clip_line(s: &str) -> String {
+    match s.char_indices().nth(MAX_LINE_CHARS) {
+        None => s.to_string(),
+        Some((cut, _)) => {
+            let rest = s[cut..].chars().count();
+            format!("{} … (+{rest} chars on this line)", &s[..cut])
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn very_long_lines_are_clipped() {
+        let long = "x".repeat(5000);
+        let d = ParsedDiff::parse(&format!("--- a/f\n+++ b/f\n@@ -1 +1 @@\n-{long}\n+y\n"));
+        let del = &d.files[0].lines[1];
+        assert!(del.text.len() < 500, "{}", del.text.len());
+        assert!(
+            del.text.ends_with("(+4600 chars on this line)"),
+            "{}",
+            del.text
+        );
+        assert_eq!(d.files[0].lines[2].text.as_ref(), "y");
+    }
+
     use super::*;
 
     #[test]
