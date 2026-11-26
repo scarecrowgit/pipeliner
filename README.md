@@ -42,6 +42,10 @@ nix-shell shell.nix --run 'cargo run --release -p pipeliner'
 
 Headless driver for scripts and tests: `cargo run -p harness-engine --bin pipeliner-cli`.
 
+Screenshots of every screen without a display, on generated test data: `scripts/shoot.sh -o /tmp/shots`
+(see AGENTS.md). `PIPELINER_ROUTE=review` opens the app on a screen; `PIPELINER_STILL=1` shows a data dir
+without starting the engine.
+
 Configuration lives in `~/.config/pipeliner/config.toml`; data (SQLite, worktrees, renders) in
 `~/.local/share/pipeliner/`.
 

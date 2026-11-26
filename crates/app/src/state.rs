@@ -49,6 +49,50 @@ pub enum Route {
     },
 }
 
+impl Route {
+    /// Parses `review`, `review:<task id>`, `task:<id>`, `chat:<id>`, `pipelines:<id>`,
+    /// `agents:<id>`, `board`, ... — used by `PIPELINER_ROUTE` to open the app on a screen
+    /// (screenshots, `scripts/shoot.sh`).
+    pub fn parse(s: &str) -> Option<Route> {
+        let (name, id) = match s.trim().split_once(':') {
+            Some((n, id)) => (n, Some(id.trim().to_string()).filter(|i| !i.is_empty())),
+            None => (s.trim(), None),
+        };
+        Some(match name.to_ascii_lowercase().as_str() {
+            "home" => Route::Home,
+            "review" => Route::Review { task: id },
+            "chat" => Route::Chat { chat: id },
+            "board" => Route::Board,
+            "timeline" => Route::Timeline,
+            "pipelines" | "pipeline" => Route::Pipelines { pipeline: id },
+            "agents" | "agent" => Route::Agents { agent: id },
+            "memory" => Route::Memory,
+            "policies" => Route::Policies,
+            "settings" => Route::Settings,
+            "task" => Route::Task { task: id? },
+            _ => return None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::Route;
+
+    #[test]
+    fn parses_routes() {
+        assert_eq!(Route::parse("board"), Some(Route::Board));
+        assert_eq!(Route::parse("Review"), Some(Route::Review { task: None }));
+        assert_eq!(
+            Route::parse("review:abc"),
+            Some(Route::Review { task: Some("abc".into()) })
+        );
+        assert_eq!(Route::parse("task:t1"), Some(Route::Task { task: "t1".into() }));
+        assert_eq!(Route::parse("task"), None);
+        assert_eq!(Route::parse("nope"), None);
+    }
+}
+
 /// The screen a route renders; the shell keeps one cached screen entity per kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScreenKind {

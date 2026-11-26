@@ -35,10 +35,22 @@ fn main() {
         };
         let config = Config::load();
         let engine = Engine::new(store.clone(), config);
-        engine.start();
+        // PIPELINER_STILL: show the data as it is (screenshots of a fixture). The engine
+        // doesn't take over, so nothing is recovered, resumed or run.
+        let still = std::env::var_os("PIPELINER_STILL").is_some();
+        if !still {
+            engine.start();
+        }
         store.watch_external();
 
         let app_state = AppState::init(engine, cx);
+        // PIPELINER_ROUTE: open on a screen, e.g. `review:<task id>` (see `Route::parse`).
+        if let Some(route) = std::env::var("PIPELINER_ROUTE")
+            .ok()
+            .and_then(|r| state::Route::parse(&r))
+        {
+            state::replace_route(route, cx);
+        }
         if let Some(msg) = store_error {
             app_state.update(cx, |s, cx| s.toast(ToastKind::Danger, msg, cx));
         }
