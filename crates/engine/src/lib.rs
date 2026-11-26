@@ -3,6 +3,7 @@
 //! through [`Engine`] and observes it through the [`Store`]'s change feed.
 
 pub mod agent;
+pub mod attachments;
 pub mod chat;
 pub mod git;
 pub mod llm;
@@ -229,7 +230,37 @@ impl Engine {
     /// agent works with tools as a task. Pipeline: starts the chat's pipeline with the text.
     /// If the chat's agent is mid-task, the message steers it instead.
     pub fn send(&self, chat_id: &str, text: &str) -> Result<()> {
-        chat::send(self, chat_id, text)
+        self.send_with(chat_id, text, vec![])
+    }
+
+    /// Like [`Engine::send`], with images attached (the text may be empty then).
+    pub fn send_with(&self, chat_id: &str, text: &str, attachments: Vec<Attachment>) -> Result<()> {
+        chat::send(self, chat_id, text, attachments)
+    }
+
+    /// Stores image bytes (pasted or dropped) as an attachment.
+    pub fn save_attachment_bytes(
+        &self,
+        bytes: &[u8],
+        name: Option<&str>,
+        pasted: bool,
+    ) -> Result<Attachment> {
+        attachments::save_bytes(bytes, name, pasted)
+    }
+
+    /// Copies an image file into the attachments folder.
+    pub fn add_attachment_file(&self, path: &std::path::Path) -> Result<Attachment> {
+        attachments::add_file(path)
+    }
+
+    /// Deletes an attachment that was never sent (only inside the attachments folder).
+    pub fn discard_attachment(&self, path: &str) {
+        attachments::discard(path)
+    }
+
+    /// Interactive region screenshot. Blocks: call from a background thread.
+    pub fn capture_screenshot(&self) -> Result<Attachment> {
+        attachments::capture_screenshot()
     }
 
     // ---- runs ----------------------------------------------------------------

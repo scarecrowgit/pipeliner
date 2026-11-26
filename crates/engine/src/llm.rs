@@ -7,11 +7,23 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use harness_core::config::Provider;
 use serde_json::{json, Value};
 
+/// An image sent to the model: mime type and base64 payload.
+#[derive(Clone, Debug, Default)]
+pub struct ImageData {
+    pub mime: String,
+    pub base64: String,
+}
+
 /// A message in the wire format.
 #[derive(Clone, Debug)]
 pub enum Msg {
     System(String),
     User(String),
+    /// A user turn with images (sent as OpenAI `image_url` data URLs).
+    UserImages {
+        text: String,
+        images: Vec<ImageData>,
+    },
     Assistant {
         content: String,
         tool_calls: Vec<Call>,
@@ -49,6 +61,19 @@ fn msg_json(m: &Msg) -> Value {
     match m {
         Msg::System(s) => json!({"role":"system","content":s}),
         Msg::User(s) => json!({"role":"user","content":s}),
+        Msg::UserImages { text, images } => {
+            let mut parts: Vec<Value> = vec![];
+            if !text.is_empty() {
+                parts.push(json!({"type":"text","text":text}));
+            }
+            for i in images {
+                parts.push(json!({
+                    "type":"image_url",
+                    "image_url":{"url":format!("data:{};base64,{}", i.mime, i.base64)}
+                }));
+            }
+            json!({"role":"user","content":parts})
+        }
         Msg::Assistant {
             content,
             tool_calls,
@@ -333,6 +358,29 @@ pub fn quick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn user_images_json() {
+        let img = ImageData {
+            mime: "image/png".into(),
+            base64: "AAAA".into(),
+        };
+        let v = msg_json(&Msg::UserImages {
+            text: "look".into(),
+            images: vec![img.clone(), img.clone()],
+        });
+        assert_eq!(v["role"], "user");
+        let c = v["content"].as_array().unwrap();
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[0], json!({"type":"text","text":"look"}));
+        assert_eq!(c[1]["type"], "image_url");
+        assert_eq!(c[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+        let v = msg_json(&Msg::UserImages {
+            text: String::new(),
+            images: vec![img],
+        });
+        assert_eq!(v["content"].as_array().unwrap().len(), 1);
+    }
+
     #[test]
     fn parses_non_stream() {
         let v = json!({"choices":[{"message":{"content":"hi","tool_calls":[{"id":"x","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":4}});

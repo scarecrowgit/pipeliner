@@ -8,6 +8,8 @@ use std::path::Path;
 
 use harness_core::{skills, Config};
 
+use crate::llm::ImageData;
+
 #[derive(Default, Clone, Debug)]
 pub struct Stack {
     pub rules: String,
@@ -19,6 +21,8 @@ pub struct Stack {
     pub environment: String,
     pub skills: Vec<String>,
     pub skills_on_demand: Vec<String>,
+    /// Images attached to the first user turn.
+    pub images: Vec<ImageData>,
 }
 
 impl Stack {

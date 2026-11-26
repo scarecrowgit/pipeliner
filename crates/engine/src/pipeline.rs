@@ -1126,6 +1126,7 @@ fn run_variant(
             skills: r.skills.clone(),
             skills_on_demand: r.skills_on_demand.clone(),
             message,
+            images: vec![],
         },
         tools: ToolContext {
             cwd: place.as_ref().map(|p| p.cwd.clone()),

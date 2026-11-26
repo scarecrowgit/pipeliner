@@ -8,16 +8,22 @@ use harness_core::*;
 use serde_json::{json, Value};
 
 use crate::agent::{delegate_spec, AgentRun, Handled};
+use crate::attachments;
 use crate::llm::{self, Msg, ToolSpec};
 use crate::prompt::{self, Stack};
 use crate::tools::ToolContext;
 use crate::Engine;
 
-pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
+pub fn send(
+    engine: &Engine,
+    chat_id: &str,
+    text: &str,
+    attachments: Vec<Attachment>,
+) -> Result<()> {
     let store = engine.store().clone();
     let mut chat = store.chat(chat_id).context("chat not found")?;
     let text = text.trim();
-    if text.is_empty() {
+    if text.is_empty() && attachments.is_empty() {
         return Ok(());
     }
 
@@ -26,6 +32,7 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
         if task.status == Status::Running || task.status == Status::Waiting {
             let mut m = Message::new(chat_id, Role::User, text);
             m.author = "you".into();
+            m.attachments = attachments;
             store.put_message(&m)?;
             // A waiting plan approval takes free text as feedback.
             if task.status == Status::Waiting {
@@ -38,6 +45,7 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
     let mut m = Message::new(chat_id, Role::User, text);
     m.author = "you".into();
     m.delivered = true;
+    m.attachments = attachments;
 
     // `/run <pipeline> <input>` starts a pipeline from any chat.
     if let Some(rest) = text.strip_prefix("/run ") {
@@ -81,7 +89,11 @@ pub fn send(engine: &Engine, chat_id: &str, text: &str) -> Result<()> {
         t.finished_at = None;
         t.error = None;
     })?;
-    maybe_title(engine, &chat, text);
+    maybe_title(
+        engine,
+        &chat,
+        if text.is_empty() { "Screenshot" } else { text },
+    );
     let engine = engine.clone();
     let chat_id = chat_id.to_string();
     std::thread::Builder::new()
@@ -226,36 +238,48 @@ fn maybe_title(engine: &Engine, chat: &Chat, text: &str) {
     });
 }
 
-/// History of the chat as model messages (text only), excluding the newest user turn.
-fn history(store: &Store, chat_id: &str) -> (Vec<Msg>, String) {
+/// History of the chat as model messages, excluding the newest user turn, which is
+/// returned separately as its text and images.
+fn history(store: &Store, chat_id: &str) -> (Vec<Msg>, String, Vec<llm::ImageData>) {
     let mut msgs = store.messages(chat_id);
     msgs.retain(|m| {
-        !m.partial && matches!(m.role, Role::User | Role::Assistant) && !m.content.trim().is_empty()
+        !m.partial
+            && matches!(m.role, Role::User | Role::Assistant)
+            && (!m.content.trim().is_empty() || (m.role == Role::User && !m.attachments.is_empty()))
     });
     let last_user = msgs.iter().rposition(|m| m.role == Role::User);
     let mut out = vec![];
     let mut latest = String::new();
+    let mut latest_images = vec![];
     for (i, m) in msgs.iter().enumerate() {
-        if Some(i) == last_user {
-            latest = m.content.clone();
+        if m.role == Role::User {
+            let (text, images) = attachments::images_for(&m.attachments, m.content.clone());
+            if Some(i) == last_user {
+                latest = text;
+                latest_images = images;
+            } else if images.is_empty() {
+                out.push(Msg::User(text));
+            } else {
+                out.push(Msg::UserImages { text, images });
+            }
             continue;
         }
-        out.push(match m.role {
-            Role::User => Msg::User(m.content.clone()),
-            _ => Msg::Assistant {
-                content: m.content.clone(),
-                tool_calls: vec![],
-            },
+        out.push(Msg::Assistant {
+            content: m.content.clone(),
+            tool_calls: vec![],
         });
     }
-    (out, latest)
+    (out, latest, latest_images)
 }
 
 fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let store = engine.store().clone();
     let chat = store.chat(chat_id).context("chat not found")?;
     let config = engine.config();
-    let (hist, latest) = history(&store, chat_id);
+    let (hist, mut latest, images) = history(&store, chat_id);
+    if latest.trim().is_empty() && !images.is_empty() {
+        latest = "See the attached image.".into();
+    }
     let cwd = chat
         .cwd
         .as_ref()
@@ -266,6 +290,7 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let mut stack = Stack {
         rules: config.rules.clone(),
         message: latest,
+        images,
         ..Default::default()
     };
     let mut tool_ctx = ToolContext {
@@ -524,4 +549,56 @@ pub fn delegate(
         t.finished_at = Some(now());
     });
     Handled::Continue(format!("Report from {name} ({title}):\n{text}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_builds_user_images() {
+        let dir = std::env::temp_dir().join(format!("pipeliner-chat-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.png");
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&4u32.to_be_bytes());
+        png.extend_from_slice(&3u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        std::fs::write(&file, &png).unwrap();
+        let att = |path: &std::path::Path, name: &str| Attachment {
+            path: path.to_string_lossy().into_owned(),
+            name: name.into(),
+            mime: "image/png".into(),
+            width: 4,
+            height: 3,
+            pasted: false,
+        };
+
+        let store = Store::open_in_memory().unwrap();
+        let mut m1 = Message::new("c1", Role::User, "what is this?");
+        m1.attachments = vec![att(&file, "a.png"), att(&dir.join("gone.png"), "gone.png")];
+        let m2 = Message::new("c1", Role::Assistant, "a tiny image");
+        let mut m3 = Message::new("c1", Role::User, "");
+        m3.attachments = vec![att(&file, "a.png")];
+        for m in [&m1, &m2, &m3] {
+            store.put_message(m).unwrap();
+        }
+
+        let (hist, latest, images) = history(&store, "c1");
+        assert_eq!(latest, "");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].mime, "image/png");
+        assert_eq!(hist.len(), 2);
+        match &hist[0] {
+            Msg::UserImages { text, images } => {
+                assert_eq!(images.len(), 1);
+                assert_eq!(text, "what is this?\n[image gone.png is no longer on disk]");
+            }
+            other => panic!("expected UserImages, got {other:?}"),
+        }
+        assert!(matches!(hist[1], Msg::Assistant { .. }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

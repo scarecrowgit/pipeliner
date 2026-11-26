@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use gpui::{Focusable as _, KeyBinding, ScrollHandle};
 use gpui_component::input::InputState;
 use gpui_component::select::SelectState;
-use harness_core::{AgentDef, Chat, ChatMode, Message};
+use harness_core::{AgentDef, Attachment, Chat, ChatMode, Message};
 
 use super::prelude::*;
 use data::{ChatRow, Detail, Pickers, PlanState};
@@ -104,6 +104,12 @@ pub struct ChatScreen {
     synced: Option<String>,
     /// Text to put back into the composer (a send failed).
     restore: Option<String>,
+    /// Images for the next message (a draft: kept when switching chats).
+    attachments: Vec<Attachment>,
+    /// Images still being saved (pasted, dropped or picked).
+    adding: usize,
+    /// A screenshot is being taken.
+    capturing: bool,
     // ---- widgets
     composer: Entity<InputState>,
     search: Entity<InputState>,
@@ -141,6 +147,7 @@ impl ChatScreen {
                 KeyBinding::new("up", composer::SuggestUp, Some(CTX)),
                 KeyBinding::new("down", composer::SuggestDown, Some(CTX)),
                 KeyBinding::new("tab", composer::SuggestAccept, Some(CTX)),
+                KeyBinding::new("secondary-v", composer::PasteImage, Some(CTX)),
             ]);
         });
 
@@ -168,9 +175,14 @@ impl ChatScreen {
 
         subs.push(
             cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, _, cx| {
-                if let InputEvent::Change = ev {
-                    this.suggest_ix = 0;
-                    cx.notify();
+                match ev {
+                    InputEvent::Change => {
+                        this.suggest_ix = 0;
+                        cx.notify();
+                    }
+                    // The message box border shows focus.
+                    InputEvent::Focus | InputEvent::Blur => cx.notify(),
+                    _ => {}
                 }
             }),
         );
@@ -290,6 +302,9 @@ impl ChatScreen {
             placeholder: SharedString::default(),
             synced: None,
             restore: None,
+            attachments: vec![],
+            adding: 0,
+            capturing: false,
             composer,
             search,
             title_input,
