@@ -72,7 +72,6 @@ app_icons! {
     Play => "play",
     Plus => "plus",
     RotateCcw => "rotate-ccw",
-    Scan => "scan",
     Search => "search",
     Send => "send",
     Shield => "shield",

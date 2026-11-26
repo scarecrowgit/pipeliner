@@ -214,7 +214,7 @@ impl ChatScreen {
 
     /// How many more images the next message can take (counting ones still being added).
     fn free_slots(&self) -> usize {
-        remaining_slots(self.attachments.len() + self.adding + usize::from(self.capturing))
+        remaining_slots(self.attachments.len() + self.adding)
     }
 
     fn warn_full(cx: &mut App) {
@@ -313,39 +313,6 @@ impl ChatScreen {
             if let Ok(Ok(Some(paths))) = picked.await {
                 let _ = this.update(cx, |this, cx| this.add_files(paths, cx));
             }
-        })
-        .detach();
-    }
-
-    /// Interactive region screenshot (blocks on a background thread until the user picks).
-    fn take_screenshot(&mut self, cx: &mut Context<Self>) {
-        if self.capturing {
-            return;
-        }
-        if self.free_slots() == 0 {
-            Self::warn_full(cx);
-            return;
-        }
-        self.capturing = true;
-        cx.notify();
-        let engine = state::engine(cx);
-        let task = cx.background_spawn(async move { engine.capture_screenshot() });
-        cx.spawn(async move |this, cx| {
-            let res = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.capturing = false;
-                match res {
-                    Ok(a) => this.push_attachment(a, cx),
-                    Err(e) => {
-                        let msg = format!("{e:#}");
-                        // Backing out of the region picker is not an error.
-                        if !msg.contains("cancelled") {
-                            state::toast(ToastKind::Danger, msg, cx);
-                        }
-                    }
-                }
-                cx.notify();
-            });
         })
         .detach();
     }
@@ -736,7 +703,7 @@ impl ChatScreen {
             .child(actions)
     }
 
-    /// The message box: image tray, text, and the bar with "Take screenshot" / "Add image".
+    /// The message box: image tray, text, and the bar with "Add image".
     fn render_compose_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let focused = self.composer.focus_handle(cx).is_focused(window);
         let n = self.attachments.len();
@@ -895,7 +862,6 @@ impl ChatScreen {
                 })
         });
 
-        let capturing = self.capturing;
         let cbar = div()
             .flex()
             .flex_wrap()
@@ -905,26 +871,6 @@ impl ChatScreen {
             .py(px(6.))
             .border_t_1()
             .border_color(theme::LINE)
-            .child(
-                Button::new(
-                    "chat-shot",
-                    if capturing {
-                        "Taking screenshot…"
-                    } else {
-                        "Take screenshot"
-                    },
-                )
-                .ghost()
-                .small()
-                .icon(if capturing {
-                    AppIcon::Loader
-                } else {
-                    AppIcon::Scan
-                })
-                .disabled(capturing || free == 0)
-                .tooltip("Select a region of the screen to attach")
-                .on_click(cx.listener(|this, _, _, cx| this.take_screenshot(cx))),
-            )
             .child(
                 Button::new("chat-add-image", "Add image")
                     .ghost()

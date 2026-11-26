@@ -108,8 +108,6 @@ pub struct ChatScreen {
     attachments: Vec<Attachment>,
     /// Images still being saved (pasted, dropped or picked).
     adding: usize,
-    /// A screenshot is being taken.
-    capturing: bool,
     // ---- widgets
     composer: Entity<InputState>,
     search: Entity<InputState>,
@@ -304,7 +302,6 @@ impl ChatScreen {
             restore: None,
             attachments: vec![],
             adding: 0,
-            capturing: false,
             composer,
             search,
             title_input,
