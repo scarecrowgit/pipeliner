@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1440">
-<meta name="design:size" content="1440x1320">
+<meta name="design:size" content="1440x1880">
 <title>Board</title>
 <style>
 /* Design tokens (keep in sync with design/tokens.css). */
@@ -292,11 +292,43 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 .done{color:var(--success)}
 .more{display:flex;align-items:center;justify-content:center;gap:4px;height:28px;border-radius:var(--radius-md);font-size:12px;color:var(--text-secondary)}
 .more:hover{background:var(--surface-raised)}
+/* New task composer (shared by board.html and timeline.html). */
+@keyframes nt-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes nt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.nt{display:flex;flex-direction:column;border:1px solid var(--accent-ring);border-radius:var(--radius-xl);background:var(--surface);box-shadow:var(--selected-glow);min-width:0;animation:gr-reveal-in var(--duration-enter) var(--ease-out) both}
+.nt-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px 10px 14px;border-bottom:1px solid var(--line)}
+.nt-tile{width:24px;height:24px;border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;flex:none;background:var(--accent-soft);color:var(--accent-text)}
+.nt-title{width:100%;box-sizing:border-box;height:40px;padding:0 12px;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--surface-raised);color:var(--text);font:var(--text-heading);outline:none}
+.nt-title:focus{border-color:var(--accent-ring)}
+.nt-dhead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.nt-ai{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent-text);font-size:12px;line-height:16px;white-space:nowrap}
+.nt-ai .d{width:6px;height:6px;border-radius:var(--radius-full);background:var(--accent);animation:nt-pulse 1.2s var(--ease-standard) infinite}
+.nt-desc{display:flex;flex-direction:column;gap:8px;padding:10px 12px 10px 14px;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--bg-sidebar);color:var(--text-secondary);font-size:13px;line-height:20px;box-shadow:inset 2px 0 0 var(--accent)}
+.nt-desc p{margin:0}
+.nt-desc b{color:var(--text);font-weight:500}
+.nt-desc ul{margin:0;padding-left:18px}
+.nt-desc .dim{color:var(--text-disabled)}
+.nt-caret{display:inline-block;width:2px;height:15px;margin-left:1px;vertical-align:-2px;background:var(--accent-text);animation:nt-caret 1s steps(1) infinite}
+.nt-ask{display:flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 10px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--surface-raised);color:var(--accent-text)}
+.nt-ask input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:12px;outline:none}
+.nt-kv{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px 10px;align-items:center;font-size:12px;line-height:18px}
+.nt-kv dt{color:var(--text-muted)}
+.nt-kv dd{margin:0;min-width:0}
+.nt-pick{display:flex;align-items:center;gap:6px;width:100%;height:28px;padding:0 8px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--surface-raised);color:var(--text);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
+.nt-pick:hover{background:var(--surface-hover)}
+.nt-pick .s{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.nt-pick .m{color:var(--text-muted)}
+.nt-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px 10px 14px;border-top:1px solid var(--line)}
+.nt-ghost{display:flex;flex-direction:column;gap:4px;padding:12px;border:1px dashed var(--accent-ring);border-radius:var(--radius-xl);background:var(--accent-glow);font-size:12px;line-height:18px;color:var(--text-muted)}
+.nt-ghost b{color:var(--text);font-weight:500;font-size:13px;line-height:20px}
+.nt-add{display:flex;align-items:center;gap:6px;height:32px;padding:0 8px;border:1px dashed var(--line-strong);border-radius:var(--radius-md);background:transparent;color:var(--text-muted);font:inherit;font-size:12px;cursor:pointer;text-align:left}
+.nt-add:hover{background:var(--surface-raised);color:var(--text)}
+@media (prefers-reduced-motion: reduce) { .nt, .nt-caret, .nt-ai .d { animation: none; } }
 </style>
 </head>
 <body>
 <div id="dc-root"
-><div style="min-height: 1320px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
+><div style="min-height: 1880px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><div style="flex: 0 0 276px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);"
 ><nav class="gr-nav" aria-label="Main" style="width: 100%; min-height: 800px; gap: 2px; font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0px 8px; border: 0px; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer; text-align: left;"
@@ -496,11 +528,12 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><rect x="14" y="4" width="4" height="16" rx="1"
 ></rect
 ></svg>Pause all</button
-><button type="button" class="gr-btn gr-btn--primary"
+><button type="button" class="gr-btn gr-btn--primary" aria-expanded="true"
 ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="M5 12h14M12 5v14"
 ></path
-></svg>New task</button
+></svg>New task<kbd class="gr-kbd" style="border-color: transparent; color: var(--on-accent);">C</kbd
+></button
 ></header
 ><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px; border-bottom: 1px solid var(--line);"
 ><label class="search"
@@ -624,6 +657,156 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ></span>Chat · Direct<span class="c">$0.02 of $0.50</span
 ></button
 ></div
+><section class="nt" aria-label="New task" style="margin: 16px 24px 0px;"
+><div class="nt-head"
+><span class="nt-tile"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M5 12h14M12 5v14"
+></path
+></svg
+></span
+><h2 class="head" style="margin: 0px;">New task</h2
+><span class="lbl">lands in</span
+><span class="gr-badge"
+><span class="gr-dot gr-dot--draft gr-dot--sm" aria-hidden="true"
+></span>Queued</span
+><span class="lbl">· first in line</span
+><div style="flex: 1 1 0%;"
+></div
+><span class="lbl" style="display: inline-flex; align-items: center; gap: 4px;"
+><kbd class="gr-kbd">C</kbd> new task anywhere on the board</span
+><button type="button" aria-label="Close" class="gr-btn gr-btn--ghost gr-btn--sm"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M18 6 6 18M6 6l12 12"
+></path
+></svg
+></button
+></div
+><div style="display: grid; grid-template-columns: minmax(0px, 1fr) 320px;"
+><div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; min-width: 0px;"
+><label for="nt-title" class="sr">Title</label
+><input id="nt-title" class="nt-title" value="Refund webhook: ack first, refund from the queue"
+><div class="nt-dhead"
+><span class="lbl" style="color: var(--text-secondary);">Description</span
+><span class="nt-ai"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94a2 2 0 0 0 1.44-1.44l1.58-6.13a.5.5 0 0 1 .96 0l1.58 6.13a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z"
+></path
+><path d="M20 3v4M22 5h-4"
+></path
+></svg> Filled by AI · Haiku 5.5 · $0.003</span
+><span class="lbl">from the title, PAY-1431 and run #129</span
+><div style="flex: 1 1 0%;"
+></div
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Undo</button
+><button type="button" class="gr-btn gr-btn--secondary gr-btn--sm"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"
+></path
+><path d="M3 3v5h5"
+></path
+></svg>Rewrite</button
+></div
+><div class="nt-desc" role="textbox" aria-multiline="true" aria-label="Description" contenteditable="true"
+><p
+><b>Goal.</b> Stop the provider’s 10 s timeout on <span class="mono">POST /webhooks/refund</span>: return 200 at once and do the refund from the job queue.</p
+><p
+><b>Steps</b
+></p
+><ul
+><li>Enqueue a <span class="mono">refund.process</span> job with the idempotency key, then ack.</li
+><li>Move the refund call into the worker; retry 3× with backoff.</li
+><li>Add a test that the webhook answers in under 1 s with a slow provider.</li
+></ul
+><p
+><b>Done when</b> the 14 refund tests pass and Load-tester sees 0 timeouts in 500 calls.</p
+></div
+><label class="nt-ask"
+><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94a2 2 0 0 0 1.44-1.44l1.58-6.13a.5.5 0 0 1 .96 0l1.58 6.13a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z"
+></path
+><path d="M20 3v4M22 5h-4"
+></path
+></svg
+><span class="sr">Ask AI to change the description</span
+><input type="text" placeholder="Ask AI to change it, e.g. “shorter”, “add a rollback step”"
+><kbd class="gr-kbd">↵</kbd
+></label
+></div
+><dl class="nt-kv" style="margin: 0px; padding: 14px; border-left: 1px solid var(--line); align-content: start;"
+><dt>Who does it</dt
+><dd
+><button type="button" class="nt-pick"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M12 8V4H8"
+></path
+><rect width="16" height="12" x="4" y="8" rx="2"
+></rect
+><path d="M2 14h2M20 14h2M15 13v2M9 13v2"
+></path
+></svg
+><span class="s">Agent · Fixer v7</span
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="m6 9 6 6 6-6"
+></path
+></svg
+></button
+></dd
+><dt>Run</dt
+><dd
+><button type="button" class="nt-pick"
+><span class="s"
+><span class="mono" style="font-size: 12px;">#129</span> Bug triage · PAY-1431</span
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="m6 9 6 6 6-6"
+></path
+></svg
+></button
+></dd
+><dt>Model</dt
+><dd
+><button type="button" class="nt-pick"
+><span class="s">Sonnet 5.5</span
+><span class="m">agent default</span
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="m6 9 6 6 6-6"
+></path
+></svg
+></button
+></dd
+><dt>Budget</dt
+><dd
+><button type="button" class="nt-pick"
+><span class="s">$0.20</span
+><span class="m">run has $1.58 left</span
+></button
+></dd
+><dt>Works in</dt
+><dd
+><button type="button" class="nt-pick"
+><span class="s mono" style="font-size: 12px;">payments-api · new branch</span
+></button
+></dd
+><dt>Starts</dt
+><dd
+><div role="group" aria-label="Starts" class="seg"
+><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-pressed="true" style="background: var(--surface-hover); flex: 1 1 0%;">When a slot frees</button
+><button type="button" class="gr-btn gr-btn--sm gr-btn--ghost" aria-pressed="false" style="flex: 1 1 0%;">Hold</button
+></div
+></dd
+></dl
+></div
+><div class="nt-foot"
+><span class="lbl">The AI only drafts the text. Nothing runs until you create it.</span
+><div style="flex: 1 1 0%;"
+></div
+><span class="lbl" style="display: inline-flex; align-items: center; gap: 4px;"
+><kbd class="gr-kbd">Esc</kbd> discard</span
+><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Cancel</button
+><button type="button" class="gr-btn gr-btn--primary gr-btn--sm">Create task<kbd class="gr-kbd" style="border-color: transparent; color: var(--on-accent);">⌘↵</kbd
+></button
+></div
+></section
 ><div style="padding: 16px 24px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: start;"
 ><section class="col" aria-label="Queued"
 ><div class="colhead"
@@ -633,12 +816,21 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><span class="lbl">3</span
 ><div style="flex: 1 1 0%;"
 ></div
-><button type="button" aria-label="Add a task to Queued" class="gr-btn gr-btn--ghost gr-btn--sm"
+><button type="button" aria-label="Add a task to Queued" aria-pressed="true" class="gr-btn gr-btn--ghost gr-btn--sm" style="background: var(--accent-soft); color: var(--accent-text);"
 ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="M5 12h14M12 5v14"
 ></path
 ></svg
 ></button
+></div
+><div class="nt-ghost" aria-hidden="true"
+><span style="display: flex; align-items: center; gap: 6px;"
+><span class="gr-dot gr-dot--draft gr-dot--sm"
+></span>new · <span class="mono" style="font-size: 12px; line-height: 18px;">#129</span
+><div style="flex: 1 1 0%;"
+></div>draft</span
+><b>Refund webhook: ack first, refund from the queue</b
+><span>Fixer v7 · Sonnet 5.5 · $0.20</span
 ></div
 ><article class="tcard"
 ><div class="ctop"
@@ -715,6 +907,14 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ></span>queued · waits for the Review gate<div style="flex: 1 1 0%;"
 ></div>Haiku 5.5</div
 ></article
+><button type="button" class="nt-add"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M5 12h14M12 5v14"
+></path
+></svg>Add task<div style="flex: 1 1 0%;"
+></div
+><kbd class="gr-kbd">C</kbd
+></button
 ></section
 ><section class="col" aria-label="Running"
 ><div class="colhead"
@@ -1076,7 +1276,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ></button
 ></section
 ></div
-><p class="lbl" style="margin: 0px; padding: 0px 24px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;">Drag a card to another column to pause, re-queue or retry it · <kbd class="gr-kbd">↵</kbd> open thread · <kbd class="gr-kbd">/</kbd> search · <kbd class="gr-kbd">G</kbd
+><p class="lbl" style="margin: 0px; padding: 0px 24px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;">Drag a card to another column to pause, re-queue or retry it · <kbd class="gr-kbd">C</kbd> new task · <kbd class="gr-kbd">↵</kbd> open thread · <kbd class="gr-kbd">/</kbd> search · <kbd class="gr-kbd">G</kbd
 ><kbd class="gr-kbd">T</kbd> timeline</p
 ></main
 ></div

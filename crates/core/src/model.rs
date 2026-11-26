@@ -577,6 +577,8 @@ pub enum TaskKind {
     /// Sub-task made by an agent (`delegate`).
     Spawned,
     Source,
+    /// A task you created on the Board or Timeline.
+    Manual,
 }
 
 impl TaskKind {
@@ -591,6 +593,7 @@ impl TaskKind {
             TaskKind::Tool => "Tool",
             TaskKind::Spawned => "Sub-agent",
             TaskKind::Source => "Source",
+            TaskKind::Manual => "Task",
         }
     }
 }

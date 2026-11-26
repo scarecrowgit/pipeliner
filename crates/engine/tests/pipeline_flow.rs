@@ -365,3 +365,66 @@ fn reject_cancels_and_restart_resumes_gate() {
     .unwrap();
     wait_for(&e2, &r.id, Status::Cancelled);
 }
+
+#[test]
+fn manual_task_runs_to_done() {
+    let url = serve(|_| ("All done, nothing to change.".into(), None));
+    let e = engine(&url);
+    let t = e
+        .create_task(harness_engine::tasks::NewTask {
+            title: "Say hi".into(),
+            description: "Reply with a short report.".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(t.kind, TaskKind::Manual);
+    let start = Instant::now();
+    let done = loop {
+        let t = e.store().task(&t.id).unwrap();
+        if t.status == Status::Done || t.status == Status::Failed {
+            break t;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "timeout: {:?}",
+            t.status
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(done.status, Status::Done, "error: {:?}", done.error);
+    assert_eq!(done.summary, "All done, nothing to change.");
+    assert!(done.finished_at.is_some());
+    assert!(done.steps >= 1);
+    // The task's thread holds your message and the reply.
+    let msgs = e.store().messages(&t.id);
+    assert_eq!(msgs[0].content, "Reply with a short report.");
+    assert!(msgs.iter().any(|m| m.role == Role::Assistant));
+}
+
+#[test]
+fn draft_description_returns_served_text() {
+    let url = serve(|_| ("Goal: add dark mode\nDone when: it works".into(), None));
+    let e = engine(&url);
+    let mut streamed = String::new();
+    let d = e
+        .draft_description(
+            harness_engine::tasks::DraftRequest {
+                title: "Dark mode".into(),
+                ..Default::default()
+            },
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            |t| streamed = t.to_string(),
+        )
+        .unwrap();
+    assert_eq!(d.text, "Goal: add dark mode\nDone when: it works");
+    assert_eq!(d.model, "t/test-haiku");
+    assert_eq!(streamed, d.text);
+    // Nothing to work from: error.
+    assert!(e
+        .draft_description(
+            harness_engine::tasks::DraftRequest::default(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            |_| {},
+        )
+        .is_err());
+}
