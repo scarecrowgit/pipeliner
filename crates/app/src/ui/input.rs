@@ -115,3 +115,9 @@ pub fn composer_field(state: &Entity<InputState>) -> Input {
         .rounded(theme::RADIUS_LG)
         .text_size(px(13.))
 }
+
+/// Multi-line input without its own border or background, for use inside a bordered
+/// container (the chat composer box).
+pub fn composer_field_bare(state: &Entity<InputState>) -> Input {
+    Input::new(state).appearance(false).text_size(px(13.))
+}

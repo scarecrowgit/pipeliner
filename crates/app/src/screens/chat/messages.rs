@@ -1,13 +1,16 @@
 //! The conversation: messages (markdown, tool calls, notes), inline cards (plan, run
 //! progress, task) and the live sub-task board above the composer.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    pulsating_between, Animation, AnimationExt as _, HighlightStyle, ScrollWheelEvent, StyledText,
+    img, pulsating_between, Animation, AnimationExt as _, HighlightStyle, ObjectFit,
+    ScrollWheelEvent, StyledImage as _, StyledText,
 };
 use harness_core::{Card, ChatMode, DecisionKind, Message, Role, Task, ToolCall};
 
+use super::composer::{count_noun, tokens_short};
 use super::data::{self, PlanState, RunInfo};
 use super::{clock, eid, mode_icon, ChatScreen, Form};
 use crate::screens::prelude::*;
@@ -946,6 +949,7 @@ fn subtask_item(t: &Task) -> impl IntoElement {
 /// "You · 09:40" and the message in an accent bubble, right aligned.
 fn user_message(m: &Message, steering: bool) -> impl IntoElement {
     let content = m.content.trim().to_string();
+    let text_empty = content.is_empty();
     // Highlight a leading `/run name` or `@Agent` like the composer suggests them.
     let token_len = if let Some(rest) = content.strip_prefix("/run ") {
         rest.find(char::is_whitespace)
@@ -975,6 +979,37 @@ fn user_message(m: &Message, steering: bool) -> impl IntoElement {
     } else {
         m.author.clone()
     };
+    let has_images = !m.attachments.is_empty();
+    let bubble = div()
+        .when(!has_images, |d| {
+            d.max_w(relative(0.85)).px(px(14.)).py(px(10.))
+        })
+        .when(has_images, |d| {
+            d.max_w(px(376.))
+                .p(px(8.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .children(
+                    m.attachments
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, a)| sent_image(&m.id, ix, a)),
+                )
+        })
+        .rounded(theme::RADIUS_XL)
+        .bg(theme::ACCENT_SOFT)
+        .border_1()
+        .border_color(theme::ACCENT_RING)
+        .text_body()
+        .fg()
+        .when(!text_empty, |d| {
+            d.child(
+                div()
+                    .when(has_images, |t| t.px(px(6.)).pb(px(2.)))
+                    .child(text),
+            )
+        });
     div()
         .flex()
         .flex_col()
@@ -995,19 +1030,16 @@ fn user_message(m: &Message, steering: bool) -> impl IntoElement {
                 )
                 .child(clock(m.created_at)),
         )
-        .child(
-            div()
-                .max_w(relative(0.85))
-                .px(px(14.))
-                .py(px(10.))
-                .rounded(theme::RADIUS_XL)
-                .bg(theme::ACCENT_SOFT)
-                .border_1()
-                .border_color(theme::ACCENT_RING)
-                .text_body()
-                .fg()
-                .child(text),
-        )
+        .child(bubble)
+        .when(!m.attachments.is_empty(), |d| {
+            let tokens: u64 = m.attachments.iter().map(|a| a.tokens()).sum();
+            d.child(
+                div()
+                    .text_label()
+                    .fg_muted()
+                    .child(attachments_note(m.attachments.len(), tokens)),
+            )
+        })
         .when(steering, |d| {
             d.child(
                 div()
@@ -1016,6 +1048,65 @@ fn user_message(m: &Message, steering: bool) -> impl IntoElement {
                     .child("Steering · the agent reads it before its next step"),
             )
         })
+}
+
+/// "1 screenshot · ≈ 1.4k tokens · click to open full size".
+fn attachments_note(n: usize, tokens: u64) -> String {
+    format!(
+        "{} · ≈ {} tokens · click to open full size",
+        count_noun(n, "screenshot"),
+        tokens_short(tokens)
+    )
+}
+
+/// One image in a sent message: 360×208, tag `name · W×H`, click opens it full size.
+fn sent_image(message: &str, ix: usize, a: &harness_core::Attachment) -> impl IntoElement {
+    let path = PathBuf::from(&a.path);
+    let exists = path.is_file();
+    let tag = format!("{} · {}×{}", a.name, a.width, a.height);
+    let open = path.clone();
+    div()
+        .id(eid("sent-img", &format!("{message}-{ix}")))
+        .relative()
+        .flex_none()
+        .w(px(360.))
+        .max_w_full()
+        .h(px(208.))
+        .border_1()
+        .border_color(theme::LINE_STRONG)
+        .rounded(theme::RADIUS_LG)
+        .bg(theme::BG)
+        .overflow_hidden()
+        .when(exists, |d| {
+            d.cursor_pointer()
+                .on_click(move |_, _, cx| cx.open_with_system(&open))
+                .child(img(path).size_full().object_fit(ObjectFit::Cover))
+        })
+        .when(!exists, |d| {
+            d.flex()
+                .items_center()
+                .justify_center()
+                .text_label()
+                .fg_muted()
+                .child("Image no longer on disk")
+        })
+        .child(
+            div()
+                .absolute()
+                .left(px(4.))
+                .bottom(px(4.))
+                .max_w(px(340.))
+                .h(px(18.))
+                .px(px(6.))
+                .flex()
+                .items_center()
+                .rounded(theme::RADIUS_SM)
+                .bg(theme::SCRIM)
+                .text_color(theme::TEXT_SECONDARY)
+                .text_mono_sm()
+                .truncate()
+                .child(tag),
+        )
 }
 
 /// An engine note: small, centered.
@@ -1104,4 +1195,21 @@ fn spinner(id: &str) -> impl IntoElement {
                 .with_easing(pulsating_between(0.3, 1.0)),
             |d, t| d.opacity(t),
         )
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+
+    #[test]
+    fn notes_sent_images() {
+        assert_eq!(
+            attachments_note(1, 1365),
+            "1 screenshot · ≈ 1.4k tokens · click to open full size"
+        );
+        assert_eq!(
+            attachments_note(2, 2200),
+            "2 screenshots · ≈ 2.2k tokens · click to open full size"
+        );
+    }
 }

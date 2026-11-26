@@ -64,7 +64,14 @@ impl<'a> AgentRun<'a> {
 
         let mut msgs: Vec<Msg> = vec![Msg::System(self.stack.system(&config))];
         msgs.append(&mut self.history);
-        msgs.push(Msg::User(self.stack.first_turn()));
+        if self.stack.images.is_empty() {
+            msgs.push(Msg::User(self.stack.first_turn()));
+        } else {
+            msgs.push(Msg::UserImages {
+                text: self.stack.first_turn(),
+                images: self.stack.images.clone(),
+            });
+        }
         // Messages already in the thread were part of the first turn.
         let _ = store.take_undelivered(&self.thread_id);
 
@@ -79,7 +86,7 @@ impl<'a> AgentRun<'a> {
                 bail!("cancelled");
             }
             for m in store.take_undelivered(&self.thread_id) {
-                msgs.push(Msg::User(format!("{STEER_PREFIX}{}", m.content)));
+                msgs.push(steer_msg(&m));
             }
             if step >= self.max_steps && !wrap_up {
                 wrap_up = true;
@@ -175,7 +182,7 @@ impl<'a> AgentRun<'a> {
                 let pending = store.take_undelivered(&self.thread_id);
                 if !pending.is_empty() && !wrap_up {
                     for p in pending {
-                        msgs.push(Msg::User(format!("{STEER_PREFIX}{}", p.content)));
+                        msgs.push(steer_msg(&p));
                     }
                     continue;
                 }
@@ -251,6 +258,17 @@ impl<'a> AgentRun<'a> {
     }
 }
 
+/// A steering message from the user; images attached to it go along.
+fn steer_msg(m: &Message) -> Msg {
+    let text = format!("{STEER_PREFIX}{}", m.content);
+    let (text, images) = crate::attachments::images_for(&m.attachments, text);
+    if images.is_empty() {
+        Msg::User(text)
+    } else {
+        Msg::UserImages { text, images }
+    }
+}
+
 fn handled(h: Option<Handled>) -> (String, Option<Value>) {
     match h {
         Some(Handled::Continue(s)) => (s, None),
@@ -266,6 +284,7 @@ fn compact(msgs: &mut [Msg]) {
         .iter()
         .map(|m| match m {
             Msg::System(s) | Msg::User(s) => s.len(),
+            Msg::UserImages { text, .. } => text.len(),
             Msg::Assistant {
                 content,
                 tool_calls,
