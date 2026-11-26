@@ -227,9 +227,54 @@ pub fn stage_git(
 /// Stages skills from an install command: runs it with `sh -c` in an empty temp folder
 /// (inside the staging folder) with `HOME` pointing there, so tools that install into
 /// `~/.claude/skills` or `./.claude/skills` land in it, then scans what appeared.
-pub fn stage_command(config: &Config, command: &str, origin: Option<&Origin>) -> Result<StagedSet> {
+/// The command as it will run: `npx skills add …` (and bunx / pnpm dlx / yarn dlx)
+/// gets the flags that keep it from asking anything, since it runs without a terminal:
+/// it otherwise stops at "which agents?" and fails. `-a claude-code` puts the skill in
+/// `.claude/skills` of the temp folder, `--copy` makes it real files (not links into a
+/// folder that is deleted), `-y` skips confirmations; npx itself gets `--yes`.
+/// Flags you already gave are kept.
+pub fn effective_command(command: &str) -> String {
     let cmd = command.trim();
     let cmd = cmd.strip_prefix("$ ").unwrap_or(cmd).trim();
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let runner_len = match words.as_slice() {
+        ["npx" | "bunx", ..] => 1,
+        ["pnpm" | "yarn", "dlx", ..] => 2,
+        _ => return cmd.to_string(),
+    };
+    // Runner options (`npx -y`), then the package, then `add`.
+    let mut i = runner_len;
+    while words.get(i).is_some_and(|w| w.starts_with('-')) {
+        i += 1;
+    }
+    let is_skills = words
+        .get(i)
+        .is_some_and(|p| *p == "skills" || p.starts_with("skills@"));
+    if !is_skills || words.get(i + 1) != Some(&"add") || cmd.contains(['|', ';', '&', '>']) {
+        return cmd.to_string();
+    }
+    let has = |names: &[&str]| words[i + 2..].iter().any(|w| names.contains(w));
+    let mut out: Vec<String> = words[..runner_len].iter().map(|w| w.to_string()).collect();
+    let runner_yes = words[runner_len..i].iter().any(|w| *w == "-y" || *w == "--yes");
+    if words[0] == "npx" && !runner_yes {
+        out.push("--yes".into());
+    }
+    out.extend(words[runner_len..].iter().map(|w| w.to_string()));
+    if !has(&["-a", "--agent", "--all"]) {
+        out.extend(["-a".into(), "claude-code".into()]);
+    }
+    if !has(&["--copy"]) {
+        out.push("--copy".into());
+    }
+    if !has(&["-y", "--yes", "--all"]) {
+        out.push("-y".into());
+    }
+    out.join(" ")
+}
+
+pub fn stage_command(config: &Config, command: &str, origin: Option<&Origin>) -> Result<StagedSet> {
+    let effective = effective_command(command);
+    let cmd = effective.as_str();
     if cmd.is_empty() {
         bail!("empty command");
     }
@@ -245,6 +290,16 @@ pub fn stage_command(config: &Config, command: &str, origin: Option<&Origin>) ->
         env.insert("XDG_DATA_HOME".to_string(), format!("{home}/.local/share"));
         env.insert("XDG_CACHE_HOME".to_string(), format!("{home}/.cache"));
         env.insert("GIT_TERMINAL_PROMPT".to_string(), "0".to_string());
+        // No terminal here: no prompts, colours or spinners.
+        for (k, v) in [
+            ("CI", "1"),
+            ("NO_COLOR", "1"),
+            ("FORCE_COLOR", "0"),
+            ("TERM", "dumb"),
+            ("npm_config_yes", "true"),
+        ] {
+            env.insert(k.to_string(), v.to_string());
+        }
         let cancel = AtomicBool::new(false);
         let output = crate::tools::run_command(&work, "", &env, cmd, COMMAND_TIMEOUT, &cancel)?;
         let ok = output.starts_with("exit code 0\n") || output == "exit code 0";
@@ -477,6 +532,30 @@ mod tests {
         let d = std::env::temp_dir().join(format!("pl-si-{tag}-{}", harness_core::new_id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn skills_cli_runs_without_prompts() {
+        assert_eq!(
+            effective_command("npx skills add nextlevelbuilder/ui-ux-pro-max-skill@ui-ux-pro-max"),
+            "npx --yes skills add nextlevelbuilder/ui-ux-pro-max-skill@ui-ux-pro-max -a claude-code --copy -y"
+        );
+        // Flags you gave stay; nothing is doubled.
+        assert_eq!(
+            effective_command("$ npx -y skills add o/r --agent codex --copy --yes"),
+            "npx -y skills add o/r --agent codex --copy --yes"
+        );
+        assert_eq!(
+            effective_command("pnpm dlx skills add o/r --all"),
+            "pnpm dlx skills add o/r --all --copy"
+        );
+        // Other commands and pipelines are left alone.
+        assert_eq!(effective_command("npx other-cli add x"), "npx other-cli add x");
+        assert_eq!(effective_command("git clone u"), "git clone u");
+        assert_eq!(
+            effective_command("npx skills add o/r | tee log"),
+            "npx skills add o/r | tee log"
+        );
     }
 
     #[test]

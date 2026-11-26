@@ -698,7 +698,8 @@ impl SettingsScreen {
                                 .child(Clamped::new(
                                     "sk-confirm",
                                     format!(
-                                        "This runs the command in an empty temp folder: {text}. Click Confirm run to go ahead, or edit the text to cancel."
+                                        "This runs the command in an empty temp folder: {}. Click Confirm run to go ahead, or edit the text to cancel.",
+                                        harness_engine::skill_install::effective_command(&text)
                                     ),
                                     3,
                                 )),
