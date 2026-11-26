@@ -1300,6 +1300,17 @@ fn exec_render(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode) -> Resu
     res
 }
 
+/// Where a render of `file` goes. The task id is part of the path so every render (a redo
+/// after a send-back included) gets a new file: the app's image cache is keyed by path and
+/// would keep showing the old picture if the PNG were overwritten in place.
+fn render_path(run: u64, node: &str, letter: char, task: &str, file: &str) -> PathBuf {
+    harness_core::paths::renders_dir()
+        .join(format!("run-{run}"))
+        .join(format!("{}-{letter}", git::slug(node)))
+        .join(task)
+        .join(format!("{}.png", file.replace('/', "__")))
+}
+
 fn render_inner(
     engine: &Engine,
     run: &Run,
@@ -1355,10 +1366,7 @@ fn render_inner(
                     continue;
                 }
                 let (w, h) = design_size(&abs).unwrap_or((rn.width, rn.height));
-                let out = harness_core::paths::renders_dir()
-                    .join(format!("run-{}", run.number))
-                    .join(format!("{}-{}", git::slug(&node.name), letter))
-                    .join(format!("{}.png", f.replace('/', "__")));
+                let out = render_path(run.number, &node.name, letter, &t.id, &f);
                 match crate::render::render(&cmd, &abs, &out, w, h) {
                     Ok(()) => {
                         images.push(json!(out.display().to_string()));
@@ -2031,5 +2039,18 @@ mod env_tests {
             out["CARGO_TARGET_DIR"]
         );
         assert_eq!(out["TAG"], "run-42");
+    }
+}
+
+#[cfg(test)]
+mod render_path_tests {
+    use super::render_path;
+
+    #[test]
+    fn each_render_task_gets_its_own_file() {
+        let first = render_path(9, "Render mockups", 'B', "task1", "design/screens/agents.html");
+        let redo = render_path(9, "Render mockups", 'B', "task2", "design/screens/agents.html");
+        assert_ne!(first, redo, "a redo must not overwrite the PNG the app has cached");
+        assert!(first.ends_with("run-9/render-mockups-B/task1/design__screens__agents.html.png"));
     }
 }
