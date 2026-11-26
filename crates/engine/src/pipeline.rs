@@ -429,8 +429,11 @@ fn upstream_order(g: &PipelineGraph, id: &str) -> Vec<Id> {
 struct Place {
     cwd: PathBuf,
     branch: Option<String>,
-    /// Commit the step started from (diff base).
+    /// Commit the step started from (the step's own diff).
     base: Option<String>,
+    /// Where the run's branch left the base branch: what a reviewer compares against, so
+    /// a redo after "send back" shows the whole change, not just the latest edit.
+    start: Option<String>,
     shell: String,
     env: BTreeMap<String, String>,
 }
@@ -478,6 +481,7 @@ fn place(
             cwd: root,
             branch: None,
             base: None,
+            start: None,
             shell,
             env: env.clone(),
         });
@@ -511,10 +515,12 @@ fn place(
                     let cwd = p.join(&sub);
                     let branch = git::git(&p, &["rev-parse", "--abbrev-ref", "HEAD"]).ok();
                     let base = git::head(&p).ok();
+                    let start = git::fork_point(&p, &wd.base_branch);
                     return Ok(Place {
                         cwd,
                         branch,
                         base,
+                        start,
                         shell,
                         env: env.clone(),
                     });
@@ -570,10 +576,12 @@ fn place(
     } else {
         git::head(&dest).ok()
     };
+    let start = git::fork_point(&dest, &wd.base_branch);
     Ok(Place {
         cwd: dest.join(&sub),
         branch: Some(branch),
         base,
+        start,
         shell,
         env: env.clone(),
     })
@@ -1206,11 +1214,18 @@ fn run_variant(
         }
     };
 
-    // Capture the work: commit in the worktree and diff against the starting point.
+    // Capture the work: commit in the worktree and diff against where the branch left
+    // the base branch (the whole change under review, also after a send-back redo).
     let mut diff = String::new();
+    // This step's own change (the thread's "+N −M").
+    let mut step_diff = String::new();
     if let Some(p) = &place {
         if let Some(base) = &p.base {
-            diff = git::diff_against(&p.cwd, base);
+            step_diff = git::diff_against(&p.cwd, base);
+            diff = match &p.start {
+                Some(start) if start != base => git::diff_against(&p.cwd, start),
+                _ => step_diff.clone(),
+            };
             let first = out
                 .text
                 .lines()
@@ -1228,7 +1243,7 @@ fn run_variant(
             let _ = git::commit_all(&p.cwd, &msg);
         }
     }
-    let (files, add, del) = git::diff_stat(&diff);
+    let (files, add, del) = git::diff_stat(&step_diff);
     let summary = out.text.clone();
     store.update_task(&t.id, |t| {
         t.output = json!({"files": files, "added": add, "removed": del});
@@ -1803,6 +1818,7 @@ fn exec_tool(engine: &Engine, run: &Run, node: &Node, tn: &ToolNode) -> Result<S
                     cwd: std::env::temp_dir(),
                     branch: None,
                     base: None,
+                    start: None,
                     shell: String::new(),
                     env: Default::default(),
                 },
