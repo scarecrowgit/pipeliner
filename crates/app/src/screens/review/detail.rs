@@ -264,8 +264,11 @@ impl ReviewScreen {
                         div()
                             .text_body_strong()
                             .fg()
-                            .clamp_lines(3)
-                            .child(v.title.clone()),
+                            .child(ui::Clamped::new(
+                                SharedString::from(format!("variant-title-{}", v.v.id)),
+                                v.title.clone(),
+                                3,
+                            )),
                     )
                     .child(
                         div()
@@ -325,8 +328,11 @@ impl ReviewScreen {
                                 .overflow_hidden()
                                 .text_label()
                                 .fg_muted()
-                                .clamp_lines(4)
-                                .child(plain_teaser(&v.body)),
+                                .child(ui::Clamped::new(
+                                    SharedString::from(format!("variant-teaser-{}", v.v.id)),
+                                    plain_teaser(&v.body),
+                                    4,
+                                )),
                         )
                     })
                     .child(div().flex_1())
@@ -1010,8 +1016,11 @@ impl ReviewScreen {
                                     div()
                                         .text_label()
                                         .fg_muted()
-                                        .clamp_lines(2)
-                                        .child(n.detail.clone()),
+                                        .child(ui::Clamped::new(
+                                            SharedString::from(format!("next-{}", n.name)),
+                                            n.detail.clone(),
+                                            2,
+                                        )),
                                 )
                             }),
                     )

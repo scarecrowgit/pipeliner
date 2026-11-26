@@ -240,7 +240,11 @@ fn also_row(a: &AlsoRow, cx: &mut Context<ReviewScreen>) -> impl IntoElement {
                 .gap(px(2.))
                 .child(div().text_body().fg().child(a.title.clone()))
                 .when(!sub.is_empty(), |d| {
-                    d.child(div().text_label().fg_muted().clamp_lines(2).child(sub))
+                    d.child(div().text_label().fg_muted().child(ui::Clamped::new(
+                        SharedString::from(format!("also-sub-{}", a.task_id)),
+                        sub,
+                        2,
+                    )))
                 })
                 .child(
                     div()
@@ -317,8 +321,11 @@ fn decided_row(ix: usize, r: &DecidedRow) -> impl IntoElement {
                 .min_w_0()
                 .text_label()
                 .fg_secondary()
-                .clamp_lines(2)
-                .child(r.what.clone()),
+                .child(ui::Clamped::new(
+                    SharedString::from(format!("decided-{}", r.task_id)),
+                    r.what.clone(),
+                    2,
+                )),
         )
         .when(!r.run_ref.is_empty(), |d| {
             d.child(

@@ -754,8 +754,11 @@ impl BoardScreen {
                             .min_w_0()
                             .text_body_strong()
                             .fg()
-                            .clamp_lines(2)
-                            .child(c.title.clone()),
+                            .child(ui::Clamped::new(
+                                SharedString::from(format!("card-title-{}", c.id)),
+                                c.title.clone(),
+                                2,
+                            )),
                     ),
             )
             .when_some(c.spawn.clone(), |d, s| {
@@ -769,8 +772,11 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .fg_secondary()
-                        .clamp_lines(2)
-                        .child(c.summary.clone()),
+                        .child(ui::Clamped::new(
+                            SharedString::from(format!("card-sum-{}", c.id)),
+                            c.summary.clone(),
+                            2,
+                        )),
                 )
             })
             .when_some(c.error.clone(), |d, e| {
@@ -778,8 +784,11 @@ impl BoardScreen {
                     div()
                         .text_label()
                         .text_color(theme::DANGER)
-                        .clamp_lines(2)
-                        .child(e),
+                        .child(ui::Clamped::new(
+                            SharedString::from(format!("card-err-{}", c.id)),
+                            e,
+                            2,
+                        )),
                 )
             })
             // Footer: status, actor · model, cost.

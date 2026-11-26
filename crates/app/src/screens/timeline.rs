@@ -331,13 +331,20 @@ fn draft_title(typed: &str) -> String {
     }
 }
 
-/// Width the "now HH:MM" badge takes on the hour axis (it starts 3px right of the line).
-const NOW_BADGE_W: f32 = 80.;
+/// Width the "now HH:MM" badge takes on the hour axis: its text plus 4px padding a side.
+const NOW_BADGE_W: f32 = 9. * MONO_SM_CHAR + 8.;
+/// Advance of one character in the 11px mono face.
+const MONO_SM_CHAR: f32 = 6.6;
 
-/// Whether an hour label at `x` would be drawn under the "now" badge at `now_x`.
-fn hidden_by_now_badge(x: f32, now_x: f32) -> bool {
-    // A label is ~40px wide and starts 4px right of its tick.
-    x + 44. > now_x && x < now_x + NOW_BADGE_W
+/// Width of an axis label in the small mono face.
+fn label_w(text: &str) -> f32 {
+    text.chars().count() as f32 * MONO_SM_CHAR
+}
+
+/// Whether an axis label `w` px wide at tick `x` (it starts 4px right of the tick) would
+/// be drawn under the "now" badge, which starts 3px right of `now_x`.
+fn hidden_by_now_badge(x: f32, w: f32, now_x: f32) -> bool {
+    x + 4. + w + 4. > now_x + 3. && x + 4. < now_x + 3. + NOW_BADGE_W
 }
 
 /// Left edge and width (px) of the draft bar: starts at `now_x`, lasts [`DRAFT_MINUTES`] and
@@ -787,22 +794,25 @@ impl TimelineScreen {
         let mut m = 0i64;
         while m < 24 * 60 {
             let x = m as f32 / 60.0 * pxph;
-            let under_badge = now_x.is_some_and(|nx| hidden_by_now_badge(x, nx));
-            if m % label_step == 0 && !under_badge {
+            if m % label_step == 0 {
                 let text = if label_step >= 60 && self.zoom == 0 {
                     format!("{:02}", m / 60)
                 } else {
                     format!("{:02}:{:02}", m / 60, m % 60)
                 };
-                lane_head = lane_head.child(
-                    div()
-                        .absolute()
-                        .left(px(x + 4.))
-                        .top(px(8.))
-                        .text_mono_sm()
-                        .fg_muted()
-                        .child(text),
-                );
+                let under_badge =
+                    now_x.is_some_and(|nx| hidden_by_now_badge(x, label_w(&text), nx));
+                if !under_badge {
+                    lane_head = lane_head.child(
+                        div()
+                            .absolute()
+                            .left(px(x + 4.))
+                            .top(px(8.))
+                            .text_mono_sm()
+                            .fg_muted()
+                            .child(text),
+                    );
+                }
                 lane_head = lane_head.child(
                     div()
                         .absolute()
@@ -1495,14 +1505,16 @@ mod tests {
 
     #[test]
     fn hour_labels_skip_the_now_badge() {
-        // now at 19:35 with 100 px per hour: "20" sits under the badge; "19" ends before it.
-        let px = |h: f32| h * 100.;
-        let now = px(19.0 + 35.0 / 60.0);
-        assert!(hidden_by_now_badge(px(20.), now));
-        assert!(!hidden_by_now_badge(px(19.), now));
-        // now at 19:10: the "19" label (19:00–19:24 at this scale) is covered.
-        assert!(hidden_by_now_badge(px(19.), px(19.0 + 10.0 / 60.0)));
-        assert!(!hidden_by_now_badge(px(21.), now));
+        // 40 px per hour (day zoom), two-digit labels; now at 19:45.
+        let px = |h: f32| h * 40.;
+        let w = label_w("19");
+        let now = px(19.75);
+        assert!(!hidden_by_now_badge(px(19.), w, now), "19 ends before the badge");
+        assert!(hidden_by_now_badge(px(20.), w, now));
+        assert!(hidden_by_now_badge(px(21.), w, now));
+        assert!(!hidden_by_now_badge(px(22.), w, now), "22 starts after the badge");
+        // now at 19:05: "19" is right under it.
+        assert!(hidden_by_now_badge(px(19.), w, px(19.0 + 5.0 / 60.0)));
     }
 
     #[test]

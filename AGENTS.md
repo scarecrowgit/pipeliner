@@ -58,9 +58,10 @@ Layout rules that the screenshots keep catching:
 
 - Text in a flex row needs `min_w_0()` on itself or its parent, plus `ellipsis()` or a
   width, or a long word pushes the row (and the whole column) wider.
-- Cut text with `ellipsis()` / `clamp_lines(n)` from `theme::TextStyles`, never gpui's
-  `truncate()` or a bare `line_clamp(n)`: in gpui 0.2.2 `truncate()` keeps the first,
-  unconstrained measurement, so text is clipped mid-letter with no "…".
+- Cut one line with `ellipsis()` from `theme::TextStyles`, never gpui's `truncate()`: in
+  gpui 0.2.2 it keeps the first, unconstrained measurement, so text is clipped mid-letter
+  with no "…". For several lines use `ui::Clamped::new(id, text, n)`: gpui's
+  `line_clamp(n)` drops the extra lines (and its "…") silently.
 - gpui-component's `Input` sets its height from its size class after your styles; pin it
   with `min_h`/`max_h` (see `ui::input::field`).
 - Text that should wrap needs a width (`w_full()`/`flex_1()`); words without spaces never
