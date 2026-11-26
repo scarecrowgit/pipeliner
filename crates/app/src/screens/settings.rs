@@ -53,6 +53,19 @@ impl Section {
         Section::App,
     ];
 
+    fn from_slug(slug: &str) -> Option<Section> {
+        Some(match slug.trim().to_lowercase().as_str() {
+            "models" => Section::Models,
+            "skills" => Section::Skills,
+            "rules" => Section::Rules,
+            "budgets" => Section::Budgets,
+            "execution" => Section::Execution,
+            "prices" => Section::Prices,
+            "app" => Section::App,
+            _ => return None,
+        })
+    }
+
     fn label(self) -> &'static str {
         match self {
             Section::Models => "Models & providers",
@@ -483,13 +496,15 @@ impl SettingsScreen {
             saved,
             errors: Errors::new(),
             form,
-            section: if std::env::var("PIPELINER_ROUTE")
-                .is_ok_and(|r| r.eq_ignore_ascii_case("settings:skills"))
-            {
-                Section::Skills
-            } else {
-                Section::Models
-            },
+            // PIPELINER_ROUTE=settings:<section> (models, skills, rules, budgets,
+            // execution, prices, app) opens that section, for screenshots.
+            section: std::env::var("PIPELINER_ROUTE")
+                .ok()
+                .and_then(|r| {
+                    let (name, slug) = r.split_once(':')?;
+                    name.eq_ignore_ascii_case("settings").then(|| Section::from_slug(slug))?
+                })
+                .unwrap_or(Section::Models),
             tests: HashMap::new(),
             sk: SkillsUi::new(window, cx),
             upd: UpdateUi::default(),
@@ -1169,8 +1184,12 @@ impl Render for SettingsScreen {
                     .pt(theme::S6)
                     .pb(px(96.))
                     .child(
+                        // An explicit width, not just a cap: with only max_w the column
+                        // was sized from its content, and inputs in it collapsed to
+                        // squares in a wide window.
                         div()
-                            .max_w(px(880.))
+                            .w(px(880.))
+                            .max_w_full()
                             .flex()
                             .flex_col()
                             .gap(theme::S4)

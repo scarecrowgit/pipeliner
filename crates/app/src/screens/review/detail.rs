@@ -30,8 +30,8 @@ impl ReviewScreen {
             .p(theme::S6)
             // A definite width: without it the wrapping rows (breadcrumb, title, step
             // chain) were sized at their narrowest and stayed that tall in a wide window.
-            .w_full()
-            .max_w(px(1400.));
+            .w(px(1400.))
+            .max_w_full();
         col = col
             .child(self.breadcrumb(item))
             .child(self.title_row(item, cx));
@@ -151,7 +151,8 @@ impl ReviewScreen {
             .flex_wrap()
             .content_start()
             .gap(theme::S3)
-            .child(div().text_title().fg().child(t.title.clone()))
+            // Never wider than the row: a long title wraps instead of running off.
+            .child(div().max_w_full().text_title().fg().child(t.title.clone()))
             .when_some(
                 item.run.as_ref().and_then(|r| r.external_ref.clone()),
                 |d, r| d.child(Badge::new(r).mono()),

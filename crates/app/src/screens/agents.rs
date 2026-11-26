@@ -603,7 +603,9 @@ fn stat_tile(label: &'static str, value: String, sub: Option<String>) -> Div {
 }
 
 impl Render for AgentsScreen {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The stats column needs a wide window; below this the form gets the room.
+        let show_aside = window.viewport_size().width >= px(1360.);
         let Some(data) = &self.data else {
             return screen()
                 .child(PageHeader::new("Agents"))
@@ -660,7 +662,7 @@ impl Render for AgentsScreen {
             main = main
                 .flex()
                 .child(self.render_editor(ed, data, error, cx))
-                .child(self.render_aside(&stats, &used, cx));
+                .when(show_aside, |m| m.child(self.render_aside(&stats, &used, cx)));
         }
         screen()
             .child(header)
@@ -826,8 +828,8 @@ impl AgentsScreen {
             .flex()
             .flex_col()
             .gap(theme::S5)
-            .w_full()
-            .max_w(px(820.))
+            .w(px(820.))
+            .max_w_full()
             .child(
                 div()
                     .flex()
