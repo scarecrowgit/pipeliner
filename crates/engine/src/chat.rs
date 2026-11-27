@@ -382,7 +382,7 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
                 &run.model,
                 "Worker",
                 DELEGATE_ROLE,
-                &[],
+                &run.tools.skills_on_demand,
                 60,
             )),
             _ => None,

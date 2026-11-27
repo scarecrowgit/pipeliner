@@ -416,11 +416,7 @@ impl Engine {
             .map(harness_core::config::expand_tilde)
             .filter(|p| p.is_dir());
         let (shell, env) = workdir_shell_and_env(run.as_ref(), cwd.as_deref());
-        let access = match (&cwd, &agent) {
-            (None, _) => ToolAccess::None,
-            (Some(_), Some(a)) => a.tools,
-            (Some(_), None) => ToolAccess::Full,
-        };
+        let access = agent.as_ref().map(|a| a.tools).unwrap_or(ToolAccess::Full);
         let skills_on_demand = agent
             .as_ref()
             .map(|a| a.skills_on_demand.clone())
@@ -615,11 +611,7 @@ impl Engine {
             .map(harness_core::config::expand_tilde)
             .filter(|p| p.is_dir());
         let (shell, env) = workdir_shell_and_env(run.as_ref(), cwd.as_deref());
-        let access = match (&cwd, &agent) {
-            (None, _) => ToolAccess::None,
-            (Some(_), Some(a)) => a.tools,
-            (Some(_), None) => ToolAccess::Full,
-        };
+        let access = agent.as_ref().map(|a| a.tools).unwrap_or(ToolAccess::Full);
         let skills_on_demand = agent
             .as_ref()
             .map(|a| a.skills_on_demand.clone())

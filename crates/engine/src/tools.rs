@@ -91,13 +91,19 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
             json!({"type":"object","properties":{"name":{"type":"string","enum":ctx.skills_on_demand}},"required":["name"]}),
         ));
     }
-    if ctx.cwd.is_some() && matches!(ctx.access, ToolAccess::ReadAndRun | ToolAccess::Full) {
-        v.push(spec(
-            "run_command",
+    if matches!(ctx.access, ToolAccess::ReadAndRun | ToolAccess::Full) {
+        let description = if ctx.cwd.is_some() {
             "Run a shell command in the working directory: builds, tests, git, scripts. Returns exit code and \
              output (truncated). Default timeout 600s. Don't use it to read, find, search or edit files \
              (cat, sed, grep, find, heredocs): the file tools do that, show in the thread as reads and \
-             edits, and edit_file fails loudly when its text isn't there.",
+             edits, and edit_file fails loudly when its text isn't there."
+        } else {
+            "Run a shell command (starts in the home directory; no working folder is attached). Returns \
+             exit code and output (truncated). Default timeout 600s."
+        };
+        v.push(spec(
+            "run_command",
+            description,
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ));
     }
@@ -125,6 +131,18 @@ pub fn specs(ctx: &ToolContext) -> Vec<ToolSpec> {
         ));
     }
     v
+}
+
+/// Where `run_command` starts: the working folder, else the home directory, else the process dir.
+fn command_dir(ctx: &ToolContext) -> PathBuf {
+    if let Some(cwd) = &ctx.cwd {
+        return cwd.clone();
+    }
+    let home = harness_core::config::expand_tilde("~");
+    if home != Path::new("~") && home.is_dir() {
+        return home;
+    }
+    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
 }
 
 fn arg<'a>(args: &'a Value, k: &str) -> Result<&'a str> {
@@ -165,6 +183,9 @@ pub fn execute(ctx: &ToolContext, name: &str, args: &Value) -> String {
 }
 
 fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> {
+    if ctx.access == ToolAccess::None {
+        bail!("tools are not allowed for this agent");
+    }
     let cwd = || {
         ctx.cwd
             .clone()
@@ -237,14 +258,14 @@ fn execute_inner(ctx: &ToolContext, name: &str, args: &Value) -> Result<String> 
             let timeout = args["timeout_secs"].as_u64().unwrap_or(600).clamp(5, 3600);
             let command = arg(args, "command")?;
             let out = run_command(
-                &cwd()?,
+                &command_dir(ctx),
                 &ctx.shell,
                 &ctx.env,
                 command,
                 Duration::from_secs(timeout),
                 &ctx.cancel,
             )?;
-            Ok(if is_file_only_command(command) {
+            Ok(if ctx.cwd.is_some() && is_file_only_command(command) {
                 format!("{out}\n\n{FILE_TOOLS_HINT}")
             } else {
                 out
@@ -897,6 +918,59 @@ mod tests {
             skills_on_demand: vec![],
             config: Config::default(),
             cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn ctx_with(cwd: Option<PathBuf>, access: ToolAccess) -> ToolContext {
+        ToolContext {
+            cwd,
+            access,
+            ..ctx(Path::new("."))
+        }
+    }
+
+    fn spec_names(c: &ToolContext) -> Vec<&'static str> {
+        specs(c).iter().map(|s| s.name).collect()
+    }
+
+    #[test]
+    fn specs_follow_access_and_cwd() {
+        let d = tmp("specs");
+        let with = |a| spec_names(&ctx_with(Some(d.clone()), a));
+        let without = |a| spec_names(&ctx_with(None, a));
+        let reads = ["read_file", "list_dir", "find_files", "search"];
+        assert!(with(ToolAccess::None).is_empty());
+        assert!(without(ToolAccess::None).is_empty());
+        assert_eq!(with(ToolAccess::ReadOnly), reads);
+        assert!(without(ToolAccess::ReadOnly).is_empty());
+        let mut rr = reads.to_vec();
+        rr.push("run_command");
+        assert_eq!(with(ToolAccess::ReadAndRun), rr);
+        assert_eq!(without(ToolAccess::ReadAndRun), ["run_command"]);
+        let mut full = rr.clone();
+        full.extend(["write_file", "edit_file"]);
+        assert_eq!(with(ToolAccess::Full), full);
+        assert_eq!(without(ToolAccess::Full), ["run_command"]);
+        let none = specs(&ctx_with(None, ToolAccess::Full));
+        assert!(none[0].description.contains("home directory"));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn run_command_without_a_working_folder() {
+        for access in [ToolAccess::ReadAndRun, ToolAccess::Full] {
+            let c = ctx_with(None, access);
+            let out = execute(&c, "run_command", &json!({"command":"cat /dev/null; echo ok-$((1+1))"}));
+            assert!(out.contains("exit code 0") && out.contains("ok-2"), "{out}");
+            assert!(!out.contains(FILE_TOOLS_HINT), "{out}");
+        }
+        for access in [ToolAccess::None, ToolAccess::ReadOnly] {
+            let out = execute(
+                &ctx_with(None, access),
+                "run_command",
+                &json!({"command":"echo hi"}),
+            );
+            assert!(out.starts_with("Error:") && out.contains("not allowed"), "{out}");
         }
     }
 
