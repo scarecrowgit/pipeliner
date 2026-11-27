@@ -31,18 +31,22 @@ pub use templates::Template;
 pub const INTERRUPTED: &str = "Interrupted: the app was closed while this ran.";
 
 /// Why an active task can't really be running any more, or `None` if it may be.
-/// Gates wait for you and are left alone.
+/// Gates wait for you and are left alone. Manual tasks run outside the pipeline executor,
+/// so their run ending says nothing about them. `shielded` marks a live follow-up turn (or
+/// a sub-agent working for one): it outlives its run and the step that spawned it, but a
+/// newer attempt still replaces it.
 fn orphan_reason(
     t: &Task,
     run: Option<&Run>,
     newer_attempt: bool,
     parent_active: Option<bool>,
+    shielded: bool,
 ) -> Option<String> {
     if !t.status.is_active() || t.kind == TaskKind::Gate {
         return None;
     }
     if let Some(r) = run {
-        if !r.status.is_active() {
+        if !r.status.is_active() && !shielded && t.kind != TaskKind::Manual {
             return Some(format!(
                 "Stopped: run #{} ended ({}) while this step was still open.",
                 r.number,
@@ -53,7 +57,7 @@ fn orphan_reason(
             return Some("Stopped: a newer attempt of this step replaced it.".into());
         }
     }
-    if parent_active == Some(false) {
+    if parent_active == Some(false) && !shielded {
         return Some("Stopped: the step that spawned it is over.".into());
     }
     None
@@ -72,6 +76,9 @@ pub struct Inner {
     slots: Arc<Semaphore>,
     /// Runs being executed by a thread in this process.
     active_runs: Mutex<std::collections::HashSet<Id>>,
+    /// Tasks with a follow-up turn running in this process. They are active on a run that
+    /// may be over, which `close_orphans` must not mistake for a stuck step.
+    followups: Mutex<std::collections::HashSet<Id>>,
     /// This process holds the engine lock and executes runs.
     owner: AtomicBool,
     lock_file: Mutex<Option<std::fs::File>>,
@@ -93,6 +100,7 @@ impl Engine {
             cancels: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(slots)),
             active_runs: Mutex::new(Default::default()),
+            followups: Mutex::new(Default::default()),
             owner: AtomicBool::new(false),
             lock_file: Mutex::new(None),
         }))
@@ -151,6 +159,23 @@ impl Engine {
             .map(|r| (r.id.clone(), r))
             .collect();
         let by_id: HashMap<&str, &Task> = tasks.iter().map(|t| (t.id.as_str(), t)).collect();
+        let followups = self.followups.lock().clone();
+        // Whether a sub-agent works for a live follow-up or manual task: every hop up the
+        // chain is active and it ends at one of those.
+        let serves_live_turn = |t: &Task| {
+            let mut seen = std::collections::HashSet::new();
+            let mut cur = t;
+            while let Some(p) = cur.parent_id.as_deref().and_then(|p| by_id.get(p)) {
+                if !p.status.is_active() || !seen.insert(p.id.as_str()) {
+                    return false;
+                }
+                if p.kind == TaskKind::Manual || followups.contains(&p.id) {
+                    return true;
+                }
+                cur = p;
+            }
+            false
+        };
         for t in &tasks {
             if !t.status.is_active() {
                 continue;
@@ -161,7 +186,9 @@ impl Engine {
                 .as_deref()
                 .map(|p| by_id.get(p).map(|p| p.status.is_active()).unwrap_or(false));
             let newer = run.is_some() && self.store.newer_attempt(t).is_some();
-            let Some(reason) = orphan_reason(t, run, newer, parent_active) else {
+            let shielded =
+                followups.contains(&t.id) || (t.kind == TaskKind::Spawned && serves_live_turn(t));
+            let Some(reason) = orphan_reason(t, run, newer, parent_active, shielded) else {
                 continue;
             };
             if let Some(flag) = self.cancels.lock().get(&t.id) {
@@ -545,20 +572,28 @@ The user reviews and installs staged skills in Settings › Skills; nothing inst
 
     // ---- tasks ---------------------------------------------------------------
 
-    /// Posts your message into a task's thread; a running agent reads it before its next step.
+    /// Sends your message to a task. A running agent reads it before its next step; on a
+    /// finished task that runs an agent it starts another turn with the whole thread as context.
     pub fn steer(&self, task_id: &str, text: &str) -> Result<()> {
-        let mut m = Message::new(task_id, Role::User, text);
-        m.author = "you".into();
-        self.store.put_message(&m)?;
-        let t = self.store.task(task_id);
-        let title = t.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-        self.store.log(
-            "task.steer",
-            t.as_ref().and_then(|t| t.run_id.as_deref()),
-            Some(task_id),
-            format!("You steered {title}"),
-        );
-        Ok(())
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let t = self.store.task(task_id).context("task not found")?;
+        if t.status.is_active() || self.cancels.lock().contains_key(task_id) {
+            let mut m = Message::new(task_id, Role::User, text);
+            m.author = "you".into();
+            m.delivered = false;
+            self.store.put_message(&m)?;
+            self.store.log(
+                "task.steer",
+                t.run_id.as_deref(),
+                Some(task_id),
+                format!("You steered {}", t.title),
+            );
+            return Ok(());
+        }
+        self.start_followup(&t, text)
     }
 
     /// Cancels a task and every sub-task it spawned.
@@ -960,6 +995,15 @@ The user reviews and installs staged skills in Settings › Skills; nothing inst
         self.cancels.lock().remove(task_id);
     }
 
+    /// Records that a follow-up turn is running on `task_id` (see `close_orphans`).
+    pub(crate) fn mark_followup(&self, task_id: &str) {
+        self.followups.lock().insert(task_id.to_string());
+    }
+
+    pub(crate) fn drop_followup(&self, task_id: &str) {
+        self.followups.lock().remove(task_id);
+    }
+
     pub(crate) fn acquire_slot(&self) -> SlotGuard {
         self.slots.acquire()
     }
@@ -1087,5 +1131,46 @@ mod orphan_tests {
         assert_eq!(status(&gate9), Status::Waiting);
         assert_eq!(status(&new10), Status::Running);
         assert_eq!(status(&sub_live), Status::Running);
+    }
+
+    #[test]
+    fn followups_and_manual_tasks_on_finished_runs_stay_open() {
+        let e = Engine::new(Store::open_in_memory().unwrap(), Config::default());
+        let s = e.store.clone();
+        let done = run(9, Status::Done);
+        s.put_run(&done).unwrap();
+
+        // A follow-up turn on a step of a finished run, with a live sub-agent.
+        let agent = step(&done, "build", TaskKind::Agent, Status::Running);
+        let mut child = Task::new(TaskKind::Spawned, "Sub-task");
+        child.run_id = Some(done.id.clone());
+        child.parent_id = Some(agent.id.clone());
+        child.status = Status::Running;
+        // A follow-up on a sub-agent whose spawning parent is over.
+        let mut over = step(&done, "design", TaskKind::Agent, Status::Done);
+        over.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut followed = Task::new(TaskKind::Spawned, "Sub-task");
+        followed.run_id = Some(done.id.clone());
+        followed.parent_id = Some(over.id.clone());
+        followed.status = Status::Running;
+        // A manual task linked to the finished run.
+        let manual = step(&done, "manual", TaskKind::Manual, Status::Running);
+        for t in [&agent, &child, &over, &followed, &manual] {
+            s.put_task(t).unwrap();
+        }
+        e.mark_followup(&agent.id);
+        e.mark_followup(&followed.id);
+
+        e.close_orphans();
+        let status = |t: &Task| s.task(&t.id).unwrap().status;
+        assert_eq!(status(&agent), Status::Running);
+        assert_eq!(status(&child), Status::Running);
+        assert_eq!(status(&followed), Status::Running);
+        assert_eq!(status(&manual), Status::Running);
+
+        // Once the turn is over the task is an ordinary stuck step again.
+        e.drop_followup(&agent.id);
+        e.close_orphans();
+        assert_eq!(status(&agent), Status::Cancelled);
     }
 }

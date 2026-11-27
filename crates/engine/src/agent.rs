@@ -72,8 +72,6 @@ impl<'a> AgentRun<'a> {
                 images: self.stack.images.clone(),
             });
         }
-        // Messages already in the thread were part of the first turn.
-        let _ = store.take_undelivered(&self.thread_id);
 
         let mut specs = tools::specs(&self.tools);
         specs.extend(self.extra_tools.iter().cloned());
@@ -295,7 +293,9 @@ fn images_msg(paths: &[std::path::PathBuf]) -> Option<Msg> {
                 });
             }
             (Some(b), Some(_)) if b.len() > MAX_SHOWN_BYTES => {
-                text.push_str(&format!("\n- {name}: too large to show (over 5 MB); make it smaller"));
+                text.push_str(&format!(
+                    "\n- {name}: too large to show (over 5 MB); make it smaller"
+                ));
             }
             (Some(_), Some(_)) => {
                 text.push_str(&format!(

@@ -136,7 +136,10 @@ fn parsed(v: &Variant) -> Parsed {
         })
         .collect();
     let p = (diff, files);
-    PARSED.lock().unwrap_or_else(|e| e.into_inner()).insert(v.id.clone(), (v.diff.len(), p.clone()));
+    PARSED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(v.id.clone(), (v.diff.len(), p.clone()));
     p
 }
 
@@ -146,7 +149,10 @@ fn prune_parsed(items: &[Item]) {
         .iter()
         .flat_map(|i| i.variants.iter().map(|v| v.v.id.as_str()))
         .collect();
-    PARSED.lock().unwrap_or_else(|e| e.into_inner()).retain(|id, _| keep.contains(id.as_str()));
+    PARSED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|id, _| keep.contains(id.as_str()));
 }
 
 /// A waiting item in the queue.
@@ -736,12 +742,31 @@ pub fn image_names(variants: &[VariantView]) -> Vec<String> {
     out
 }
 
-/// `/x/y/pricing.png` -> `pricing`.
+/// `/x/y/pricing.png` -> `pricing`. Renders of mockups are named after their source path
+/// (`design__screens__task-thread.html.png`), which becomes `task-thread`.
 pub fn image_name(path: &str) -> String {
-    std::path::Path::new(path)
+    let stem = std::path::Path::new(path)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string())
+        .unwrap_or_else(|| path.to_string());
+    let mut name = stem.replace("__", "/");
+    for ext in [".html", ".htm"] {
+        let n = name.len();
+        if n > ext.len()
+            && name.is_char_boundary(n - ext.len())
+            && name[n - ext.len()..].eq_ignore_ascii_case(ext)
+        {
+            name.truncate(n - ext.len());
+            break;
+        }
+    }
+    for prefix in ["design/screens/", "design/", "screens/"] {
+        if name.len() > prefix.len() && name.starts_with(prefix) {
+            name.drain(..prefix.len());
+            break;
+        }
+    }
+    name
 }
 
 #[cfg(test)]
@@ -822,13 +847,21 @@ mod tests {
         let sizes = vec![200; 5];
         let open = open_by_default(&sizes);
         assert_eq!(open, vec![true, true, false, false, false]);
-        let drawn: usize = sizes.iter().zip(&open).filter(|(_, o)| **o).map(|(n, _)| n).sum();
+        let drawn: usize = sizes
+            .iter()
+            .zip(&open)
+            .filter(|(_, o)| **o)
+            .map(|(n, _)| n)
+            .sum();
         assert!(drawn <= DIFF_OPEN_BUDGET);
     }
 
     #[test]
     fn variant_body_keeps_text_under_its_own_title() {
-        assert_eq!(variant_body("Swimlanes", "One line only."), "One line only.");
+        assert_eq!(
+            variant_body("Swimlanes", "One line only."),
+            "One line only."
+        );
         assert_eq!(variant_body("", "Title\nBody"), "Body");
         assert_eq!(variant_body("Title", "Title\nBody"), "Body");
     }
@@ -871,6 +904,22 @@ mod tests {
     fn summary_lines() {
         assert_eq!(first_line("\n## Title\nbody"), "Title");
         assert_eq!(rest_after_first_line("Title\n\nbody\nmore"), "body\nmore");
+        assert_eq!(image_name("/a/b/pricing.png"), "pricing");
+    }
+
+    #[test]
+    fn image_names_of_rendered_mockups() {
+        assert_eq!(
+            image_name("/r/run-3/design__screens__task-thread.html.png"),
+            "task-thread"
+        );
+        assert_eq!(
+            image_name("/r/design__screens__mobile__home.html.png"),
+            "mobile/home"
+        );
+        assert_eq!(image_name("/r/admin__index.html.png"), "admin/index");
+        assert_eq!(image_name("/r/public__index.html.png"), "public/index");
+        assert_eq!(image_name("/r/screens__board.HTM.png"), "board");
         assert_eq!(image_name("/a/b/pricing.png"), "pricing");
     }
 }

@@ -240,8 +240,8 @@ fn maybe_title(engine: &Engine, chat: &Chat, text: &str) {
 
 /// History of the chat as model messages, excluding the newest user turn, which is
 /// returned separately as its text and images.
-fn history(store: &Store, chat_id: &str) -> (Vec<Msg>, String, Vec<llm::ImageData>) {
-    let mut msgs = store.messages(chat_id);
+fn history(messages: &[Message]) -> (Vec<Msg>, String, Vec<llm::ImageData>) {
+    let mut msgs = messages.to_vec();
     msgs.retain(|m| {
         !m.partial
             && matches!(m.role, Role::User | Role::Assistant)
@@ -276,7 +276,9 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let store = engine.store().clone();
     let chat = store.chat(chat_id).context("chat not found")?;
     let config = engine.config();
-    let (hist, mut latest, images) = history(&store, chat_id);
+    // Messages posted so far are part of `history`; don't deliver them again as steering.
+    let thread = crate::tasks::take_thread_messages(&store, chat_id);
+    let (hist, mut latest, images) = history(&thread);
     if latest.trim().is_empty() && !images.is_empty() {
         latest = "See the attached image.".into();
     }
@@ -629,7 +631,7 @@ mod tests {
             store.put_message(m).unwrap();
         }
 
-        let (hist, latest, images) = history(&store, "c1");
+        let (hist, latest, images) = history(&store.messages("c1"));
         assert_eq!(latest, "");
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].mime, "image/png");

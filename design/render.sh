@@ -24,19 +24,31 @@ if [ -z "$W" ] || [ -z "$H" ]; then
 fi
 
 mkdir -p "$(dirname "$OUT")"
+# An old PNG must never mask a failed render.
+rm -f "$OUT"
 
-FLAGS="--headless=new --disable-gpu --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=$W,$H --virtual-time-budget=5000"
+# An isolated profile keeps headless Chromium from attaching to an already
+# open desktop session ("Opening in existing browser session.").
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+FLAGS="--headless=new --ozone-platform=headless --disable-gpu --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --user-data-dir=$tmpdir --window-size=$W,$H --virtual-time-budget=5000"
 
 BROWSER=""
 for c in chromium chromium-browser google-chrome google-chrome-stable; do
   if command -v "$c" >/dev/null 2>&1; then BROWSER=$c; break; fi
 done
 
+status=0
 if [ -n "$BROWSER" ]; then
-  env -u LD_LIBRARY_PATH "$BROWSER" $FLAGS --screenshot="$OUT" "file://$IN" >/dev/null 2>&1
+  env -u LD_LIBRARY_PATH -u NIXOS_OZONE_WL "$BROWSER" $FLAGS --screenshot="$OUT" "file://$IN" >/dev/null 2>"$tmpdir/err.log" || status=$?
 else
-  nix-shell -p chromium --run "env -u LD_LIBRARY_PATH chromium $FLAGS --screenshot='$OUT' 'file://$IN'" >/dev/null 2>&1
+  nix-shell -p chromium --run "env -u LD_LIBRARY_PATH -u NIXOS_OZONE_WL chromium $FLAGS --screenshot='$OUT' 'file://$IN'" >/dev/null 2>"$tmpdir/err.log" || status=$?
 fi
 
-[ -s "$OUT" ] || { echo "render failed: $OUT not produced" >&2; exit 1; }
+if [ ! -s "$OUT" ] || [ "$status" -ne 0 ]; then
+  cat "$tmpdir/err.log" >&2
+  echo "render failed: $OUT not produced" >&2
+  exit 1
+fi
 echo "$OUT"

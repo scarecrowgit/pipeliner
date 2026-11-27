@@ -57,7 +57,7 @@ dir=$(cd "$dir" && pwd)
 
 if [ $# -eq 0 ]; then
   set -- home review review:@review_pick review:@review_pr review:@review_plan chat:@chat \
-    board timeline task:@task_running task:@task_failed pipelines:@pipeline agents:@agent \
+    board timeline task:@task_running task:@task_failed task:@task_done pipelines:@pipeline agents:@agent \
     settings memory policies
 fi
 

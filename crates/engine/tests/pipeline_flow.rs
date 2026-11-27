@@ -428,3 +428,301 @@ fn draft_description_returns_served_text() {
         )
         .is_err());
 }
+
+fn wait_task(e: &Engine, id: &str, want: Status) -> Task {
+    let start = Instant::now();
+    loop {
+        let t = e.store().task(id).unwrap();
+        if t.status == want {
+            return t;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "timeout waiting for {want:?}; task is {:?} ({:?})",
+            t.status,
+            t.error
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn instructions_after_a_pipeline_step_is_done_continue_its_thread() {
+    let bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = bodies.clone();
+    let url = serve(move |body| {
+        seen.lock().unwrap().push(body.to_string());
+        if body.contains("needs design?")
+            && body.contains("\"answer\"")
+            && !body.contains("recorded")
+        {
+            (
+                "".into(),
+                Some((
+                    "answer".into(),
+                    r#"{"yes":false,"reason":"logic only"}"#.into(),
+                )),
+            )
+        } else if body.contains("make the button blue") {
+            ("Button is blue now.".into(), None)
+        } else {
+            ("built it".into(), None)
+        }
+    });
+    let e = engine(&url);
+    let p = pipeline(&e);
+    let r = e.start_run(&p.id, "fix the counter", None).unwrap();
+    let r = wait_for(&e, &r.id, Status::Done);
+    let build = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("build"))
+        .unwrap();
+    assert!(harness_engine::tasks::can_follow_up(e.store(), &build));
+    let before = bodies.lock().unwrap().len();
+
+    e.steer(&build.id, "make the button blue").unwrap();
+    // Running again at once, so the UI shows the new turn.
+    assert!(e.store().task(&build.id).unwrap().status.is_active());
+    let done = wait_task(&e, &build.id, Status::Done);
+    assert_eq!(done.summary, "Button is blue now.");
+    assert!(done.finished_at.is_some());
+    assert!(done.error.is_none());
+
+    // The model saw the earlier report and your instruction, after the step's own prompt.
+    let follow: Vec<String> = bodies.lock().unwrap()[before..].to_vec();
+    assert_eq!(follow.len(), 1, "{follow:?}");
+    let body: serde_json::Value = serde_json::from_str(&follow[0]).unwrap();
+    let msgs = body["messages"].as_array().unwrap();
+    let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["system", "user", "assistant", "user"], "{roles:?}");
+    assert!(msgs[1]["content"]
+        .as_str()
+        .unwrap()
+        .contains("fix the counter"));
+    assert_eq!(msgs[2]["content"], "built it");
+    assert_eq!(msgs[3]["content"], "make the button blue");
+
+    let r = e.store().run(&r.id).unwrap();
+    assert_eq!(r.status, Status::Done);
+    assert_eq!(r.outputs["build"].summary, "Button is blue now.");
+    assert_eq!(
+        r.outputs["build"].value["variants"][0]["summary"],
+        "Button is blue now."
+    );
+    let msgs = e.store().messages(&build.id);
+    assert!(msgs
+        .iter()
+        .any(|m| m.role == Role::User && m.content == "make the button blue"));
+
+    // A step that is not an agent can't take instructions.
+    let ask = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("ask"))
+        .unwrap();
+    assert!(e.steer(&ask.id, "hello").is_err());
+    // Blank messages do nothing.
+    e.steer(&build.id, "   ").unwrap();
+    assert_eq!(e.store().task(&build.id).unwrap().status, Status::Done);
+}
+
+#[test]
+fn instructions_after_a_manual_task_is_done_start_another_turn() {
+    let bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = bodies.clone();
+    let url = serve(move |body| {
+        seen.lock().unwrap().push(body.to_string());
+        if body.contains("shorter please") {
+            ("Short report.".into(), None)
+        } else {
+            ("Long report about everything.".into(), None)
+        }
+    });
+    let e = engine(&url);
+    let t = e
+        .create_task(harness_engine::tasks::NewTask {
+            title: "Report".into(),
+            description: "Write a report.".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    wait_task(&e, &t.id, Status::Done);
+    e.steer(&t.id, "shorter please").unwrap();
+    let done = wait_task(&e, &t.id, Status::Done);
+    assert_eq!(done.summary, "Short report.");
+
+    let last = bodies.lock().unwrap().last().unwrap().clone();
+    let body: serde_json::Value = serde_json::from_str(&last).unwrap();
+    let msgs = body["messages"].as_array().unwrap();
+    let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["system", "user", "assistant", "user"], "{roles:?}");
+    assert_eq!(msgs[1]["content"], "Write a report.");
+    assert_eq!(msgs[2]["content"], "Long report about everything.");
+    assert_eq!(msgs[3]["content"], "shorter please");
+    let thread = e.store().messages(&t.id);
+    assert_eq!(
+        thread.iter().filter(|m| m.role == Role::User).count(),
+        2,
+        "{thread:?}"
+    );
+}
+
+fn sh(cwd: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@localhost"])
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+}
+
+#[test]
+fn instructions_to_a_designer_redraw_the_waiting_review() {
+    let base = std::env::temp_dir().join(format!("pipeliner-flow-{}", std::process::id()));
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::env::set_var("PIPELINER_DATA_DIR", base.join("data"));
+    sh(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("README.md"), "x").unwrap();
+    sh(&repo, &["add", "-A"]);
+    sh(&repo, &["commit", "-q", "-m", "init"]);
+
+    // Requests in order: first turn (write, report), follow-up turn (write, report).
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let url = serve(move |_| {
+        let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let write = |color: &str| {
+            (
+                String::new(),
+                Some((
+                    "write_file".to_string(),
+                    serde_json::json!({
+                        "path": "design/home.html",
+                        "content": format!("<html><body>{color}</body></html>")
+                    })
+                    .to_string(),
+                )),
+            )
+        };
+        match n {
+            0 => write("RED"),
+            1 => ("Red mockup.".into(), None),
+            2 => write("GREEN"),
+            _ => ("Green mockup.".into(), None),
+        }
+    });
+    let e = engine(&url);
+    let node = |id: &str, kind: NodeKind| Node {
+        id: id.into(),
+        name: id.into(),
+        kind,
+        x: 0.0,
+        y: 0.0,
+    };
+    let edge = |f: &str, t: &str| Edge {
+        from: f.into(),
+        to: t.into(),
+        port: None,
+    };
+    let graph = PipelineGraph {
+        workdirs: vec![Workdir {
+            id: "code".into(),
+            name: "Code".into(),
+            path: repo.display().to_string(),
+            worktree: false,
+            base_branch: "main".into(),
+            branch_prefix: String::new(),
+            setup: String::new(),
+            shell: String::new(),
+            env: Default::default(),
+        }],
+        nodes: vec![
+            node("src", NodeKind::Source(SourceNode::default())),
+            node(
+                "design",
+                NodeKind::Agent(AgentNode {
+                    instructions: "DESIGN".into(),
+                    workdir: Some("code".into()),
+                    ..Default::default()
+                }),
+            ),
+            node(
+                "render",
+                NodeKind::Render(RenderNode {
+                    workdir: Some("code".into()),
+                    // Copies the mockup, so the test needs no browser.
+                    command: "cp {in} {out}".into(),
+                    ..Default::default()
+                }),
+            ),
+            node("pick", NodeKind::Gate(GateNode::default())),
+        ],
+        edges: vec![
+            edge("src", "design"),
+            edge("design", "render"),
+            edge("render", "pick"),
+        ],
+    };
+    let p = Pipeline {
+        id: new_id(),
+        name: "t".into(),
+        description: String::new(),
+        color: 0,
+        version: 1,
+        draft: None,
+        graph,
+        archived: false,
+        created_at: now(),
+        updated_at: now(),
+    };
+    e.store().put_pipeline(&p).unwrap();
+    let r = e.start_run(&p.id, "design the home screen", None).unwrap();
+    let r = wait_for(&e, &r.id, Status::Waiting);
+    let designer = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("design"))
+        .unwrap();
+    let gate = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.kind == TaskKind::Gate)
+        .unwrap();
+    let before = e.store().variants(&gate.id);
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].summary, "Red mockup.");
+    assert_eq!(before[0].images.len(), 1, "{:?}", before[0]);
+    let old_png = std::path::PathBuf::from(&before[0].images[0]);
+    assert!(std::fs::read_to_string(&old_png).unwrap().contains("RED"));
+
+    e.steer(&designer.id, "make it green").unwrap();
+    wait_task(&e, &designer.id, Status::Done);
+    let start = Instant::now();
+    let after = loop {
+        let vs = e.store().variants(&gate.id);
+        if vs[0].summary == "Green mockup." {
+            break vs;
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "{:?}", vs[0]);
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(after[0].images.len(), 1, "{:?}", after[0]);
+    let new_png = std::path::PathBuf::from(&after[0].images[0]);
+    assert_ne!(new_png, old_png);
+    assert!(std::fs::read_to_string(&new_png).unwrap().contains("GREEN"));
+    // The old picture stays on disk for anything still showing it.
+    assert!(old_png.exists());
+
+    // The run's own record of the render step moved too.
+    let run = e.store().run(&r.id).unwrap();
+    let v = &run.outputs["render"].value["variants"][0];
+    assert_eq!(v["summary"], "Green mockup.");
+    assert_eq!(v["images"][0], after[0].images[0].as_str());
+    let _ = std::fs::remove_dir_all(&base);
+}
