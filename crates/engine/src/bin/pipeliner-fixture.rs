@@ -43,7 +43,10 @@ fn main() -> Result<()> {
     let data = dir.join("data");
     let conf = dir.join("config");
     if data.exists() || conf.exists() {
-        bail!("{} already has data/ or config/; pick an empty dir", dir.display());
+        bail!(
+            "{} already has data/ or config/; pick an empty dir",
+            dir.display()
+        );
     }
     std::fs::create_dir_all(&data)?;
     std::fs::create_dir_all(&conf)?;
@@ -82,7 +85,11 @@ base_url = "http://127.0.0.1:9/v1"
     let engine = Engine::new(store.clone(), config.clone());
 
     let tpls = templates::all(&config);
-    let design_t = tpls.iter().find(|t| t.id == "design-gpui").or(tpls.first()).context("no templates")?;
+    let design_t = tpls
+        .iter()
+        .find(|t| t.id == "design-gpui")
+        .or(tpls.first())
+        .context("no templates")?;
     let design = engine.create_pipeline(design_t, "")?;
     for t in tpls.iter().filter(|t| t.id != design_t.id) {
         engine.create_pipeline(t, "")?;
@@ -95,7 +102,12 @@ base_url = "http://127.0.0.1:9/v1"
     }
     long_agent(&store)?;
 
-    let mut f = Fixture { store: store.clone(), pipeline: design, routes: BTreeMap::new(), repo };
+    let mut f = Fixture {
+        store: store.clone(),
+        pipeline: design,
+        routes: BTreeMap::new(),
+        repo,
+    };
     f.history()?;
     f.failed_run()?;
     f.running_run()?;
@@ -104,7 +116,10 @@ base_url = "http://127.0.0.1:9/v1"
     f.chat()?;
     skills_fixture(&store, &conf, &data, &f.routes)?;
 
-    std::fs::write(dir.join("routes.json"), serde_json::to_string_pretty(&f.routes)?)?;
+    std::fs::write(
+        dir.join("routes.json"),
+        serde_json::to_string_pretty(&f.routes)?,
+    )?;
     println!("{}", serde_json::to_string_pretty(&f.routes)?);
     Ok(())
 }
@@ -120,7 +135,8 @@ fn ago(mins: i64) -> DateTime<Utc> {
     now() - Duration::minutes(mins)
 }
 
-const LONG_TITLE: &str = "Let people create tasks right on the Board and the Timeline, fill in the description, \
+const LONG_TITLE: &str =
+    "Let people create tasks right on the Board and the Timeline, fill in the description, \
 attach screenshots and pick which pipeline runs them — без перехода в чат";
 
 impl Fixture {
@@ -133,7 +149,9 @@ impl Fixture {
             pipeline_version: self.pipeline.version,
             graph: self.pipeline.graph.clone(),
             title: title.into(),
-            input: format!("{title}\n\nAcceptance: works with 200 tasks; keyboard only; no layout jumps."),
+            input: format!(
+                "{title}\n\nAcceptance: works with 200 tasks; keyboard only; no layout jumps."
+            ),
             external_ref: Some(format!("GH-{}", 1200 + n)),
             status,
             chat_id: None,
@@ -153,8 +171,20 @@ impl Fixture {
     }
 
     /// A finished pipeline step with an output on the run.
-    fn step(&self, run: &mut Run, node: &str, mins_ago: i64, took: i64, summary: &str, cost: f64) -> Result<Task> {
-        let name = run.graph.node(node).map(|n| n.name.clone()).unwrap_or_else(|| node.into());
+    fn step(
+        &self,
+        run: &mut Run,
+        node: &str,
+        mins_ago: i64,
+        took: i64,
+        summary: &str,
+        cost: f64,
+    ) -> Result<Task> {
+        let name = run
+            .graph
+            .node(node)
+            .map(|n| n.name.clone())
+            .unwrap_or_else(|| node.into());
         let mut t = Task::new(kind_of(run, node), name);
         t.run_id = Some(run.id.clone());
         t.node_id = Some(node.into());
@@ -172,7 +202,12 @@ impl Fixture {
         self.store.put_task(&t)?;
         run.outputs.insert(
             node.into(),
-            NodeOutput { summary: summary.into(), port: None, value: json!(null), task_id: Some(t.id.clone()) },
+            NodeOutput {
+                summary: summary.into(),
+                port: None,
+                value: json!(null),
+                task_id: Some(t.id.clone()),
+            },
         );
         run.cost_usd += cost;
         self.thread(&t, summary)?;
@@ -183,7 +218,11 @@ impl Fixture {
         let mut m = Message::new(t.id.clone(), Role::System, format!("{} started", t.title));
         m.created_at = t.created_at;
         self.store.put_message(&m)?;
-        let mut a = Message::new(t.id.clone(), Role::Assistant, "Reading the screens and the theme first.");
+        let mut a = Message::new(
+            t.id.clone(),
+            Role::Assistant,
+            "Reading the screens and the theme first.",
+        );
         a.author = t.actor.clone();
         a.tool_calls = vec![ToolCall {
             id: "c1".into(),
@@ -192,7 +231,11 @@ impl Fixture {
         }];
         a.created_at = t.created_at + Duration::seconds(20);
         self.store.put_message(&a)?;
-        let mut tr = Message::new(t.id.clone(), Role::Tool, "//! Board: columns by status…\n".repeat(30));
+        let mut tr = Message::new(
+            t.id.clone(),
+            Role::Tool,
+            "//! Board: columns by status…\n".repeat(30),
+        );
         tr.tool_call_id = Some("c1".into());
         tr.created_at = t.created_at + Duration::seconds(21);
         self.store.put_message(&tr)?;
@@ -240,7 +283,12 @@ impl Fixture {
         t.created_at = ago(mins_ago);
         t.started_at = Some(ago(mins_ago));
         self.store.put_task(&t)?;
-        self.store.log("gate.waiting", Some(&run.id), Some(&t.id), format!("{title} is waiting for you"));
+        self.store.log(
+            "gate.waiting",
+            Some(&run.id),
+            Some(&t.id),
+            format!("{title} is waiting for you"),
+        );
         Ok(t)
     }
 
@@ -264,24 +312,48 @@ impl Fixture {
                 _ => Status::Done,
             };
             let mut r = self.run(titles[i as usize % titles.len()], status, mins)?;
-            self.step(&mut r, "triage", mins, 1, "No — a small change to existing UI", 0.04)?;
-            let mut b = self.step(&mut r, "build", mins - 2, 25, "Done; tests and clippy pass.", 1.2 + (i % 7) as f64 * 1.9)?;
+            self.step(
+                &mut r,
+                "triage",
+                mins,
+                1,
+                "No — a small change to existing UI",
+                0.04,
+            )?;
+            let mut b = self.step(
+                &mut r,
+                "build",
+                mins - 2,
+                25,
+                "Done; tests and clippy pass.",
+                1.2 + (i % 7) as f64 * 1.9,
+            )?;
             if status == Status::Failed {
                 b.status = Status::Failed;
                 b.error = Some("cargo test failed: 2 tests".into());
                 self.store.put_task(&b)?;
                 r.error = b.error.clone();
             }
-            r.pr_url = (status == Status::Done).then(|| format!("https://github.com/example/app/pull/{}", 100 + i));
+            r.pr_url = (status == Status::Done)
+                .then(|| format!("https://github.com/example/app/pull/{}", 100 + i));
             r.finished_at = Some(ago(mins - 30));
             self.store.put_run(&r)?;
-            self.store.log("run.finished", Some(&r.id), None, format!("Run #{} finished", r.number));
+            self.store.log(
+                "run.finished",
+                Some(&r.id),
+                None,
+                format!("Run #{} finished", r.number),
+            );
         }
         Ok(())
     }
 
     fn failed_run(&mut self) -> Result<()> {
-        let mut r = self.run("Timeline: virtualize rows so 2 000 tasks scroll smoothly", Status::Failed, 190)?;
+        let mut r = self.run(
+            "Timeline: virtualize rows so 2 000 tasks scroll smoothly",
+            Status::Failed,
+            190,
+        )?;
         self.step(&mut r, "triage", 190, 1, "No — no visual change", 0.03)?;
         let mut b = self.step(&mut r, "build", 188, 40, "", 7.41)?;
         let err = format!(
@@ -301,8 +373,22 @@ impl Fixture {
 
     fn running_run(&mut self) -> Result<()> {
         let mut r = self.run(LONG_TITLE, Status::Running, 75)?;
-        self.step(&mut r, "triage", 75, 1, "Yes — new entry points on two screens", 0.07)?;
-        self.step(&mut r, "design", 74, 12, "I redesigned the task creation area on both screens.", 15.93)?;
+        self.step(
+            &mut r,
+            "triage",
+            75,
+            1,
+            "Yes — new entry points on two screens",
+            0.07,
+        )?;
+        self.step(
+            &mut r,
+            "design",
+            74,
+            12,
+            "I redesigned the task creation area on both screens.",
+            15.93,
+        )?;
         self.step(&mut r, "pick", 60, 3, "You picked B", 0.0)?;
         let mut build = Task::new(TaskKind::Agent, "GPUI build");
         build.run_id = Some(r.id.clone());
@@ -328,9 +414,18 @@ impl Fixture {
             let mut s = Task::new(TaskKind::Spawned, title);
             s.run_id = Some(r.id.clone());
             s.node_id = Some("build".into());
-            s.parent_id = Some(if depth == 1 { build.id.clone() } else { first_parent.clone() });
+            s.parent_id = Some(if depth == 1 {
+                build.id.clone()
+            } else {
+                first_parent.clone()
+            });
             s.depth = depth;
             s.status = status;
+            if i == 0 {
+                // A finished sub-agent with a worktree: the screen offers a follow-up composer.
+                s.cwd = Some(self.repo.display().to_string());
+                s.branch = Some("harness/run-1-board-new-task".into());
+            }
             s.actor = "Coder".into();
             s.model = "local/claude-sonnet-test".into();
             s.cost_usd = 0.8 * (i + 1) as f64;
@@ -340,14 +435,30 @@ impl Fixture {
                 s.finished_at = Some(ago(44 - 8 * i as i64));
             }
             if status == Status::Failed {
-                s.error = Some("edit_file: old text not found in crates/app/src/ui/composer.rs".into());
+                s.error =
+                    Some("edit_file: old text not found in crates/app/src/ui/composer.rs".into());
             }
             self.store.put_task(&s)?;
-            self.thread(&s, if status == Status::Done { "Added `NewTaskComposer` in crates/app/src/ui/composer.rs." } else { "" })?;
+            if i == 0 {
+                self.routes.insert("task_done".into(), s.id.clone());
+            }
+            self.thread(
+                &s,
+                if status == Status::Done {
+                    "Added `NewTaskComposer` in crates/app/src/ui/composer.rs."
+                } else {
+                    ""
+                },
+            )?;
             if i == 0 {
                 first_parent = s.id.clone();
             }
-            self.store.log("task.spawned", Some(&r.id), Some(&s.id), format!("GPUI build spawned {title}"));
+            self.store.log(
+                "task.spawned",
+                Some(&r.id),
+                Some(&s.id),
+                format!("GPUI build spawned {title}"),
+            );
         }
         r.frontier = vec!["build".into()];
         self.store.put_run(&r)?;
@@ -356,14 +467,35 @@ impl Fixture {
     }
 
     fn pick_run(&mut self) -> Result<()> {
-        let mut r = self.run("Board: group cards by pipeline, with a collapsible header per group", Status::Waiting, 40)?;
-        self.step(&mut r, "triage", 40, 1, "Yes — the Board layout changes", 0.05)?;
+        let mut r = self.run(
+            "Board: group cards by pipeline, with a collapsible header per group",
+            Status::Waiting,
+            40,
+        )?;
+        self.step(
+            &mut r,
+            "triage",
+            40,
+            1,
+            "Yes — the Board layout changes",
+            0.05,
+        )?;
         let design = self.step(&mut r, "design", 39, 14, "3 variants ready", 21.30)?;
         self.step(&mut r, "render", 25, 1, "Rendered 6 screens", 0.0)?;
-        let gate = self.gate(&r, "pick", "Pick a design · Board: group cards by pipeline", 24)?;
+        let gate = self.gate(
+            &r,
+            "pick",
+            "Pick a design · Board: group cards by pipeline",
+            24,
+        )?;
         let renders = self.repo.join("design/renders");
         let imgs = |names: &[&str]| -> Vec<String> {
-            names.iter().map(|n| renders.join(n)).filter(|p| p.exists()).map(|p| p.display().to_string()).collect()
+            names
+                .iter()
+                .map(|n| renders.join(n))
+                .filter(|p| p.exists())
+                .map(|p| p.display().to_string())
+                .collect()
         };
         let variants = [
             ("Compact groups", "Groups are thin header rows with a count; cards keep their size.\n\nI kept the columns and only added a header row per pipeline.", imgs(&["board.png", "timeline.png"])),
@@ -382,7 +514,11 @@ impl Fixture {
                 model: "local/claude-opus-test".into(),
                 cost_usd: 7.1,
                 duration_secs: 600.0 + 120.0 * i as f64,
-                branch: Some(format!("pipeliner/run-{}-design-{}", r.number, variant_letter(i as u32).to_ascii_lowercase())),
+                branch: Some(format!(
+                    "pipeliner/run-{}-design-{}",
+                    r.number,
+                    variant_letter(i as u32).to_ascii_lowercase()
+                )),
                 cwd: None,
                 diff: html_diff(i),
                 images,
@@ -397,7 +533,11 @@ impl Fixture {
     }
 
     fn pr_run(&mut self) -> Result<()> {
-        let mut r = self.run("Rewrite the mockups one tag per line and clip very long diff lines", Status::Waiting, 130)?;
+        let mut r = self.run(
+            "Rewrite the mockups one tag per line and clip very long diff lines",
+            Status::Waiting,
+            130,
+        )?;
         self.step(&mut r, "triage", 130, 1, "No — no visual change", 0.02)?;
         self.step(&mut r, "build", 129, 50, "I reformatted 12 mockups (render is pixel-identical) and clip diff lines over 400 characters. Tests, clippy and a release build pass.", 44.63)?;
         let pr = format!("https://github.com/example/app/pull/{}", 300 + r.number);
@@ -435,7 +575,9 @@ impl Fixture {
         task.created_at = ago(15);
         let chat = Chat {
             id: new_id(),
-            title: "Settings feels crowded — can we split it into tabs and keep keyboard navigation?".into(),
+            title:
+                "Settings feels crowded — can we split it into tabs and keep keyboard navigation?"
+                    .into(),
             mode: ChatMode::Orchestrator,
             model: "local/claude-opus-test".into(),
             agent_id: None,
@@ -499,19 +641,34 @@ fn skills_fixture(
     use harness_core::skills::{self, Provenance, SourceKind};
     let mine = conf.join("skills");
     let home = data.parent().unwrap_or(data).join("home-skills");
-    let write = |dir: &std::path::Path, name: &str, desc: &str, prov: Option<Provenance>| -> Result<()> {
+    let write = |dir: &std::path::Path,
+                 name: &str,
+                 desc: &str,
+                 prov: Option<Provenance>|
+     -> Result<()> {
         let d = dir.join(name);
         std::fs::create_dir_all(&d)?;
         std::fs::write(
             d.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: {desc}\n---\n\nFollow the {name} conventions.\n"),
+            format!(
+                "---\nname: {name}\ndescription: {desc}\n---\n\nFollow the {name} conventions.\n"
+            ),
         )?;
         if let Some(p) = prov {
-            std::fs::write(d.join(skills::PROVENANCE_FILE), serde_json::to_string_pretty(&p)?)?;
+            std::fs::write(
+                d.join(skills::PROVENANCE_FILE),
+                serde_json::to_string_pretty(&p)?,
+            )?;
         }
         Ok(())
     };
-    let prov = |source: &str, kind, label: &str, commit: Option<&str>, mins: i64, chat: Option<&str>, actor: Option<&str>| Provenance {
+    let prov = |source: &str,
+                kind,
+                label: &str,
+                commit: Option<&str>,
+                mins: i64,
+                chat: Option<&str>,
+                actor: Option<&str>| Provenance {
         source: source.into(),
         kind,
         label: label.into(),
@@ -520,7 +677,12 @@ fn skills_fixture(
         chat_title: chat.map(String::from),
         actor: actor.map(String::from),
     };
-    write(&mine, "code-review", "Review a diff for bugs, risky changes and missing tests before it goes to a human.", None)?;
+    write(
+        &mine,
+        "code-review",
+        "Review a diff for bugs, risky changes and missing tests before it goes to a human.",
+        None,
+    )?;
     write(
         &mine,
         "brand-voice",
@@ -565,11 +727,18 @@ fn skills_fixture(
             "acme/agent-skills/research",
             Some("3f9c2a1"),
             60 * 30,
-            Some("Settings feels crowded — can we split it into tabs and keep keyboard navigation?"),
+            Some(
+                "Settings feels crowded — can we split it into tabs and keep keyboard navigation?",
+            ),
             Some("Orchestrator"),
         )),
     )?;
-    write(&home, "changelog", "Keep CHANGELOG.md in the Keep a Changelog format.", None)?;
+    write(
+        &home,
+        "changelog",
+        "Keep CHANGELOG.md in the Keep a Changelog format.",
+        None,
+    )?;
 
     // Agents use some of them.
     let agents = store.agents();
@@ -580,7 +749,13 @@ fn skills_fixture(
                 a.skills = vec!["code-review".into(), "git-conventions".into()];
                 a.skills_on_demand = vec!["web-research".into()];
             }
-            1 => a.skills_on_demand = vec!["code-review".into(), "sql-style".into(), "brand-voice".into()],
+            1 => {
+                a.skills_on_demand = vec![
+                    "code-review".into(),
+                    "sql-style".into(),
+                    "brand-voice".into(),
+                ]
+            }
             2 => a.skills = vec!["brand-voice".into()],
             _ => a.skills_on_demand = vec!["changelog".into()],
         }
@@ -601,14 +776,25 @@ fn skills_fixture(
         for (name, desc, _) in files {
             let d = src.join(name);
             std::fs::create_dir_all(&d)?;
-            std::fs::write(d.join("SKILL.md"), format!("---\nname: {name}\ndescription: {desc}\n---\n\nSteps for {name}.\n"))?;
+            std::fs::write(
+                d.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {desc}\n---\n\nSteps for {name}.\n"),
+            )?;
         }
         for (path, text) in extra {
             let p = src.join(path);
             std::fs::create_dir_all(p.parent().unwrap_or(&src))?;
             std::fs::write(p, text)?;
         }
-        let mut set = skills::build_staged(&config, &id, source, kind, label, commit.map(String::from), &src);
+        let mut set = skills::build_staged(
+            &config,
+            &id,
+            source,
+            kind,
+            label,
+            commit.map(String::from),
+            &src,
+        );
         set.created_at = ago(mins);
         Ok(set)
     };
@@ -618,12 +804,27 @@ fn skills_fixture(
         "acme/agent-skills/documents",
         Some("3f9c2a1"),
         &[
-            ("pdf-tools", "Read, split and fill PDF forms; extract tables to CSV.", ""),
-            ("spreadsheets", "Edit .xlsx and .csv files, keep formulas, write charts.", ""),
-            ("brand-voice", "Acme's voice for documents: formal, second person, no jargon.", ""),
+            (
+                "pdf-tools",
+                "Read, split and fill PDF forms; extract tables to CSV.",
+                "",
+            ),
+            (
+                "spreadsheets",
+                "Edit .xlsx and .csv files, keep formulas, write charts.",
+                "",
+            ),
+            (
+                "brand-voice",
+                "Acme's voice for documents: formal, second person, no jargon.",
+                "",
+            ),
         ],
         &[
-            ("spreadsheets/scripts/fill.py", "import sys\nprint(sys.argv)\n"),
+            (
+                "spreadsheets/scripts/fill.py",
+                "import sys\nprint(sys.argv)\n",
+            ),
             ("spreadsheets/scripts/chart.sh", "#!/bin/sh\necho chart\n"),
             ("pdf-tools/forms.md", "# Forms\n"),
         ],
@@ -641,7 +842,11 @@ fn skills_fixture(
         SourceKind::Command,
         "npx skills add keep-a-changelog/skill",
         None,
-        &[("release-notes", "Turn merged PRs into release notes grouped by area.", "")],
+        &[(
+            "release-notes",
+            "Turn merged PRs into release notes grouped by area.",
+            "",
+        )],
         &[],
         70,
     )?;
@@ -668,7 +873,11 @@ fn actor_of(run: &Run, node: &str) -> String {
     match run.graph.node(node).map(|n| &n.kind) {
         Some(NodeKind::Gate(_)) => "you".into(),
         Some(NodeKind::Tool(_)) | Some(NodeKind::Render(_)) => "tool".into(),
-        _ => run.graph.node(node).map(|n| n.name.clone()).unwrap_or_default(),
+        _ => run
+            .graph
+            .node(node)
+            .map(|n| n.name.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -719,14 +928,20 @@ fn huge_diff() -> String {
     }
     s.push_str("diff --git a/design/screens/review.html b/design/screens/review.html\n--- a/design/screens/review.html\n+++ b/design/screens/review.html\n@@ -1,6000 +1,6000 @@\n");
     for l in 0..3000 {
-        s.push_str(&format!("-<div class=\"row r{l}\"><span>old line {l}</span></div>\n"));
-        s.push_str(&format!("+<div class=\"row r{l}\"\n><span>new line {l}</span></div>\n"));
+        s.push_str(&format!(
+            "-<div class=\"row r{l}\"><span>old line {l}</span></div>\n"
+        ));
+        s.push_str(&format!(
+            "+<div class=\"row r{l}\"\n><span>new line {l}</span></div>\n"
+        ));
     }
     s.push_str("diff --git a/design/tokens.min.css b/design/tokens.min.css\nnew file mode 100644\n--- /dev/null\n+++ b/design/tokens.min.css\n@@ -0,0 +1 @@\n+");
     for k in 0..4000 {
-        s.push_str(&format!(":root{{--c{k}:#{:06x}}}", (k as u64).wrapping_mul(2654435) % 0xffffff));
+        s.push_str(&format!(
+            ":root{{--c{k}:#{:06x}}}",
+            (k as u64).wrapping_mul(2654435) % 0xffffff
+        ));
     }
     s.push('\n');
     s
 }
-

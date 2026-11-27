@@ -99,6 +99,8 @@ pub struct TaskScreen {
     scroll: ScrollHandle,
     ticking: bool,
     composer: Entity<InputState>,
+    /// Which wording (follow-up vs steering) the composer placeholder currently has.
+    composer_followup: Option<bool>,
     loading: bool,
     pending: bool,
     load: Option<Task<()>>,
@@ -145,14 +147,17 @@ impl TaskScreen {
             _ => {}
         });
 
-        let composer = input::text_input(
-            "Steer the agent, answer a question, or ask why it chose this…",
+        let composer = input::composer_rows(
+            "Steer it, answer a question, or ask why it chose this…",
+            2,
+            8,
             window,
             cx,
         );
+        // Plain Enter inserts a newline; Ctrl/Cmd+Enter sends.
         let enter_sub =
             cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, window, cx| {
-                if matches!(ev, InputEvent::PressEnter { .. }) {
+                if matches!(ev, InputEvent::PressEnter { secondary: true }) {
                     this.send(window, cx);
                 }
             });
@@ -170,6 +175,7 @@ impl TaskScreen {
             scroll: ScrollHandle::new(),
             ticking: false,
             composer,
+            composer_followup: None,
             loading: false,
             pending: false,
             load: None,
@@ -186,6 +192,7 @@ impl TaskScreen {
         self.expanded.clear();
         self.shown = PAGE;
         self.stick = true;
+        self.composer_followup = None;
         self.reload(cx);
         cx.notify();
     }
@@ -252,14 +259,11 @@ impl TaskScreen {
             .is_some_and(|t| t.status == Status::Running)
     }
 
-    fn task(&self) -> Option<&CoreTask> {
-        self.data.as_ref().and_then(|d| d.task.as_ref())
-    }
-
     /// Posts the composer text into the task's thread.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(task) = self.task() else { return };
-        if !can_steer(task) {
+        let Some(d) = self.data.as_ref() else { return };
+        let Some(task) = d.task.as_ref() else { return };
+        if !can_message(task, d.newer.is_some()) {
             return;
         }
         let text = self.composer.read(cx).value().trim().to_string();
@@ -559,6 +563,7 @@ impl TaskScreen {
                     .child(
                         div()
                             .max_w(px(640.))
+                            .overflow_hidden()
                             .px(theme::S4)
                             .py(theme::S3)
                             .rounded(theme::RADIUS_LG)
@@ -795,8 +800,8 @@ impl TaskScreen {
             .gap(theme::S4)
             // Left-aligned with the header and composer (design: max-width 800px, no
             // auto margins); centring left a 250px gutter on each side in a wide window.
-            .max_w(px(880.))
-            .w_full();
+            .w(px(880.))
+            .max_w_full();
         if skip > 0 {
             col = col.child(
                 Button::new(
@@ -859,7 +864,14 @@ impl TaskScreen {
                             .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
                             .child("This task failed"),
                     )
-                    .child(div().w_full().min_w_0().text_mono().fg_secondary().child(err)),
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_mono()
+                            .fg_secondary()
+                            .child(err),
+                    ),
             );
         }
         if t.status == Status::Done && !t.summary.trim().is_empty() {
@@ -971,10 +983,16 @@ impl TaskScreen {
             .into_any_element()
     }
 
-    fn composer_area(&self, t: &CoreTask) -> impl IntoElement {
+    fn composer_area(
+        &self,
+        t: &CoreTask,
+        newer: Option<(Id, Status)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let wrap = || {
             div()
                 .flex()
+                .bg(theme::BG_SIDEBAR)
                 .flex_none()
                 .flex_col()
                 .gap(theme::S2)
@@ -1002,16 +1020,79 @@ impl TaskScreen {
                     ),
                 );
         }
-        if !can_steer(t) {
+        if t.kind == TaskKind::Gate && t.status == Status::Waiting {
+            let tid = t.id.clone();
             return wrap().child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(theme::S2)
+                    .justify_between()
+                    .gap(theme::S3)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .ellipsis()
+                            .text_body()
+                            .fg_muted()
+                            .child("This step is waiting for your decision in Review."),
+                    )
+                    .child(
+                        div().flex_none().child(
+                            Button::new("task-open-review", "Open in Review")
+                                .icon_right(AppIcon::ChevronRight)
+                                .on_click(move |_, _, cx| {
+                                    state::navigate(
+                                        Route::Review {
+                                            task: Some(tid.clone()),
+                                        },
+                                        cx,
+                                    )
+                                }),
+                        ),
+                    ),
+            );
+        }
+        if !t.status.is_active()
+            && matches!(
+                t.kind,
+                TaskKind::Manual | TaskKind::Agent | TaskKind::Spawned
+            )
+        {
+            if let Some((nid, _)) = newer.clone() {
+                return wrap().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(theme::S3)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .ellipsis()
+                                .text_body()
+                                .fg_muted()
+                                .child(
+                                    "A newer attempt replaced this task — send instructions there.",
+                                ),
+                        )
+                        .child(
+                            div().flex_none().child(
+                                Button::new("task-open-newer", "Open newer attempt")
+                                    .icon_right(AppIcon::ChevronRight)
+                                    .on_click(move |_, _, cx| state::open_task(nid.clone(), cx)),
+                            ),
+                        ),
+                );
+            }
+        }
+        if !can_message(t, newer.is_some()) {
+            return wrap().child(
+                div()
                     .text_body()
                     .fg_muted()
-                    .child(ui::icon_sized(AppIcon::Lock, theme::ICON))
-                    .child(format!("This task {}. Steering works only while it is queued, running or waiting.", ended_phrase(t.status))),
+                    .child("This step doesn't run an agent."),
             );
         }
         let who = if t.actor.is_empty() {
@@ -1019,21 +1100,113 @@ impl TaskScreen {
         } else {
             t.actor.clone()
         };
+        let followup = !t.status.is_active();
+        let hint = if !followup {
+            format!("Message {who} · it reads this before its next step")
+        } else if t.branch.is_some() {
+            format!("Message {who} · starts a new turn with this whole thread, on the same branch")
+        } else {
+            format!("Message {who} · starts a new turn with this whole thread")
+        };
+        let note = if !followup {
+            div().flex_1()
+        } else {
+            let text = if t.cost_usd > 0.0 {
+                format!(
+                    "{} spent · its output updates when it finishes again",
+                    ui::fmt_usd(t.cost_usd)
+                )
+            } else {
+                "Its output updates when it finishes again".to_string()
+            };
+            div()
+                .flex_1()
+                .min_w_0()
+                .ellipsis()
+                .text_label()
+                .fg_muted()
+                .child(text)
+        };
+        let send_label = if followup {
+            "Send follow-up".to_string()
+        } else if t.actor.is_empty() {
+            "Send".to_string()
+        } else {
+            let short: String = t.actor.chars().take(22).collect();
+            let label = if t.actor.chars().count() > 22 {
+                format!("{short}…")
+            } else {
+                short
+            };
+            format!("Send to {label}")
+        };
+        let mod_key = if cfg!(target_os = "macos") {
+            "⌘"
+        } else {
+            "Ctrl"
+        };
+        let status_badge = if !followup {
+            StatusPill::new(t.status)
+                .id("task-composer-status")
+                .into_any_element()
+        } else {
+            match t.status {
+                Status::Done => Badge::new("done")
+                    .success()
+                    .leading(ui::icon_sized(AppIcon::Check, px(12.)))
+                    .into_any_element(),
+                Status::Failed => Badge::new("failed")
+                    .danger()
+                    .leading(ui::icon_sized(AppIcon::X, px(12.)))
+                    .into_any_element(),
+                _ => Badge::new(t.status.label().to_lowercase()).into_any_element(),
+            }
+        };
         wrap()
-            .child(div().text_label().fg_muted().child(format!(
-                "Message {who} · it reads this before its next step"
-            )))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(theme::S2)
-                    .child(div().flex_1().child(input::field(&self.composer)))
+                    .min_w_0()
+                    .child(div().flex_none().child(status_badge))
                     .child(
-                        Button::new("task-send", "Send")
-                            .primary()
-                            .icon(AppIcon::Send)
-                            .kbd("↵"),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .ellipsis()
+                            .text_label()
+                            .fg_muted()
+                            .child(hint),
+                    ),
+            )
+            .child(input::composer_field(&self.composer))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(theme::S3)
+                    .min_w_0()
+                    .child(note)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap(px(4.))
+                            .text_label()
+                            .fg_muted()
+                            .child(ui::kbd(mod_key))
+                            .child(ui::kbd("↵"))
+                            .child("send"),
+                    )
+                    .child(
+                        div().flex_none().child(
+                            Button::new("task-send", send_label)
+                                .primary()
+                                .icon(AppIcon::Send)
+                                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                        ),
                     ),
             )
     }
@@ -1181,7 +1354,20 @@ impl Render for TaskScreen {
                 let meta = self.meta_row(t, &data);
                 let stats = self.stats(t, &data);
                 let thread = self.thread(&data, t, window, cx);
-                let composer = self.composer_area(t);
+                if can_message(t, data.newer.is_some()) {
+                    let followup = !t.status.is_active();
+                    if self.composer_followup != Some(followup) {
+                        self.composer_followup = Some(followup);
+                        let ph = if followup {
+                            "Ask for a change, a follow-up, or why it chose this…"
+                        } else {
+                            "Steer it, answer a question, or ask why it chose this…"
+                        };
+                        self.composer
+                            .update(cx, |s, cx| s.set_placeholder(ph, window, cx));
+                    }
+                }
+                let composer = self.composer_area(t, data.newer.clone(), cx);
                 let lineage = self.lineage(t, &data);
                 screen()
                     .child(header)
@@ -1213,8 +1399,21 @@ impl Render for TaskScreen {
 
 // ---- data ---------------------------------------------------------------------------
 
-fn can_steer(t: &CoreTask) -> bool {
-    t.status.is_active() && t.kind != TaskKind::Chat
+/// Whether the composer applies: steering while the task is active, a follow-up turn once
+/// it finished (only on the latest attempt).
+fn can_message(t: &CoreTask, has_newer: bool) -> bool {
+    if t.status.is_active() {
+        matches!(
+            t.kind,
+            TaskKind::Manual | TaskKind::Agent | TaskKind::Spawned | TaskKind::Decision
+        )
+    } else {
+        !has_newer
+            && matches!(
+                t.kind,
+                TaskKind::Manual | TaskKind::Agent | TaskKind::Spawned
+            )
+    }
 }
 
 /// Loads a task, its breadcrumb, lineage and thread.
@@ -1502,12 +1701,67 @@ fn caret(id: SharedString) -> impl IntoElement {
         )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// "failed", "is done", "was cancelled": how a task that can't be steered ended.
-fn ended_phrase(s: Status) -> String {
-    match s {
-        Status::Failed => "failed".into(),
-        Status::Cancelled => "was cancelled".into(),
-        other => format!("is {}", other.label().to_lowercase()),
+    fn task(kind: TaskKind, status: Status) -> CoreTask {
+        let mut t = CoreTask::new(kind, "T");
+        t.status = status;
+        t
+    }
+
+    #[test]
+    fn active_tasks_can_be_steered_by_agent_kinds() {
+        for kind in [
+            TaskKind::Manual,
+            TaskKind::Agent,
+            TaskKind::Spawned,
+            TaskKind::Decision,
+        ] {
+            for status in [Status::Queued, Status::Running, Status::Waiting] {
+                assert!(
+                    can_message(&task(kind, status), false),
+                    "{kind:?} {status:?}"
+                );
+                assert!(
+                    can_message(&task(kind, status), true),
+                    "{kind:?} {status:?}"
+                );
+            }
+        }
+        for kind in [
+            TaskKind::Chat,
+            TaskKind::Router,
+            TaskKind::Render,
+            TaskKind::Gate,
+            TaskKind::Tool,
+            TaskKind::Source,
+        ] {
+            assert!(
+                !can_message(&task(kind, Status::Running), false),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn finished_tasks_get_follow_ups_only_on_latest_attempt() {
+        for status in [Status::Done, Status::Failed, Status::Cancelled] {
+            for kind in [TaskKind::Manual, TaskKind::Agent, TaskKind::Spawned] {
+                assert!(
+                    can_message(&task(kind, status), false),
+                    "{kind:?} {status:?}"
+                );
+                assert!(
+                    !can_message(&task(kind, status), true),
+                    "{kind:?} {status:?}"
+                );
+            }
+            // Decisions can be steered while active but have no follow-up turn.
+            assert!(!can_message(&task(TaskKind::Decision, status), false));
+            assert!(!can_message(&task(TaskKind::Chat, status), false));
+            assert!(!can_message(&task(TaskKind::Gate, status), false));
+        }
     }
 }

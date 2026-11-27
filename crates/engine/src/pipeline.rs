@@ -8,7 +8,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -440,7 +441,7 @@ struct Place {
 
 /// A workdir's environment for one run: `{run}` becomes the run number and `{run_cache}`
 /// the run's scratch dir (so each run can get its own cargo target dir, for example).
-fn run_env(env: &BTreeMap<String, String>, run: &Run) -> BTreeMap<String, String> {
+pub(crate) fn run_env(env: &BTreeMap<String, String>, run: &Run) -> BTreeMap<String, String> {
     let cache = harness_core::paths::run_cache_dir(run.number)
         .display()
         .to_string();
@@ -477,10 +478,16 @@ fn place(
         wd.shell.clone()
     };
     if !wd.worktree || !git::is_repo(&root) {
+        // Work in place; still note HEAD so the step's diff and file stats can be computed.
+        let base = if git::is_repo(&root) {
+            git::head(&root).ok()
+        } else {
+            None
+        };
         return Ok(Place {
             cwd: root,
             branch: None,
-            base: None,
+            base,
             start: None,
             shell,
             env: env.clone(),
@@ -1240,7 +1247,10 @@ fn run_variant(
                 run.number,
                 run.title
             );
-            let _ = git::commit_all(&p.cwd, &msg);
+            // Only commit inside an isolated worktree, never on the user's own checkout.
+            if p.branch.is_some() {
+                let _ = git::commit_all(&p.cwd, &msg);
+            }
         }
     }
     let (files, add, del) = git::diff_stat(&step_diff);
@@ -1258,12 +1268,319 @@ fn run_variant(
         "cwd": place.as_ref().map(|p| p.cwd.display().to_string()),
         "root": place.as_ref().and_then(|p| p.branch.as_ref().map(|_| worktree_root(&p.cwd))),
         "branch": place.as_ref().and_then(|p| p.branch.clone()),
-        "base": place.as_ref().and_then(|p| p.base.clone()),
+        "base": place.as_ref().and_then(|p| p.start.clone().or_else(|| p.base.clone())),
         "diff": diff,
         "cost": cost,
         "secs": start.elapsed().as_secs_f64(),
         "images": [],
     }))
+}
+
+/// One follow-up turn on a finished pipeline agent step: continues its thread with your
+/// instructions, in the step's own working directory, and refreshes what the run and the
+/// review gates show for it. `None` when the step can't be found (the caller then treats
+/// the task like a manual one).
+pub(crate) fn followup_agent(
+    engine: &Engine,
+    task: &Task,
+    cancel: Arc<AtomicBool>,
+) -> Option<Result<String>> {
+    let store = engine.store().clone();
+    let run = task.run_id.as_deref().and_then(|r| store.run(r))?;
+    let node = task
+        .node_id
+        .as_deref()
+        .and_then(|n| run.graph.node(n))?
+        .clone();
+    let NodeKind::Agent(a) = &node.kind else {
+        return None;
+    };
+    Some(followup_agent_turn(engine, task, &run, &node, a, cancel))
+}
+
+fn followup_agent_turn(
+    engine: &Engine,
+    task: &Task,
+    run: &Run,
+    node: &Node,
+    a: &AgentNode,
+    cancel: Arc<AtomicBool>,
+) -> Result<String> {
+    let store = engine.store().clone();
+    let config = engine.config();
+    let r = resolve_agent(engine, node, a);
+    let wd = a.workdir.as_deref().and_then(|w| run.graph.workdir(w));
+
+    let mut shell = String::new();
+    let mut env = BTreeMap::new();
+    let mut cwd = task
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+    if let Some(wd) = wd {
+        env = run_env(&wd.env, run);
+        if cwd.is_none() {
+            if let Some(w) = &a.workdir {
+                let p = place(engine, run, node, w, task.variant)?;
+                shell = p.shell;
+                cwd = Some(p.cwd);
+            }
+        }
+        if shell.is_empty() {
+            shell = if wd.shell.is_empty() {
+                crate::chat::shell_for(cwd.as_deref())
+            } else {
+                wd.shell.clone()
+            };
+        }
+    }
+    let base_branch = wd.map(|w| w.base_branch.as_str()).unwrap_or("");
+
+    // What the step's change is measured against.
+    let diff_base = cwd.as_deref().and_then(|c| {
+        if task.branch.is_some() && !base_branch.is_empty() {
+            git::fork_point(c, base_branch).or_else(|| git::head(c).ok())
+        } else if git::is_repo(c) {
+            git::head(c).ok()
+        } else {
+            None
+        }
+    });
+
+    let workdirs = other_workdirs(run, a.workdir.as_deref());
+    let mut extra = vec![];
+    if let Some(d) = &a.delegate {
+        extra.push(delegate_spec(&resolve_delegate(engine, d).name));
+    }
+    let fallback_first_user = format!(
+        "{}\n\nDo this step for the task above.",
+        run_context(run, node)
+    );
+    let msgs = crate::tasks::take_thread_messages(&store, &task.id);
+    let (history, mut latest, images) = crate::tasks::task_history(&msgs, &fallback_first_user);
+    if latest.trim().is_empty() && !images.is_empty() {
+        latest = "See the attached image.".into();
+    }
+    let agent = AgentRun {
+        engine,
+        task_id: task.id.clone(),
+        thread_id: task.id.clone(),
+        actor: r.name.clone(),
+        model: if task.model.is_empty() {
+            r.model.clone()
+        } else {
+            task.model.clone()
+        },
+        stack: Stack {
+            rules: config.rules.clone(),
+            role: r.role.clone(),
+            instructions: a.instructions.clone(),
+            context: String::new(),
+            environment: prompt::environment(cwd.as_deref(), &shell, &workdirs),
+            skills: r.skills.clone(),
+            skills_on_demand: r.skills_on_demand.clone(),
+            message: latest,
+            images,
+        },
+        tools: ToolContext {
+            cwd: cwd.clone(),
+            shell: shell.clone(),
+            env,
+            access: if cwd.is_some() {
+                r.tools
+            } else {
+                ToolAccess::None
+            },
+            workdirs,
+            skills_on_demand: r.skills_on_demand.clone(),
+            config: config.clone(),
+            cancel,
+        },
+        extra_tools: extra,
+        history,
+        max_steps: r.max_steps,
+    };
+    let delegate_cfg = a.delegate.clone();
+    let out = agent.run(&mut |run, call, args| {
+        if call.name != "delegate" {
+            return None;
+        }
+        let d = resolve_delegate(engine, delegate_cfg.as_ref()?);
+        let role = if d.instructions.is_empty() {
+            crate::chat::DELEGATE_ROLE
+        } else {
+            d.instructions.as_str()
+        };
+        Some(crate::chat::delegate(
+            run,
+            args,
+            &d.model,
+            &d.name,
+            role,
+            &d.skills_on_demand,
+            d.max_steps,
+        ))
+    })?;
+
+    // Capture the new work like a first attempt does.
+    let mut diff = String::new();
+    if let (Some(cwd), Some(base)) = (&cwd, &diff_base) {
+        if task.branch.is_some() {
+            let msg = format!(
+                "{} (follow-up): {}\n\nRun #{} · {}",
+                node.name,
+                first_line(&out.text).chars().take(72).collect::<String>(),
+                run.number,
+                run.title
+            );
+            if let (Some(branch), Ok(true)) = (&task.branch, git::commit_all(cwd, &msg)) {
+                // The PR is open already: put the follow-up commit on it too.
+                let pr_open = store.run(&run.id).as_ref().unwrap_or(run).pr_url.is_some();
+                if pr_open && task.variant.is_none() {
+                    if let Err(e) = git::git(cwd, &["push", "--force-with-lease", "origin", branch])
+                    {
+                        system_note(
+                            &store,
+                            &task.id,
+                            format!("Could not push follow-up commit to {branch}: {e:#}"),
+                        );
+                    }
+                }
+            }
+        }
+        diff = git::diff_against(cwd, base);
+        let (files, add, del) = git::diff_stat(&diff);
+        store.update_task(&task.id, |t| {
+            t.output = json!({"files": files, "added": add, "removed": del});
+        })?;
+    }
+    let cost = store.task(&task.id).map(|t| t.cost_usd).unwrap_or(0.0);
+
+    // A render step downstream already drew this variant: draw the changed mockups again,
+    // so the review gate shows what the follow-up turn made, not the first attempt.
+    let mut new_images: Option<Vec<String>> = None;
+    let fresh = store.run(&run.id);
+    let latest = fresh.as_ref().unwrap_or(run);
+    for render_node in &latest.graph.nodes {
+        let NodeKind::Render(rn) = &render_node.kind else {
+            continue;
+        };
+        let Some(mut v) = latest
+            .outputs
+            .get(&render_node.id)
+            .and_then(|o| o.value.get("variants"))
+            .and_then(|vs| vs.as_array())
+            .and_then(|vs| {
+                vs.iter()
+                    .find(|v| v["task_id"].as_str() == Some(task.id.as_str()))
+            })
+            .cloned()
+        else {
+            continue;
+        };
+        if let Some(c) = &cwd {
+            v["cwd"] = json!(c.display().to_string());
+            v["root"] = json!(worktree_root(c));
+        }
+        let cmd = if rn.command.is_empty() {
+            config.render_command.clone()
+        } else {
+            rn.command.clone()
+        };
+        let (_, errors) =
+            render_variant(&cmd, rn, render_node, run.number, &new_id(), &mut v, false);
+        if !errors.is_empty() {
+            system_note(&store, &task.id, errors.join("\n"));
+        }
+        let images: Vec<String> = v["images"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        store.update_run(&run.id, |r| {
+            let Some(o) = r.outputs.get_mut(&render_node.id) else {
+                return;
+            };
+            let mut count = 0;
+            if let Some(vs) = o.value.get_mut("variants").and_then(|v| v.as_array_mut()) {
+                count = vs.len();
+                for ov in vs
+                    .iter_mut()
+                    .filter(|ov| ov["task_id"].as_str() == Some(task.id.as_str()))
+                {
+                    ov["summary"] = json!(out.text);
+                    ov["cost"] = json!(cost);
+                    if diff_base.is_some() {
+                        ov["diff"] = json!(diff);
+                    }
+                    ov["images"] = json!(images);
+                }
+            }
+            if count <= 1 {
+                o.summary = out.text.clone();
+            }
+        })?;
+        new_images = Some(images);
+    }
+
+    store.update_run(&run.id, |r| {
+        let Some(o) = r.outputs.get_mut(&node.id) else {
+            return;
+        };
+        let mut count = 0;
+        if let Some(vs) = o.value.get_mut("variants").and_then(|v| v.as_array_mut()) {
+            count = vs.len();
+            for v in vs
+                .iter_mut()
+                .filter(|v| v["task_id"].as_str() == Some(task.id.as_str()))
+            {
+                v["summary"] = json!(out.text);
+                v["cost"] = json!(cost);
+                if diff_base.is_some() {
+                    v["diff"] = json!(diff);
+                }
+            }
+        }
+        if count <= 1 {
+            o.summary = out.text.clone();
+        }
+    })?;
+    for gate in store
+        .tasks_for_run(&run.id)
+        .into_iter()
+        .filter(|t| t.kind == TaskKind::Gate)
+    {
+        for mut v in store.variants(&gate.id) {
+            if v.source_task_id.as_deref() == Some(task.id.as_str()) {
+                v.summary = out.text.clone();
+                v.title = first_line(&out.text);
+                v.cost_usd = cost;
+                if diff_base.is_some() {
+                    v.diff = diff.clone();
+                }
+                if let Some(images) = &new_images {
+                    v.images = images.clone();
+                }
+                store.put_variant(&v)?;
+            } else if gate.status == Status::Waiting
+                && v.source_task_id.is_none()
+                && v.branch.is_some()
+                && v.branch == task.branch
+            {
+                // The pull request's own review: its diff and the run's cost moved too.
+                if diff_base.is_some() {
+                    v.diff = diff.clone();
+                }
+                v.cost_usd = store.run(&run.id).map(|r| r.cost_usd).unwrap_or(v.cost_usd);
+                store.put_variant(&v)?;
+            }
+        }
+    }
+    Ok(out.text)
 }
 
 fn worktree_root(cwd: &Path) -> String {
@@ -1286,6 +1603,71 @@ fn upstream_variants(run: &Run, node_id: &str) -> Option<(Id, Value)> {
         }
     }
     None
+}
+
+/// Where the PNG of `file` (a path relative to the worktree root) goes. Every render pass
+/// has its own task id and so its own paths: the UI caches decoded images by path, so
+/// reusing one after a send-back would show the old PNG.
+fn render_path(run: u64, node: &str, letter: char, task: &str, file: &str) -> PathBuf {
+    harness_core::paths::renders_dir()
+        .join(format!("run-{run}"))
+        .join(format!("{}-{letter}", git::slug(node)))
+        .join(task)
+        .join(format!("{}.png", file.replace('/', "__")))
+}
+
+/// Renders the mockup files a variant changed (or, without a diff to go by, every file
+/// matching the node's pattern) and sets the variant's `images`. Returns how many screens
+/// were rendered and the errors of those that failed.
+fn render_variant(
+    cmd: &str,
+    rn: &RenderNode,
+    node: &Node,
+    run_number: u64,
+    task_id: &str,
+    v: &mut Value,
+    standalone: bool,
+) -> (usize, Vec<String>) {
+    let Some(cwd) = v["cwd"].as_str().map(PathBuf::from) else {
+        return (0, vec![]);
+    };
+    let pattern =
+        glob::Pattern::new(&rn.files).unwrap_or_else(|_| glob::Pattern::new("**/*.html").unwrap());
+    let base = v["base"].as_str().unwrap_or("HEAD~1").to_string();
+    // Changed files relative to the worktree root; keep those matching the glob.
+    let root = git::repo_root(&cwd).unwrap_or(cwd.clone());
+    let mut changed = if v["base"].is_null() {
+        vec![]
+    } else {
+        git::changed_files(&root, &base)
+    };
+    // A folder without git, or a standalone render with no diff to go by: render
+    // whatever matches the pattern.
+    if v["base"].is_null() || (standalone && changed.is_empty()) {
+        changed = matching_files(&cwd, &root, &rn.files);
+    }
+    let letter = variant_letter(v["index"].as_u64().unwrap_or(0) as u32);
+    let mut images = vec![];
+    let mut errors = vec![];
+    for f in changed {
+        let abs = root.join(&f);
+        let rel_to_cwd = abs
+            .strip_prefix(&cwd)
+            .map(|p| p.to_path_buf())
+            .unwrap_or(PathBuf::from(&f));
+        if !abs.is_file() || !(pattern.matches_path(&rel_to_cwd) || pattern.matches(&f)) {
+            continue;
+        }
+        let (w, h) = crate::render::design_size(&abs).unwrap_or((rn.width, rn.height));
+        let out = render_path(run_number, &node.name, letter, task_id, &f);
+        match crate::render::render(cmd, &abs, &out, w, h) {
+            Ok(()) => images.push(json!(out.display().to_string())),
+            Err(e) => errors.push(format!("{f}: {e:#}")),
+        }
+    }
+    let n = images.len();
+    v["images"] = json!(images);
+    (n, errors)
 }
 
 fn exec_render(engine: &Engine, run: &Run, node: &Node, rn: &RenderNode) -> Result<Step> {
@@ -1317,12 +1699,10 @@ fn render_inner(
             let p = place(engine, run, node, &w, None)?;
             (
                 String::new(),
-                json!({"variants":[{"index":0,"cwd":p.cwd.display().to_string(),"base":p.base,"summary":"","images":[]}]}),
+                json!({"variants":[{"index":0,"cwd":p.cwd.display().to_string(),"base":p.start.clone().or(p.base.clone()),"summary":"","images":[]}]}),
             )
         }
     };
-    let pattern =
-        glob::Pattern::new(&rn.files).unwrap_or_else(|_| glob::Pattern::new("**/*.html").unwrap());
     let mut total = 0;
     let mut errors = vec![];
     let cmd = if rn.command.is_empty() {
@@ -1332,42 +1712,9 @@ fn render_inner(
     };
     if let Some(vs) = value["variants"].as_array_mut() {
         for v in vs.iter_mut() {
-            let Some(cwd) = v["cwd"].as_str().map(PathBuf::from) else {
-                continue;
-            };
-            let base = v["base"].as_str().unwrap_or("HEAD~1").to_string();
-            // Changed files relative to the worktree root; keep those matching the glob.
-            let root = git::repo_root(&cwd).unwrap_or(cwd.clone());
-            let changed = if v["base"].is_null() {
-                vec![]
-            } else {
-                git::changed_files(&root, &base)
-            };
-            let letter = variant_letter(v["index"].as_u64().unwrap_or(0) as u32);
-            let mut images = vec![];
-            for f in changed {
-                let abs = root.join(&f);
-                let rel_to_cwd = abs
-                    .strip_prefix(&cwd)
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or(PathBuf::from(&f));
-                if !abs.is_file() || !(pattern.matches_path(&rel_to_cwd) || pattern.matches(&f)) {
-                    continue;
-                }
-                let (w, h) = design_size(&abs).unwrap_or((rn.width, rn.height));
-                let out = harness_core::paths::renders_dir()
-                    .join(format!("run-{}", run.number))
-                    .join(format!("{}-{}", git::slug(&node.name), letter))
-                    .join(format!("{}.png", f.replace('/', "__")));
-                match crate::render::render(&cmd, &abs, &out, w, h) {
-                    Ok(()) => {
-                        images.push(json!(out.display().to_string()));
-                        total += 1;
-                    }
-                    Err(e) => errors.push(format!("{f}: {e:#}")),
-                }
-            }
-            v["images"] = json!(images);
+            let (n, errs) = render_variant(&cmd, rn, node, run.number, &t.id, v, src_id.is_empty());
+            total += n;
+            errors.extend(errs);
         }
     }
     let summary = if total == 0 && errors.is_empty() {
@@ -1386,7 +1733,12 @@ fn render_inner(
     if !errors.is_empty() {
         system_note(&store, &t.id, errors.join("\n"));
     }
-    t.status = Status::Done;
+    if total == 0 && !errors.is_empty() {
+        t.status = Status::Failed;
+        t.error = Some(errors.join("\n"));
+    } else {
+        t.status = Status::Done;
+    }
     t.summary = summary.clone();
     t.finished_at = Some(now());
     store.put_task(&t)?;
@@ -1396,7 +1748,7 @@ fn render_inner(
         &run.id,
         &node.id,
         NodeOutput {
-            summary: String::new(),
+            summary,
             port: None,
             value,
             task_id: Some(t.id),
@@ -1405,15 +1757,54 @@ fn render_inner(
     Ok(Step::Next(None))
 }
 
-/// `<meta name="design:size" content="1440x2080">` in a mockup sets its render size.
-fn design_size(p: &Path) -> Option<(u32, u32)> {
-    let text = std::fs::read_to_string(p).ok()?;
-    let i = text.find("name=\"design:size\"")?;
-    let rest = &text[i..];
-    let c = rest.find("content=\"")? + 9;
-    let end = rest[c..].find('"')? + c;
-    let (w, h) = rest[c..end].split_once('x')?;
-    Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+fn glob_match(pattern: &str, path: &str) -> bool {
+    glob::Pattern::new(pattern)
+        .map(|p| p.matches(path))
+        .unwrap_or(false)
+}
+
+/// Files under `cwd` matching `pattern`, as sorted `/`-separated paths relative to `root`.
+/// Skips `.git`, `target` and `node_modules`; goes at most 6 levels deep.
+fn matching_files(cwd: &Path, root: &Path, pattern: &str) -> Vec<String> {
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > 6 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if matches!(name.to_str(), Some(".git" | "target" | "node_modules")) {
+                    continue;
+                }
+                walk(&p, depth + 1, out);
+            } else if ft.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    let slashed = |p: &Path| {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    let mut files = vec![];
+    walk(cwd, 0, &mut files);
+    let mut found: Vec<String> = files
+        .iter()
+        .filter_map(|abs| {
+            let rel = slashed(abs.strip_prefix(root).ok()?);
+            let rel_cwd = slashed(abs.strip_prefix(cwd).ok()?);
+            (glob_match(pattern, &rel) || glob_match(pattern, &rel_cwd)).then_some(rel)
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<Step> {
@@ -2031,5 +2422,19 @@ mod env_tests {
             out["CARGO_TARGET_DIR"]
         );
         assert_eq!(out["TAG"], "run-42");
+    }
+}
+
+#[cfg(test)]
+mod render_path_tests {
+    use super::*;
+
+    #[test]
+    fn each_render_pass_gets_its_own_image_paths() {
+        let file = "design/screens/agents.html";
+        let first = render_path(9, "Render mockups", 'A', "task-pass-1", file);
+        let second = render_path(9, "Render mockups", 'A', "task-pass-2", file);
+        assert_ne!(first, second);
+        assert_eq!(first.file_stem(), second.file_stem());
     }
 }

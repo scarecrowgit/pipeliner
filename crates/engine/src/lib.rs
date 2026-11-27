@@ -461,20 +461,28 @@ The user reviews and installs staged skills in Settings › Skills; nothing inst
 
     // ---- tasks ---------------------------------------------------------------
 
-    /// Posts your message into a task's thread; a running agent reads it before its next step.
+    /// Sends your message to a task. A running agent reads it before its next step; on a
+    /// finished task that runs an agent it starts another turn with the whole thread as context.
     pub fn steer(&self, task_id: &str, text: &str) -> Result<()> {
-        let mut m = Message::new(task_id, Role::User, text);
-        m.author = "you".into();
-        self.store.put_message(&m)?;
-        let t = self.store.task(task_id);
-        let title = t.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-        self.store.log(
-            "task.steer",
-            t.as_ref().and_then(|t| t.run_id.as_deref()),
-            Some(task_id),
-            format!("You steered {title}"),
-        );
-        Ok(())
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let t = self.store.task(task_id).context("task not found")?;
+        if t.status.is_active() || self.cancels.lock().contains_key(task_id) {
+            let mut m = Message::new(task_id, Role::User, text);
+            m.author = "you".into();
+            m.delivered = false;
+            self.store.put_message(&m)?;
+            self.store.log(
+                "task.steer",
+                t.run_id.as_deref(),
+                Some(task_id),
+                format!("You steered {}", t.title),
+            );
+            return Ok(());
+        }
+        self.start_followup(&t, text)
     }
 
     /// Cancels a task and every sub-task it spawned.
