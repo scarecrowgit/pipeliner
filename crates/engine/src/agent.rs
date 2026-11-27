@@ -368,14 +368,23 @@ fn compact(msgs: &mut [Msg]) {
 }
 
 /// Spec for the `delegate` tool.
-pub fn delegate_spec(name: &str) -> ToolSpec {
+pub fn delegate_spec(name: &str, has_cwd: bool) -> ToolSpec {
+    let description = if has_cwd {
+        format!(
+            "Hand one focused task to a {name} sub-agent that works in the same folder with full tools (files and run_command). \
+             Give exact files, the change or command, and acceptance criteria. Returns its report. \
+             Delegated tasks run one at a time."
+        )
+    } else {
+        format!(
+            "Hand one focused task to a {name} sub-agent with run_command (starts in the home directory; no working folder is attached, so file tools are unavailable). \
+             Give the goal, commands or checks to run, and acceptance criteria. Returns its report. \
+             Delegated tasks run one at a time."
+        )
+    };
     ToolSpec {
         name: "delegate",
-        description: format!(
-            "Hand one focused task to a {name} sub-agent that works in the same folder with full tools. \
-             Give exact files, the change, and acceptance criteria. Returns its report. \
-             Delegated tasks run one at a time."
-        ),
+        description,
         parameters: serde_json::json!({
             "type":"object",
             "properties":{
@@ -390,6 +399,17 @@ pub fn delegate_spec(name: &str) -> ToolSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegate_spec_matches_folder() {
+        let with = delegate_spec("worker", true);
+        assert_eq!(with.name, "delegate");
+        assert!(with.description.contains("worker sub-agent that works in the same folder with full tools (files and run_command)"));
+        let without = delegate_spec("worker", false);
+        assert!(without.description.contains("starts in the home directory"));
+        assert!(without.description.contains("file tools are unavailable"));
+        assert!(!without.description.contains("same folder"));
+    }
 
     #[test]
     fn opened_images_follow_as_a_user_turn() {

@@ -19,9 +19,10 @@ use crate::Engine;
 
 /// Role of the general worker that runs a task without an agent.
 pub const WORKER_ROLE: &str = "You are a capable general-purpose worker. You get one task from the user. \
-Read the relevant files first, make focused changes in the existing style, check your work (build/test as the \
-project instructions say), and reply with a short report: what you did, which files changed, how you checked it, \
-anything left. Do not commit.";
+If a working folder is attached, read the relevant files first, make focused changes in the existing style, and \
+check your work (build/test as the project instructions say). If no folder is attached, use run_command to carry \
+out and verify the task. Reply with a short report: what you did, which files changed or commands ran, how you \
+checked it, anything left. Do not commit.";
 
 /// What you enter in the "New task" dialog.
 #[derive(Clone, Debug, Default)]
@@ -470,7 +471,7 @@ impl Engine {
                     .as_ref()
                     .map(|r| run_context(r, 1500))
                     .unwrap_or_default(),
-                environment: prompt::environment(cwd.as_deref(), &shell, &[]),
+                environment: prompt::environment(cwd.as_deref(), &shell, access, &[]),
                 skills: agent.as_ref().map(|a| a.skills.clone()).unwrap_or_default(),
                 skills_on_demand: skills_on_demand.clone(),
                 message,
@@ -678,7 +679,7 @@ impl Engine {
                     .map(|r| run_context(r, 1500))
                     .unwrap_or_default(),
                 context: String::new(),
-                environment: prompt::environment(cwd.as_deref(), &shell, &[]),
+                environment: prompt::environment(cwd.as_deref(), &shell, access, &[]),
                 skills: agent.as_ref().map(|a| a.skills.clone()).unwrap_or_default(),
                 skills_on_demand: skills_on_demand.clone(),
                 message: latest,
