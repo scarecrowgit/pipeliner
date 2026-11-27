@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use harness_core::{skills, Config};
+use harness_core::{skills, Config, ToolAccess};
 
 use crate::llm::ImageData;
 
@@ -84,15 +84,36 @@ Keep run_command for builds, tests, git and other programs, not for cat, sed, gr
 heredocs.\n";
 
 /// Describes a working folder and includes its project instructions (AGENTS.md / CLAUDE.md).
-pub fn environment(cwd: Option<&Path>, shell: &str, other_workdirs: &[(String, String)]) -> String {
+/// The tool instructions match what `access` actually allows.
+pub fn environment(
+    cwd: Option<&Path>,
+    shell: &str,
+    access: ToolAccess,
+    other_workdirs: &[(String, String)],
+) -> String {
     let mut s = String::new();
-    if let Some(cwd) = cwd {
-        s.push_str(&format!("Working directory: {}\n", cwd.display()));
-        s.push_str(FILE_TOOLS_RULE);
+    let wrapper = |s: &mut String| {
         if !shell.is_empty() {
             s.push_str(&format!(
                 "Commands you run with run_command are wrapped as: {shell} '<command>' (so build tools are available).\n"
             ));
+        }
+    };
+    if let Some(cwd) = cwd {
+        s.push_str(&format!("Working directory: {}\n", cwd.display()));
+        match access {
+            ToolAccess::Full => {
+                s.push_str(FILE_TOOLS_RULE);
+                wrapper(&mut s);
+            }
+            ToolAccess::ReadAndRun => {
+                s.push_str("Look at files with read_file (several at once with `files`), list_dir, find_files and search (read-only; you cannot write or edit files). Keep run_command for builds, tests, git and other programs, not for cat, sed, grep or find.\n");
+                wrapper(&mut s);
+            }
+            ToolAccess::ReadOnly => {
+                s.push_str("Look at files with read_file (several at once with `files`), list_dir, find_files and search (read-only; you cannot edit files or run commands).\n");
+            }
+            ToolAccess::None => {}
         }
         for name in ["AGENTS.md", "CLAUDE.md"] {
             if let Ok(t) = std::fs::read_to_string(cwd.join(name)) {
@@ -101,12 +122,74 @@ pub fn environment(cwd: Option<&Path>, shell: &str, other_workdirs: &[(String, S
                 break;
             }
         }
+    } else if matches!(access, ToolAccess::ReadAndRun | ToolAccess::Full) {
+        s.push_str("No working folder is attached: file tools are unavailable, and run_command starts in the home directory.\n");
     }
-    if !other_workdirs.is_empty() {
+    if !other_workdirs.is_empty() && access != ToolAccess::None {
         s.push_str("\nOther folders you can read with read_workdir:\n");
         for (id, path) in other_workdirs {
             s.push_str(&format!("- `{id}`: {path}\n"));
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir() -> std::path::PathBuf {
+        std::path::PathBuf::from("/nonexistent-pipeliner-test-dir")
+    }
+
+    #[test]
+    fn full_with_cwd_and_shell() {
+        let d = dir();
+        let s = environment(Some(&d), "nix-shell --run", ToolAccess::Full, &[]);
+        assert!(s.contains("Working directory: /nonexistent-pipeliner-test-dir"));
+        assert!(s.contains("edit_file"));
+        assert!(s.contains("wrapped as: nix-shell --run '<command>'"));
+    }
+
+    #[test]
+    fn full_without_cwd() {
+        let s = environment(None, "sh -c", ToolAccess::Full, &[]);
+        assert!(s.contains("No working folder is attached"));
+        assert!(s.contains("run_command starts in the home directory"));
+        assert!(!s.contains("Working directory"));
+        assert!(!s.contains("wrapped as"));
+    }
+
+    #[test]
+    fn read_and_run_with_and_without_cwd() {
+        let d = dir();
+        let s = environment(Some(&d), "sh -c", ToolAccess::ReadAndRun, &[]);
+        assert!(s.contains("you cannot write or edit files"));
+        assert!(!s.contains("edit_file"));
+        assert!(s.contains("wrapped as: sh -c '<command>'"));
+        let s = environment(None, "", ToolAccess::ReadAndRun, &[]);
+        assert!(s.contains("No working folder is attached"));
+    }
+
+    #[test]
+    fn read_only_claims_no_writes_or_commands() {
+        let d = dir();
+        let s = environment(Some(&d), "sh -c", ToolAccess::ReadOnly, &[]);
+        assert!(s.contains("cannot edit files or run commands"));
+        assert!(!s.contains("edit_file"));
+        assert!(!s.contains("write_file"));
+        assert!(!s.contains("wrapped as"));
+        assert!(!environment(None, "", ToolAccess::ReadOnly, &[]).contains("No working folder"));
+    }
+
+    #[test]
+    fn none_has_no_tool_instructions() {
+        let d = dir();
+        let others = vec![("w1".to_string(), "/tmp/w1".to_string())];
+        let s = environment(Some(&d), "sh -c", ToolAccess::None, &others);
+        assert_eq!(s, "Working directory: /nonexistent-pipeliner-test-dir\n");
+        assert_eq!(environment(None, "sh -c", ToolAccess::None, &[]), "");
+        let s = environment(None, "", ToolAccess::ReadOnly, &others);
+        assert!(s.contains("read_workdir") && s.contains("`w1`"));
+    }
 }

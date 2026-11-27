@@ -858,7 +858,7 @@ fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> R
             role: "You make one yes/no decision in a pipeline. Investigate only as much as needed, then call `answer` exactly once.".into(),
             instructions: format!("Question: {}", d.question),
             context: run_context(run, node),
-            environment: prompt::environment(cwd.as_deref(), "", &[]),
+            environment: prompt::environment(cwd.as_deref(), "", ToolAccess::ReadOnly, &[]),
             message: format!("Answer the question for this task: {}", d.question),
             images: run_images(run),
             ..Default::default()
@@ -1204,7 +1204,10 @@ fn run_variant(
     let workdirs = other_workdirs(run, a.workdir.as_deref());
     let mut extra = vec![];
     if let Some(d) = &a.delegate {
-        extra.push(delegate_spec(&resolve_delegate(engine, d).name));
+        extra.push(delegate_spec(
+            &resolve_delegate(engine, d).name,
+            place.is_some(),
+        ));
     }
     let agent = AgentRun {
         engine,
@@ -1220,6 +1223,7 @@ fn run_variant(
             environment: prompt::environment(
                 place.as_ref().map(|p| p.cwd.as_path()),
                 place.as_ref().map(|p| p.shell.as_str()).unwrap_or(""),
+                r.tools,
                 &workdirs,
             ),
             skills: r.skills.clone(),
@@ -1432,7 +1436,10 @@ fn followup_agent_turn(
     let workdirs = other_workdirs(run, a.workdir.as_deref());
     let mut extra = vec![];
     if let Some(d) = &a.delegate {
-        extra.push(delegate_spec(&resolve_delegate(engine, d).name));
+        extra.push(delegate_spec(
+            &resolve_delegate(engine, d).name,
+            cwd.is_some(),
+        ));
     }
     let fallback_first_user = format!(
         "{}\n\nDo this step for the task above.",
@@ -1458,7 +1465,7 @@ fn followup_agent_turn(
             role: r.role.clone(),
             instructions: a.instructions.clone(),
             context: String::new(),
-            environment: prompt::environment(cwd.as_deref(), &shell, &workdirs),
+            environment: prompt::environment(cwd.as_deref(), &shell, r.tools, &workdirs),
             skills: r.skills.clone(),
             skills_on_demand: r.skills_on_demand.clone(),
             message: latest,

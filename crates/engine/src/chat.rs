@@ -278,10 +278,6 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
     let config = engine.config();
     // Messages posted so far are part of `history`; don't deliver them again as steering.
     let thread = crate::tasks::take_thread_messages(&store, chat_id);
-    let (hist, mut latest, images) = history(&thread);
-    if latest.trim().is_empty() && !images.is_empty() {
-        latest = "See the attached image.".into();
-    }
     let cwd = chat
         .cwd
         .as_ref()
@@ -291,8 +287,6 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
 
     let mut stack = Stack {
         rules: config.rules.clone(),
-        message: latest,
-        images,
         ..Default::default()
     };
     let mut tool_ctx = ToolContext {
@@ -346,7 +340,7 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
                 description: "Show the user your plan and wait for approval. Returns 'approved' or their feedback.".into(),
                 parameters: json!({"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}}},"required":["steps"]}),
             });
-            extra.push(delegate_spec("worker"));
+            extra.push(delegate_spec("worker", cwd.is_some()));
             extra.push(ToolSpec {
                 name: "stage_skill",
                 description: "Fetch an agent skill for the user to review: pass a GitHub repo/folder link, a SKILL.md link, a .zip link or an install command (e.g. `npx skills add owner/repo`). Nothing is installed; the user installs from Settings › Skills. Returns the skills found or the error.".into(),
@@ -355,10 +349,24 @@ fn reply(engine: &Engine, chat_id: &str, task_id: &str) -> Result<String> {
             max_steps = 80;
         }
     }
-    stack.environment = prompt::environment(cwd.as_deref(), &tool_ctx.shell, &[]);
+    stack.environment = prompt::environment(cwd.as_deref(), &tool_ctx.shell, tool_ctx.access, &[]);
     if tool_ctx.access == ToolAccess::None {
         tool_ctx.cwd = None;
     }
+
+    // With tools, earlier tool calls and their outputs stay in the history. Without any, send
+    // text only: gateways reject tool-call history next to an empty `tools` list.
+    let has_tools = !crate::tools::specs(&tool_ctx).is_empty() || !extra.is_empty();
+    let (hist, mut latest, images) = if has_tools {
+        crate::tasks::task_history(&thread, "")
+    } else {
+        history(&thread)
+    };
+    if latest.trim().is_empty() && !images.is_empty() {
+        latest = "See the attached image.".into();
+    }
+    stack.message = latest;
+    stack.images = images;
 
     let run = AgentRun {
         engine,
@@ -400,16 +408,21 @@ pub fn shell_for(cwd: Option<&std::path::Path>) -> String {
     }
 }
 
-const ORCHESTRATOR_ROLE: &str = "You are an orchestrator. First understand the request (read files if a folder is attached), \
-then call propose_plan with short concrete steps and wait for approval. After approval, hand each step to a worker with \
-`delegate` (exact files, change, acceptance criteria), review their reports, and send follow-ups until done. \
+const ORCHESTRATOR_ROLE: &str = "You are an orchestrator. You inspect files (when a folder is attached) and plan; \
+workers run shell commands (run_command, even without a folder) and edit files (when a folder is attached). \
+First understand the request, then call propose_plan with short concrete steps and wait for approval. After approval, \
+hand each step to a worker with `delegate` (exact files or commands, the change, acceptance criteria), review their \
+reports, and send follow-ups until done. \
 Finish with a short summary of what changed and what is left. \
 If the user only wants an agent skill, don't plan: find a candidate (GitHub link, SKILL.md link, .zip or an install \
 command) and call stage_skill with it; the user reviews it in Settings › Skills.";
 
-pub const DELEGATE_ROLE: &str = "You do one focused task given by an orchestrator. Read the relevant code first, make focused \
-changes in the existing style (edit_file for small edits), check your work (build/test as the project instructions say), \
-and reply with a short report: what you changed (files), how you checked it, anything left. Do not commit.";
+pub const DELEGATE_ROLE: &str = "You do one focused task given by an orchestrator. \
+If a working folder is attached, read the relevant code first, make focused changes in the existing style \
+(edit_file for small edits), and check your work (build/test as the project instructions say). \
+If no folder is attached, use run_command to carry out and verify the task. \
+Reply with a short report: what you did (files changed or commands run), how you checked it, anything left. \
+Do not commit.";
 
 /// Orchestrator tool: stages skills from a link or command for the user to review.
 fn stage_skill(run: &AgentRun, args: &Value) -> Handled {
@@ -561,7 +574,12 @@ pub fn delegate(
         stack: Stack {
             rules: engine.config().rules,
             role: role.into(),
-            environment: prompt::environment(cwd.as_deref(), &run.tools.shell, &run.tools.workdirs),
+            environment: prompt::environment(
+                cwd.as_deref(),
+                &run.tools.shell,
+                ToolAccess::Full,
+                &run.tools.workdirs,
+            ),
             skills_on_demand: skills_on_demand.to_vec(),
             message: task_text,
             ..Default::default()

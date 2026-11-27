@@ -945,6 +945,145 @@ fn pipeline_step_without_a_workdir_runs_commands_and_follow_ups() {
     );
 }
 
+/// Whether the request's messages carry any tool call or tool result.
+fn has_tool_history(body: &str) -> bool {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["messages"].as_array().is_some_and(|m| {
+        m.iter()
+            .any(|m| m["role"] == "tool" || m.get("tool_calls").is_some())
+    })
+}
+
+#[test]
+fn agent_chat_keeps_command_results_across_turns_and_direct_drops_them() {
+    // (offered tools, history carries a tool result of the first turn, any tool history)
+    let seen = Arc::new(Mutex::new(Vec::<(Vec<String>, bool, bool)>::new()));
+    let s = seen.clone();
+    let url = serve(move |body| {
+        if body.contains("test-haiku") {
+            return ("Title".into(), None);
+        }
+        let tools = offered_tools(body);
+        s.lock().unwrap().push((
+            tools.clone(),
+            has_tool_result(body, "one-ok"),
+            has_tool_history(body),
+        ));
+        if tools.is_empty() {
+            return ("Just talking.".into(), None);
+        }
+        two_turn_model(body)
+    });
+    let e = engine(&url);
+    let agent = saved_agent(&e, "Runner", ToolAccess::ReadAndRun);
+    let mut chat = e.new_chat(ChatMode::Agent).unwrap();
+    chat.agent_id = Some(agent.id.clone());
+    e.store().put_chat(&chat).unwrap();
+
+    e.send(&chat.id, "start").unwrap();
+    let task_id = e.store().chat(&chat.id).unwrap().task_id.unwrap();
+    assert_eq!(wait_task(&e, &task_id, Status::Done).summary, "First done.");
+
+    // Second turn: the first turn's command output is still in the request history.
+    seen.lock().unwrap().clear();
+    e.send(&chat.id, "do the second one").unwrap();
+    assert_eq!(wait_task(&e, &task_id, Status::Done).summary, "Second done.");
+    {
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        assert!(seen[0].0.contains(&"run_command".to_string()));
+        assert!(seen[0].1, "first turn's tool result missing: {seen:?}");
+    }
+
+    // Switch to Direct (no folder, no tools): no tool history next to an empty tool list.
+    let mut c = e.store().chat(&chat.id).unwrap();
+    c.mode = ChatMode::Direct;
+    e.store().put_chat(&c).unwrap();
+    seen.lock().unwrap().clear();
+    e.send(&chat.id, "and now just talk").unwrap();
+    let done = wait_task(&e, &task_id, Status::Done);
+    assert!(done.error.is_none(), "{:?}", done.error);
+    let seen = seen.lock().unwrap();
+    assert!(!seen.is_empty());
+    for (tools, _, tool_history) in seen.iter() {
+        assert!(tools.is_empty(), "{tools:?}");
+        assert!(!tool_history, "tool history sent without tools");
+    }
+}
+
+#[test]
+fn orchestrator_chat_without_a_folder_delegates_commands_to_a_worker() {
+    let delegate_texts = Arc::new(Mutex::new(Vec::<String>::new()));
+    let d = delegate_texts.clone();
+    let url = serve(move |body| {
+        if body.contains("test-haiku") {
+            return ("Title".into(), None);
+        }
+        let tools = offered_tools(body);
+        if tools.contains(&"propose_plan".to_string()) {
+            let v: serde_json::Value = serde_json::from_str(body).unwrap();
+            if let Some(t) = v["tools"].as_array().and_then(|t| {
+                t.iter()
+                    .find(|t| t["function"]["name"] == "delegate")
+                    .and_then(|t| t["function"]["description"].as_str())
+            }) {
+                d.lock().unwrap().push(t.to_string());
+            }
+            if has_tool_result(body, "Report from") {
+                ("All done.".into(), None)
+            } else if has_tool_result(body, "approved") {
+                (
+                    String::new(),
+                    Some((
+                        "delegate".into(),
+                        serde_json::json!({"title":"Run it","task":"Run printf wk-ok"}).to_string(),
+                    )),
+                )
+            } else {
+                (
+                    String::new(),
+                    Some((
+                        "propose_plan".into(),
+                        serde_json::json!({"steps":["run the command"]}).to_string(),
+                    )),
+                )
+            }
+        } else if has_tool_result(body, "wk-ok") {
+            ("Worker saw wk-ok.".into(), None)
+        } else {
+            assert!(tools.contains(&"run_command".to_string()), "{tools:?}");
+            run_cmd("printf wk-ok")
+        }
+    });
+    let e = engine(&url);
+    let chat = e.new_chat(ChatMode::Orchestrator).unwrap();
+    e.send(&chat.id, "do it").unwrap();
+    let task_id = e.store().chat(&chat.id).unwrap().task_id.unwrap();
+    wait_task(&e, &task_id, Status::Waiting);
+    e.decide(&task_id, DecisionKind::Approve).unwrap();
+    let done = wait_task(&e, &task_id, Status::Done);
+    assert_eq!(done.summary, "All done.");
+
+    let texts = delegate_texts.lock().unwrap();
+    assert!(!texts.is_empty());
+    assert!(texts
+        .iter()
+        .all(|t| t.contains("no working folder is attached")));
+    let worker = e
+        .store()
+        .tasks()
+        .into_iter()
+        .find(|t| t.kind == TaskKind::Spawned)
+        .expect("a delegated worker task");
+    assert_eq!(worker.status, Status::Done);
+    assert!(worker.summary.contains("wk-ok"), "{}", worker.summary);
+    assert!(e
+        .store()
+        .messages(&worker.id)
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("wk-ok")));
+}
+
 // ---- step limit ----------------------------------------------------------------------
 
 #[test]
