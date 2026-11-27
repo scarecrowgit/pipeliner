@@ -4,15 +4,19 @@
 //! Memory scope, versions and helper agents from the mockup are not part of this release.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use gpui::{Animation, AnimationExt as _, ClickEvent};
+use gpui::{pulsating_between, Animation, AnimationExt as _, ClickEvent};
 use gpui_component::input::InputState;
 use gpui_component::select::SelectState;
 use gpui_component::tooltip::Tooltip;
 use harness_core::skills::Skill;
 use harness_core::{default_max_steps, new_id, now, AgentDef, ChatMode, NodeKind, ToolAccess};
 use harness_core::{Pipeline, Task as WorkTask};
+use harness_engine::agents::AgentDraft;
 use harness_engine::Engine;
 
 use super::prelude::*;
@@ -149,6 +153,10 @@ fn uses_agent(p: &Pipeline, id: &str) -> bool {
 /// The form for one agent: inputs plus the saved agent it was made from (`base`).
 struct Editor {
     base: AgentDef,
+    /// `false` for an AI draft that isn't in the Store yet.
+    saved: bool,
+    /// The model values the select currently offers.
+    model_values: Vec<String>,
     name: Entity<InputState>,
     description: Entity<InputState>,
     role: Entity<InputState>,
@@ -160,10 +168,39 @@ struct Editor {
     _subs: Vec<Subscription>,
 }
 
+/// The models to offer: `models`, plus `current` when it isn't among them.
+fn model_values(models: &[String], current: &str) -> Vec<String> {
+    let mut v = models.to_vec();
+    if !current.is_empty() && !v.iter().any(|m| m == current) {
+        v.push(current.to_string());
+    }
+    v
+}
+
 impl Editor {
     fn new(
         agent: &AgentDef,
         data: &AgentsData,
+        window: &mut Window,
+        cx: &mut Context<AgentsScreen>,
+    ) -> Editor {
+        Editor::build(agent, data, true, window, cx)
+    }
+
+    /// An editor for an AI draft that is not in the Store until the user saves it.
+    fn new_unsaved(
+        agent: &AgentDef,
+        data: &AgentsData,
+        window: &mut Window,
+        cx: &mut Context<AgentsScreen>,
+    ) -> Editor {
+        Editor::build(agent, data, false, window, cx)
+    }
+
+    fn build(
+        agent: &AgentDef,
+        data: &AgentsData,
+        saved: bool,
         window: &mut Window,
         cx: &mut Context<AgentsScreen>,
     ) -> Editor {
@@ -182,8 +219,8 @@ impl Editor {
         );
         role.update(cx, |s, cx| s.set_value(agent.role.clone(), window, cx));
         let steps = input::text_input_with("40", agent.max_steps.to_string(), window, cx);
-        let model_options: Vec<SelectOption> = data
-            .models
+        let model_values = model_values(&data.models, &agent.model);
+        let model_options: Vec<SelectOption> = model_values
             .iter()
             .map(|m| SelectOption::plain(m.clone()))
             .collect();
@@ -211,6 +248,8 @@ impl Editor {
         }
         Editor {
             base: agent.clone(),
+            saved,
+            model_values,
             name,
             description,
             role,
@@ -221,6 +260,26 @@ impl Editor {
             on_demand: agent.skills_on_demand.clone(),
             _subs: subs,
         }
+    }
+
+    /// Updates the model options after the available models changed.
+    fn refresh_models(
+        &mut self,
+        data: &AgentsData,
+        window: &mut Window,
+        cx: &mut Context<AgentsScreen>,
+    ) {
+        let current = self.draft(cx).model;
+        let values = model_values(&data.models, &current);
+        if values == self.model_values {
+            return;
+        }
+        let options = values
+            .iter()
+            .map(|m| SelectOption::plain(m.clone()))
+            .collect();
+        sel::set_options(&self.model, options, Some(&current), window, cx);
+        self.model_values = values;
     }
 
     /// The agent as currently edited (version and timestamps unchanged).
@@ -289,7 +348,24 @@ pub struct AgentsScreen {
     editor: Option<Editor>,
     confirm_delete: bool,
     load: Option<Task<()>>,
+    /// "Create an agent with AI": the description of the agent to draft.
+    ai_prompt: Entity<InputState>,
+    generating: bool,
+    ai_generation: u64,
+    ai_cancel: Option<Arc<AtomicBool>>,
+    ai_task: Option<Task<()>>,
+    ai_error: Option<String>,
+    /// (model that wrote the open unsaved draft, cost in USD).
+    ai_draft_info: Option<(String, f64)>,
     _subs: Vec<Subscription>,
+}
+
+impl Drop for AgentsScreen {
+    fn drop(&mut self) {
+        if let Some(c) = &self.ai_cancel {
+            c.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 impl AgentsScreen {
@@ -316,6 +392,10 @@ impl AgentsScreen {
                     }
                 }
                 AppEvent::Navigated(Route::Agents { agent }) => {
+                    if agent.is_some() && this.editor.as_ref().is_some_and(|ed| !ed.saved) {
+                        this.editor = None;
+                        this.ai_draft_info = None;
+                    }
                     this.selected = agent.clone();
                     this.sync_editor(window, cx);
                     cx.notify();
@@ -327,13 +407,39 @@ impl AgentsScreen {
             Route::Agents { agent } => agent,
             _ => None,
         };
+        let ai_prompt = input::composer_rows(
+            "Describe the agent you want — e.g. Reads CI logs for a failed run and says which test broke and why. Never edits code.",
+            3,
+            8,
+            window,
+            cx,
+        );
+        let ai_sub = cx.subscribe_in(
+            &ai_prompt,
+            window,
+            |this, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change => {
+                    this.ai_error = None;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { secondary: true } => this.create_with_ai(window, cx),
+                _ => {}
+            },
+        );
         let mut this = AgentsScreen {
             data: None,
             selected,
             editor: None,
             confirm_delete: false,
             load: None,
-            _subs: vec![sub],
+            ai_prompt,
+            generating: false,
+            ai_generation: 0,
+            ai_cancel: None,
+            ai_task: None,
+            ai_error: None,
+            ai_draft_info: None,
+            _subs: vec![sub, ai_sub],
         };
         this.reload(window, cx);
         this
@@ -366,6 +472,12 @@ impl AgentsScreen {
     /// change the saved agent; switching agents discards them.
     fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(data) = self.data.take() else { return };
+        // An unsaved AI draft is never replaced by a reload.
+        if let Some(ed) = self.editor.as_mut().filter(|ed| !ed.saved) {
+            ed.refresh_models(&data, window, cx);
+            self.data = Some(data);
+            return;
+        }
         let agent = self.current(&data).cloned();
         match agent {
             None => {
@@ -390,6 +502,10 @@ impl AgentsScreen {
     }
 
     fn select(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.as_ref().is_some_and(|ed| !ed.saved) {
+            self.editor = None;
+            self.ai_draft_info = None;
+        }
         self.selected = Some(id.clone());
         state::replace_route(Route::Agents { agent: Some(id) }, cx);
         self.sync_editor(window, cx);
@@ -398,6 +514,10 @@ impl AgentsScreen {
 
     /// Creates a blank agent with the default model and selects it.
     fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // An in-flight AI draft must not replace the new blank agent when it finishes.
+        self.stop_ai_draft(cx);
+        self.editor = None;
+        self.ai_draft_info = None;
         let t = now();
         let agent = AgentDef {
             id: new_id(),
@@ -433,40 +553,85 @@ impl AgentsScreen {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ed) = &mut self.editor else { return };
         if let Some(err) = ed.error(cx) {
             state::toast(ToastKind::Warning, err, cx);
             return;
         }
-        if !ed.is_dirty(cx) {
+        // A saved agent needs a change to save; an AI draft can be kept as written.
+        if ed.saved && !ed.is_dirty(cx) {
             return;
         }
         let mut agent = ed.draft(cx);
-        agent.version = ed.base.version + 1;
-        agent.updated_at = now();
-        let store = state::store(cx);
-        match store.put_agent(&agent) {
-            Ok(()) => {
-                store.log(
-                    "agent.saved",
-                    None,
-                    None,
-                    format!("Saved {} v{}", agent.name, agent.version),
-                );
-                state::toast(
-                    ToastKind::Success,
-                    format!("Saved {} v{}", agent.name, agent.version),
-                    cx,
-                );
-                ed.base = agent;
-                cx.notify();
-            }
-            Err(e) => state::toast(ToastKind::Danger, format!("Couldn't save: {e:#}"), cx),
+        if ed.saved {
+            agent.version = ed.base.version + 1;
+            agent.updated_at = now();
+        } else {
+            let t = now();
+            agent.version = 1;
+            agent.created_at = t;
+            agent.updated_at = t;
         }
+        let store = state::store(cx);
+        if let Err(e) = store.put_agent(&agent) {
+            state::toast(ToastKind::Danger, format!("Couldn't save: {e:#}"), cx);
+            return;
+        }
+        let was_draft = !ed.saved;
+        if was_draft {
+            store.log(
+                "agent.created",
+                None,
+                None,
+                format!("Created agent {}", agent.name),
+            );
+        } else {
+            store.log(
+                "agent.saved",
+                None,
+                None,
+                format!("Saved {} v{}", agent.name, agent.version),
+            );
+        }
+        state::toast(
+            ToastKind::Success,
+            format!("Saved {} v{}", agent.name, agent.version),
+            cx,
+        );
+        ed.saved = true;
+        ed.base = agent.clone();
+        if was_draft {
+            self.selected = Some(agent.id.clone());
+            self.ai_draft_info = None;
+            self.ai_prompt
+                .update(cx, |s, cx| s.set_value("", window, cx));
+            // Show the new agent right away; the reload below replaces this copy.
+            if let Some(data) = &mut self.data {
+                if !data.agents.iter().any(|a| a.id == agent.id) {
+                    data.agents.push(agent.clone());
+                }
+            }
+            state::replace_route(
+                Route::Agents {
+                    agent: Some(agent.id.clone()),
+                },
+                cx,
+            );
+            self.reload(window, cx);
+        }
+        cx.notify();
     }
 
     fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.as_ref().is_some_and(|ed| !ed.saved) {
+            self.editor = None;
+            self.ai_draft_info = None;
+            self.confirm_delete = false;
+            self.sync_editor(window, cx);
+            cx.notify();
+            return;
+        }
         self.editor = None;
         self.sync_editor(window, cx);
         cx.notify();
@@ -488,6 +653,91 @@ impl AgentsScreen {
             }
             Err(e) => state::toast(ToastKind::Danger, format!("Couldn't delete: {e:#}"), cx),
         }
+    }
+
+    /// Has the workspace model draft an agent from the prompt. Nothing is saved until the
+    /// user presses Save on the draft.
+    fn create_with_ai(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = self.ai_prompt.read(cx).value().to_string();
+        if prompt.trim().is_empty() {
+            self.ai_prompt.update(cx, |s, cx| s.focus(window, cx));
+            state::toast(ToastKind::Warning, "Describe the agent you want first", cx);
+            return;
+        }
+        if let Some(c) = self.ai_cancel.take() {
+            c.store(true, Ordering::SeqCst);
+        }
+        self.ai_generation += 1;
+        let generation = self.ai_generation;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.ai_cancel = Some(cancel.clone());
+        self.generating = true;
+        self.ai_error = None;
+        let engine = state::engine(cx);
+        let job = cx.background_spawn(async move { engine.draft_agent(&prompt, cancel) });
+        self.ai_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.finish_ai_draft(generation, result, window, cx)
+            });
+        }));
+        cx.notify();
+    }
+
+    fn finish_ai_draft(
+        &mut self,
+        generation: u64,
+        result: anyhow::Result<AgentDraft>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.ai_generation != generation {
+            return;
+        }
+        self.generating = false;
+        self.ai_cancel = None;
+        self.ai_task = None;
+        match result {
+            Ok(draft) => {
+                let Some(data) = self.data.take() else {
+                    self.ai_error = Some("The agents are still loading, try again".into());
+                    cx.notify();
+                    return;
+                };
+                let mut data = data;
+                if !draft.agent.model.is_empty() && !data.models.contains(&draft.agent.model) {
+                    data.models.push(draft.agent.model.clone());
+                    data.models.sort();
+                }
+                let ed = Editor::new_unsaved(&draft.agent, &data, window, cx);
+                self.data = Some(data);
+                self.confirm_delete = false;
+                self.ai_draft_info = Some((draft.drafted_by, draft.cost_usd));
+                self.editor = Some(ed);
+                state::toast(
+                    ToastKind::Info,
+                    format!("Drafted {} — review and press Save", draft.agent.name),
+                    cx,
+                );
+            }
+            Err(e) => {
+                let text = format!("{e:#}");
+                if !text.contains("cancelled") {
+                    self.ai_error = Some(text);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn stop_ai_draft(&mut self, cx: &mut Context<Self>) {
+        if let Some(c) = self.ai_cancel.take() {
+            c.store(true, Ordering::SeqCst);
+        }
+        self.ai_generation += 1;
+        self.generating = false;
+        self.ai_task = None;
+        cx.notify();
     }
 
     /// Opens a new Agent-mode chat bound to the saved agent.
@@ -603,72 +853,283 @@ fn stat_tile(label: &'static str, value: String, sub: Option<String>) -> Div {
 }
 
 impl Render for AgentsScreen {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The stats column needs a wide window; below this the form gets the room.
+        let show_aside = window.viewport_size().width >= px(1360.);
         let Some(data) = &self.data else {
             return screen()
                 .child(PageHeader::new("Agents"))
                 .child(body().child(skeleton_rows("agents-loading", 3)));
         };
-        if data.agents.is_empty() {
-            return screen().child(PageHeader::new("Agents")).child(
-                body().child(
-                    EmptyState::new(
-                        AppIcon::Bot,
-                        "No saved agents",
-                        "Save an agent to reuse its role, model, tools and skills across pipelines and chats.",
-                    )
-                    .action(Button::new("agents-empty-new", "New agent").icon(AppIcon::Plus).primary().on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))),
-                ),
-            );
+        if data.agents.is_empty() && self.editor.is_none() {
+            return screen()
+                .child(PageHeader::new("Agents"))
+                .child(self.render_ai_band(cx))
+                .child(
+                    body().child(
+                        EmptyState::new(
+                            AppIcon::Bot,
+                            "No saved agents",
+                            "Save an agent to reuse its role, model, tools and skills across pipelines and chats.",
+                        )
+                        .action(Button::new("agents-empty-new", "New agent").icon(AppIcon::Plus).primary().on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))),
+                    ),
+                );
         }
 
-        let current = self.current(data).map(|a| a.id.clone());
+        let draft_open = self.editor.as_ref().is_some_and(|ed| !ed.saved);
+        let current = if draft_open {
+            None
+        } else {
+            self.current(data).map(|a| a.id.clone())
+        };
         let list = self.render_list(data, current.as_ref(), cx);
         let mut header = PageHeader::new("Agents");
         let mut main = div().flex_1().min_w_0().h_full();
         if let Some(ed) = &self.editor {
             let dirty = ed.is_dirty(cx);
             let error = ed.error(cx);
-            header = header
-                .subtitle(ed.base.name.clone())
-                .meta(Badge::new(format!("v{}", ed.base.version)).mono())
-                .when(dirty, |h| {
-                    h.meta(Badge::new("Unsaved changes").accent().dot())
-                })
-                .action(
-                    Button::new("agent-discard", "Discard changes")
-                        .ghost()
-                        .disabled(!dirty)
-                        .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx))),
-                )
-                .action(
-                    Button::new("agent-chat", "Chat with this agent")
-                        .icon(AppIcon::Chat)
-                        .tooltip("Starts a chat with the saved version of this agent")
-                        .on_click(cx.listener(|this, _, _, cx| this.chat_with(cx))),
-                )
-                .action(
-                    Button::new("agent-save", "Save")
-                        .primary()
-                        .icon(AppIcon::Check)
-                        .disabled(!dirty || error.is_some())
-                        .when_some(error.clone(), |b, e| b.tooltip(e))
-                        .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-                );
+            if ed.saved {
+                header = header
+                    .subtitle(ed.base.name.clone())
+                    .meta(Badge::new(format!("v{}", ed.base.version)).mono())
+                    .when(dirty, |h| {
+                        h.meta(Badge::new("Unsaved changes").accent().dot())
+                    })
+                    .action(
+                        Button::new("agent-discard", "Discard changes")
+                            .ghost()
+                            .disabled(!dirty)
+                            .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx))),
+                    )
+                    .action(
+                        Button::new("agent-chat", "Chat with this agent")
+                            .icon(AppIcon::Chat)
+                            .tooltip("Starts a chat with the saved version of this agent")
+                            .on_click(cx.listener(|this, _, _, cx| this.chat_with(cx))),
+                    )
+                    .action(
+                        Button::new("agent-save", "Save")
+                            .primary()
+                            .icon(AppIcon::Check)
+                            .disabled(!dirty || error.is_some())
+                            .when_some(error.clone(), |b, e| b.tooltip(e))
+                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
+                    );
+            } else {
+                let name = ed.name.read(cx).value().trim().to_string();
+                let name = if name.is_empty() {
+                    "New agent".to_string()
+                } else {
+                    name
+                };
+                header = header
+                    .subtitle(name)
+                    .meta(Badge::new("New draft · unsaved").accent().dot())
+                    .action(
+                        Button::new("agent-discard", "Discard draft")
+                            .ghost()
+                            .disabled(false)
+                            .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx))),
+                    )
+                    .action(
+                        Button::new("agent-chat", "Chat with this agent")
+                            .icon(AppIcon::Chat)
+                            .disabled(true)
+                            .tooltip("Save this agent first to start a chat with it"),
+                    )
+                    .action(
+                        Button::new("agent-save", "Save")
+                            .primary()
+                            .icon(AppIcon::Check)
+                            .disabled(error.is_some())
+                            .when_some(error.clone(), |b, e| b.tooltip(e))
+                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
+                    );
+            }
             let stats = data.stats.get(&ed.base.id).cloned().unwrap_or_default();
             let used = data.used_in.get(&ed.base.id).cloned().unwrap_or_default();
             main = main
                 .flex()
                 .child(self.render_editor(ed, data, error, cx))
-                .child(self.render_aside(&stats, &used, cx));
+                .when(show_aside, |m| m.child(self.render_aside(&stats, &used, cx)));
         }
         screen()
             .child(header)
+            .child(self.render_ai_band(cx))
             .child(div().flex_1().min_h_0().flex().child(list).child(main))
     }
 }
 
 impl AgentsScreen {
+    /// "Create an agent with AI": describe an agent, the workspace model drafts it.
+    fn render_ai_band(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let draft_info = self
+            .editor
+            .as_ref()
+            .filter(|ed| !ed.saved)
+            .and(self.ai_draft_info.as_ref());
+        let status = if self.generating {
+            div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(theme::S2)
+                .child(
+                    div()
+                        .w(px(6.))
+                        .h(px(6.))
+                        .rounded(theme::RADIUS_FULL)
+                        .bg(theme::ACCENT_TEXT)
+                        .with_animation(
+                            "agents-ai-dot",
+                            Animation::new(Duration::from_millis(1200))
+                                .repeat()
+                                .with_easing(pulsating_between(0.3, 1.0)),
+                            |d, t| d.opacity(t),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_label()
+                        .text_color(theme::ACCENT_TEXT)
+                        .child("Creating draft with AI…"),
+                )
+        } else if let Some((model, cost)) = draft_info {
+            let mut text = format!("Drafted with {}", Config::short_model(model));
+            if *cost > 0.0 {
+                text.push_str(&format!(" · ${cost:.3}"));
+            }
+            div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(theme::S2)
+                .child(
+                    div()
+                        .min_w_0()
+                        .rounded(theme::RADIUS_FULL)
+                        .bg(theme::ACCENT_SOFT)
+                        .text_color(theme::ACCENT_TEXT)
+                        .px(theme::S2)
+                        .py(px(2.))
+                        .flex()
+                        .items_center()
+                        .gap(theme::S1)
+                        .text_label()
+                        .child(icon_sized(AppIcon::Sparkles, px(12.)).flex_none())
+                        .child(div().min_w_0().ellipsis().child(text)),
+                )
+                .child(
+                    div()
+                        .text_label()
+                        .fg_muted()
+                        .child("nothing is saved until you press Save"),
+                )
+        } else {
+            div().min_w_0().child(
+                div()
+                    .text_label()
+                    .fg_muted()
+                    .child("Uses the workspace model · nothing is saved until you press Save"),
+            )
+        };
+        div()
+            .id("agents-ai-band")
+            .flex_none()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .bg(theme::BG_SIDEBAR)
+            .gap(px(10.))
+            .py(theme::S4)
+            .px(theme::S6)
+            .border_b_1()
+            .border_color(theme::LINE)
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(theme::S2)
+                    .child(icon_sized(AppIcon::Sparkles, theme::ICON).text_color(theme::ACCENT_TEXT))
+                    .child(
+                        div()
+                            .text_heading()
+                            .text_size(px(14.))
+                            .fg()
+                            .child("Create an agent with AI"),
+                    )
+                    .child(div().min_w_0().text_label().fg_muted().child(
+                        "describe what it should do; AI writes the name, role prompt, tools and model as a new draft you review before saving",
+                    )),
+            )
+            .child(
+                input::composer_field(&self.ai_prompt)
+                    .bg(theme::SURFACE)
+                    .text_size(px(14.))
+                    .line_height(px(21.))
+                    .min_h(px(76.)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(theme::S2)
+                    .child(status)
+                    .child(div().flex_1())
+                    .when(self.generating, |d| {
+                        d.child(
+                            Button::new("agents-ai-stop", "Cancel")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| this.stop_ai_draft(cx))),
+                        )
+                        .child(
+                            Button::new("agents-create-ai", "Creating…")
+                                .primary()
+                                .icon(AppIcon::Sparkles)
+                                .disabled(true),
+                        )
+                    })
+                    .when(!self.generating, |d| {
+                        d.child(
+                            Button::new("agents-new-blank", "New blank agent")
+                                .ghost()
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.create(window, cx)),
+                                ),
+                        )
+                        .child(
+                            Button::new("agents-create-ai", "Create with AI")
+                                .primary()
+                                .icon(AppIcon::Sparkles)
+                                .tooltip(if cfg!(target_os = "macos") {
+                                    "Draft with the workspace model (⌘↵)"
+                                } else {
+                                    "Draft with the workspace model (Ctrl+↵)"
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.create_with_ai(window, cx)
+                                    }),
+                                ),
+                        )
+                    }),
+            )
+            .when_some(self.ai_error.clone(), |d, err| {
+                d.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .text_label()
+                        .text_color(theme::DANGER)
+                        .child(Clamped::new("agents-ai-err", err, 3)),
+                )
+            })
+    }
+
     /// Left column: saved agents with usage stats, "New agent" on top.
     fn render_list(
         &self,
@@ -716,6 +1177,12 @@ impl AgentsScreen {
                     .gap(px(2.))
                     .px(theme::S2)
                     .pb(theme::S3)
+                    .children(
+                        self.editor
+                            .as_ref()
+                            .filter(|ed| !ed.saved)
+                            .map(|ed| self.render_draft_card(ed, cx)),
+                    )
                     .children(data.agents.iter().enumerate().map(|(ix, a)| {
                         let id = a.id.clone();
                         let active = current == Some(&a.id);
@@ -780,6 +1247,61 @@ impl AgentsScreen {
             )
     }
 
+    /// The unsaved AI draft at the top of the list.
+    fn render_draft_card(&self, ed: &Editor, cx: &App) -> impl IntoElement {
+        let draft = ed.draft(cx);
+        let name = if draft.name.is_empty() {
+            "New agent".to_string()
+        } else {
+            draft.name.clone()
+        };
+        div()
+            .id("agent-row-draft")
+            .flex()
+            .items_start()
+            .gap(theme::S3)
+            .p(theme::S3)
+            .rounded(theme::RADIUS_LG)
+            .border_1()
+            .border_color(theme::ACCENT_RING)
+            .bg(theme::SURFACE_RAISED)
+            .child(VariantChip::initial(&name).selected(true))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .min_w_0()
+                            .items_center()
+                            .gap(theme::S2)
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_body_strong()
+                                    .ellipsis()
+                                    .child(name.clone()),
+                            )
+                            .child(Badge::new("Draft").accent()),
+                    )
+                    .child(div().text_mono_sm().fg_muted().ellipsis().child(format!(
+                        "{} · {}",
+                        Config::short_model(&draft.model),
+                        draft.tools.label()
+                    )))
+                    .child(
+                        div()
+                            .text_label()
+                            .fg_disabled()
+                            .ellipsis()
+                            .child("Unsaved · press Save to keep"),
+                    ),
+            )
+    }
+
     /// Middle column: the editor form.
     fn render_editor(
         &self,
@@ -826,8 +1348,8 @@ impl AgentsScreen {
             .flex()
             .flex_col()
             .gap(theme::S5)
-            .w_full()
-            .max_w(px(820.))
+            .w(px(820.))
+            .max_w_full()
             .child(
                 div()
                     .flex()
@@ -920,14 +1442,23 @@ impl AgentsScreen {
                     .flex()
                     .items_center()
                     .gap(theme::S3)
-                    .child(div().text_label().fg_muted().child(format!(
-                        "v{} · created {} ago · updated {} ago",
-                        b.version,
-                        ui::fmt_ago(b.created_at),
-                        ui::fmt_ago(b.updated_at)
-                    )))
+                    .child(div().text_label().fg_muted().child(if ed.saved {
+                        format!(
+                            "v{} · created {} ago · updated {} ago",
+                            b.version,
+                            ui::fmt_ago(b.created_at),
+                            ui::fmt_ago(b.updated_at)
+                        )
+                    } else {
+                        "New draft · nothing is saved until you press Save".to_string()
+                    }))
                     .child(div().flex_1())
-                    .child(if self.confirm_delete {
+                    .child(if !ed.saved {
+                        Button::new("agent-discard-bottom", "Discard draft")
+                            .ghost()
+                            .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx)))
+                            .into_any_element()
+                    } else if self.confirm_delete {
                         div()
                             .flex()
                             .items_center()
@@ -1141,5 +1672,18 @@ impl AgentsScreen {
             .child(tiles)
             .child(used_in)
             .child(recent)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::model_values;
+
+    #[test]
+    fn model_options_include_the_drafted_model() {
+        let models = vec!["a/x".to_string()];
+        assert_eq!(model_values(&models, "a/x"), models);
+        assert_eq!(model_values(&models, "b/y"), vec!["a/x", "b/y"]);
+        assert_eq!(model_values(&models, ""), models);
     }
 }

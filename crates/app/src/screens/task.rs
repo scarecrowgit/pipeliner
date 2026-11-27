@@ -864,14 +864,12 @@ impl TaskScreen {
                             .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
                             .child("This task failed"),
                     )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .text_mono()
-                            .fg_secondary()
-                            .child(err),
-                    ),
+                    .child(ui::selectable_text(
+                        SharedString::from(format!("task-error-{}", t.id)),
+                        &err,
+                        window,
+                        cx,
+                    )),
             );
         }
         if t.status == Status::Done && !t.summary.trim().is_empty() {

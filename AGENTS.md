@@ -65,6 +65,12 @@ Layout rules that the screenshots keep catching:
   `line_clamp(n)` drops the extra lines (and its "…") silently.
 - gpui-component's `Input` sets its height from its size class after your styles; pin it
   with `min_h`/`max_h` (see `ui::input::field`).
+- A readable column in a wide window is `.w(px(N)).max_w_full()`, not
+  `.w_full().max_w(px(N))` or a bare `max_w`: with only a cap, gpui sizes the column from
+  its content, so inputs collapse to squares, wrapping rows grow tall and text runs past
+  the edge. Check new screens at `scripts/shoot.sh -s 1920x1080` too.
+- Plain `div` text can't be selected. Errors, commands and anything else worth copying go
+  through `ui::selectable_text(id, text, window, cx)` (mono, keeps lines, Ctrl+C copies).
 - Text that should wrap needs a width (`w_full()`/`flex_1()`); words without spaces never
   wrap. Clip or truncate long tokens (paths, URLs, hashes).
 - Never render an unbounded list or diff in full: GPUI re-renders the whole view on every

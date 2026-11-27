@@ -489,6 +489,8 @@ impl Engine {
         store.put_message(&m)?;
         let cancel = self.cancel_flag(&id);
         // Running at once: the UI shows the turn and a quick second message steers it.
+        // Marked as a live follow-up so `close_orphans` leaves it be while the run is over.
+        self.mark_followup(&id);
         let updated = store.update_task(&id, |t| {
             t.status = Status::Running;
             t.started_at.get_or_insert_with(now);
@@ -496,6 +498,7 @@ impl Engine {
             t.error = None;
         });
         if let Err(e) = updated {
+            self.drop_followup(&id);
             self.drop_cancel_flag(&id);
             return Err(e);
         }
@@ -511,24 +514,34 @@ impl Engine {
             .name(format!("followup-{id}"))
             .spawn(move || engine.run_followup(&tid, cancel));
         if let Err(e) = spawned {
-            self.drop_cancel_flag(&id);
             let _ = store.update_task(&id, |t| {
                 t.status = Status::Failed;
                 t.error = Some(format!("could not start the follow-up: {e}"));
                 t.finished_at = Some(now());
             });
+            self.drop_followup(&id);
+            self.drop_cancel_flag(&id);
             bail!("could not start the follow-up: {e}");
         }
         Ok(())
     }
 
     fn run_followup(&self, id: &str, cancel: Arc<AtomicBool>) {
+        /// Releases the follow-up marker and cancel flag on every way out, panics included.
+        struct Cleanup<'a>(&'a Engine, &'a str);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                self.0.drop_followup(self.1);
+                self.0.drop_cancel_flag(self.1);
+            }
+        }
+        self.mark_followup(id);
+        let _cleanup = Cleanup(self, id);
         let store = self.store().clone();
         let _slot = self.acquire_slot();
         let task = match store.task(id) {
             Some(t) if !cancel.load(Ordering::SeqCst) => t,
             _ => {
-                self.drop_cancel_flag(id);
                 let _ = store.update_task(id, |t| {
                     if t.status.is_active() {
                         t.status = Status::Cancelled;
@@ -539,7 +552,6 @@ impl Engine {
             }
         };
         let res = self.run_followup_turn(&task, cancel.clone());
-        self.drop_cancel_flag(id);
         let cancelled = cancel.load(Ordering::SeqCst);
         let (status, summary, error) = match res {
             Ok(text) => {

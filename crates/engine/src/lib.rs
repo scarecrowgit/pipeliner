@@ -3,6 +3,7 @@
 //! through [`Engine`] and observes it through the [`Store`]'s change feed.
 
 pub mod agent;
+pub mod agents;
 pub mod attachments;
 pub mod chat;
 pub mod git;
@@ -29,6 +30,39 @@ pub use templates::Template;
 /// Error set on tasks that were running when the app closed.
 pub const INTERRUPTED: &str = "Interrupted: the app was closed while this ran.";
 
+/// Why an active task can't really be running any more, or `None` if it may be.
+/// Gates wait for you and are left alone. Manual tasks run outside the pipeline executor,
+/// so their run ending says nothing about them. `shielded` marks a live follow-up turn (or
+/// a sub-agent working for one): it outlives its run and the step that spawned it, but a
+/// newer attempt still replaces it.
+fn orphan_reason(
+    t: &Task,
+    run: Option<&Run>,
+    newer_attempt: bool,
+    parent_active: Option<bool>,
+    shielded: bool,
+) -> Option<String> {
+    if !t.status.is_active() || t.kind == TaskKind::Gate {
+        return None;
+    }
+    if let Some(r) = run {
+        if !r.status.is_active() && !shielded && t.kind != TaskKind::Manual {
+            return Some(format!(
+                "Stopped: run #{} ended ({}) while this step was still open.",
+                r.number,
+                r.status.label().to_lowercase()
+            ));
+        }
+        if newer_attempt {
+            return Some("Stopped: a newer attempt of this step replaced it.".into());
+        }
+    }
+    if parent_active == Some(false) && !shielded {
+        return Some("Stopped: the step that spawned it is over.".into());
+    }
+    None
+}
+
 /// Shared handle to the engine. Cheap to clone.
 #[derive(Clone)]
 pub struct Engine(Arc<Inner>);
@@ -42,6 +76,9 @@ pub struct Inner {
     slots: Arc<Semaphore>,
     /// Runs being executed by a thread in this process.
     active_runs: Mutex<std::collections::HashSet<Id>>,
+    /// Tasks with a follow-up turn running in this process. They are active on a run that
+    /// may be over, which `close_orphans` must not mistake for a stuck step.
+    followups: Mutex<std::collections::HashSet<Id>>,
     /// This process holds the engine lock and executes runs.
     owner: AtomicBool,
     lock_file: Mutex<Option<std::fs::File>>,
@@ -63,6 +100,7 @@ impl Engine {
             cancels: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(slots)),
             active_runs: Mutex::new(Default::default()),
+            followups: Mutex::new(Default::default()),
             owner: AtomicBool::new(false),
             lock_file: Mutex::new(None),
         }))
@@ -83,22 +121,95 @@ impl Engine {
         let engine = self.clone();
         std::thread::Builder::new()
             .name("engine-owner".into())
-            .spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                if !engine.is_owner() {
-                    if engine.try_become_owner() {
-                        engine.recover();
+            .spawn(move || {
+                let mut tick = 0u32;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    if !engine.is_owner() {
+                        if engine.try_become_owner() {
+                            engine.recover();
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                // Runs created or resumed by other processes.
-                for r in engine.store.runs() {
-                    if r.status == Status::Running || r.status == Status::Waiting {
-                        engine.spawn_run_thread(r.id.clone());
+                    tick = tick.wrapping_add(1);
+                    if tick.is_multiple_of(5) {
+                        engine.close_orphans();
+                    }
+                    // Runs created or resumed by other processes.
+                    for r in engine.store.runs() {
+                        if r.status == Status::Running || r.status == Status::Waiting {
+                            engine.spawn_run_thread(r.id.clone());
+                        }
                     }
                 }
             })
             .ok();
+    }
+
+    /// Closes steps that show as running but can't be: their run ended, a newer attempt
+    /// replaced them, or the step that spawned them is over. A failed write (a full disk)
+    /// can leave a finished step marked running; without this it stays on the Board for
+    /// good. A live thread of such a step is told to stop.
+    pub fn close_orphans(&self) {
+        let tasks = self.store.tasks();
+        let runs: HashMap<Id, Run> = self
+            .store
+            .runs()
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect();
+        let by_id: HashMap<&str, &Task> = tasks.iter().map(|t| (t.id.as_str(), t)).collect();
+        let followups = self.followups.lock().clone();
+        // Whether a sub-agent works for a live follow-up or manual task: every hop up the
+        // chain is active and it ends at one of those.
+        let serves_live_turn = |t: &Task| {
+            let mut seen = std::collections::HashSet::new();
+            let mut cur = t;
+            while let Some(p) = cur.parent_id.as_deref().and_then(|p| by_id.get(p)) {
+                if !p.status.is_active() || !seen.insert(p.id.as_str()) {
+                    return false;
+                }
+                if p.kind == TaskKind::Manual || followups.contains(&p.id) {
+                    return true;
+                }
+                cur = p;
+            }
+            false
+        };
+        for t in &tasks {
+            if !t.status.is_active() {
+                continue;
+            }
+            let run = t.run_id.as_deref().and_then(|r| runs.get(r));
+            let parent_active = t
+                .parent_id
+                .as_deref()
+                .map(|p| by_id.get(p).map(|p| p.status.is_active()).unwrap_or(false));
+            let newer = run.is_some() && self.store.newer_attempt(t).is_some();
+            let shielded =
+                followups.contains(&t.id) || (t.kind == TaskKind::Spawned && serves_live_turn(t));
+            let Some(reason) = orphan_reason(t, run, newer, parent_active, shielded) else {
+                continue;
+            };
+            if let Some(flag) = self.cancels.lock().get(&t.id) {
+                flag.store(true, Ordering::SeqCst);
+            }
+            let ok = self.store.update_task(&t.id, |t| {
+                if t.status.is_active() {
+                    t.status = Status::Cancelled;
+                    t.error = Some(reason.clone());
+                    t.finished_at = Some(now());
+                }
+            });
+            if ok.is_ok() {
+                self.store.log(
+                    "task.closed",
+                    t.run_id.as_deref(),
+                    Some(&t.id),
+                    format!("{}: {reason}", t.title),
+                );
+            }
+        }
     }
 
     /// Whether this process executes pipeline runs.
@@ -884,6 +995,15 @@ The user reviews and installs staged skills in Settings › Skills; nothing inst
         self.cancels.lock().remove(task_id);
     }
 
+    /// Records that a follow-up turn is running on `task_id` (see `close_orphans`).
+    pub(crate) fn mark_followup(&self, task_id: &str) {
+        self.followups.lock().insert(task_id.to_string());
+    }
+
+    pub(crate) fn drop_followup(&self, task_id: &str) {
+        self.followups.lock().remove(task_id);
+    }
+
     pub(crate) fn acquire_slot(&self) -> SlotGuard {
         self.slots.acquire()
     }
@@ -917,5 +1037,140 @@ impl Drop for SlotGuard {
     fn drop(&mut self) {
         *self.0.count.lock() += 1;
         self.0.cv.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod orphan_tests {
+    use super::*;
+
+    fn run(number: u64, status: Status) -> Run {
+        let mut r: Run = serde_json::from_value(serde_json::json!({
+            "id": format!("run{number}"), "number": number, "pipeline_id": "p",
+            "pipeline_version": 1, "title": "t", "input": "", "status": "running",
+            "graph": {"workdirs": [], "nodes": [], "edges": []},
+            "created_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        r.status = status;
+        r
+    }
+
+    fn step(run: &Run, node: &str, kind: TaskKind, status: Status) -> Task {
+        let mut t = Task::new(kind, node);
+        t.run_id = Some(run.id.clone());
+        t.node_id = Some(node.into());
+        t.status = status;
+        t
+    }
+
+    #[test]
+    fn stuck_steps_are_closed_and_live_ones_kept() {
+        let e = Engine::new(Store::open_in_memory().unwrap(), Config::default());
+        let s = e.store.clone();
+        let done = run(9, Status::Done);
+        let live = run(10, Status::Running);
+        s.put_run(&done).unwrap();
+        s.put_run(&live).unwrap();
+
+        // Run #9 finished, but a step and its sub-agent still say "running".
+        let build9 = step(&done, "build", TaskKind::Agent, Status::Running);
+        let mut sub9 = Task::new(TaskKind::Spawned, "Sub-task");
+        sub9.run_id = Some(done.id.clone());
+        sub9.parent_id = Some(build9.id.clone());
+        sub9.status = Status::Running;
+        let gate9 = step(&done, "gate", TaskKind::Gate, Status::Waiting);
+        // Run #10: an old attempt left running, then the retry's attempt.
+        let mut old10 = step(&live, "build", TaskKind::Agent, Status::Running);
+        old10.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let new10 = step(&live, "build", TaskKind::Agent, Status::Running);
+        // A sub-agent of a step that is over.
+        let mut done_parent = step(&live, "design", TaskKind::Agent, Status::Done);
+        done_parent.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut sub10 = Task::new(TaskKind::Spawned, "Sub-task");
+        sub10.run_id = Some(live.id.clone());
+        sub10.parent_id = Some(done_parent.id.clone());
+        sub10.status = Status::Running;
+        // A live sub-agent of the running attempt.
+        let mut sub_live = Task::new(TaskKind::Spawned, "Sub-task");
+        sub_live.run_id = Some(live.id.clone());
+        sub_live.parent_id = Some(new10.id.clone());
+        sub_live.status = Status::Running;
+        for t in [
+            &build9,
+            &sub9,
+            &gate9,
+            &old10,
+            &new10,
+            &done_parent,
+            &sub10,
+            &sub_live,
+        ] {
+            s.put_task(t).unwrap();
+        }
+        let flag = e.cancel_flag(&old10.id);
+
+        e.close_orphans();
+
+        let status = |t: &Task| s.task(&t.id).unwrap().status;
+        assert_eq!(status(&build9), Status::Cancelled);
+        assert_eq!(status(&sub9), Status::Cancelled);
+        assert_eq!(status(&old10), Status::Cancelled);
+        assert_eq!(status(&sub10), Status::Cancelled);
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "a live thread of a stale step is told to stop"
+        );
+        assert!(s
+            .task(&build9.id)
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("run #9 ended (done)"));
+
+        assert_eq!(status(&gate9), Status::Waiting);
+        assert_eq!(status(&new10), Status::Running);
+        assert_eq!(status(&sub_live), Status::Running);
+    }
+
+    #[test]
+    fn followups_and_manual_tasks_on_finished_runs_stay_open() {
+        let e = Engine::new(Store::open_in_memory().unwrap(), Config::default());
+        let s = e.store.clone();
+        let done = run(9, Status::Done);
+        s.put_run(&done).unwrap();
+
+        // A follow-up turn on a step of a finished run, with a live sub-agent.
+        let agent = step(&done, "build", TaskKind::Agent, Status::Running);
+        let mut child = Task::new(TaskKind::Spawned, "Sub-task");
+        child.run_id = Some(done.id.clone());
+        child.parent_id = Some(agent.id.clone());
+        child.status = Status::Running;
+        // A follow-up on a sub-agent whose spawning parent is over.
+        let mut over = step(&done, "design", TaskKind::Agent, Status::Done);
+        over.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut followed = Task::new(TaskKind::Spawned, "Sub-task");
+        followed.run_id = Some(done.id.clone());
+        followed.parent_id = Some(over.id.clone());
+        followed.status = Status::Running;
+        // A manual task linked to the finished run.
+        let manual = step(&done, "manual", TaskKind::Manual, Status::Running);
+        for t in [&agent, &child, &over, &followed, &manual] {
+            s.put_task(t).unwrap();
+        }
+        e.mark_followup(&agent.id);
+        e.mark_followup(&followed.id);
+
+        e.close_orphans();
+        let status = |t: &Task| s.task(&t.id).unwrap().status;
+        assert_eq!(status(&agent), Status::Running);
+        assert_eq!(status(&child), Status::Running);
+        assert_eq!(status(&followed), Status::Running);
+        assert_eq!(status(&manual), Status::Running);
+
+        // Once the turn is over the task is an ordinary stuck step again.
+        e.drop_followup(&agent.id);
+        e.close_orphans();
+        assert_eq!(status(&agent), Status::Cancelled);
     }
 }

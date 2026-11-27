@@ -550,7 +550,9 @@ impl Render for ReviewScreen {
                 })
         });
         if let Some(item) = self.current() {
-            header = self.header_actions(header, item, count, cx);
+            // Key hints only where they fit next to the buttons.
+            let roomy = window.viewport_size().width >= px(1360.);
+            header = self.header_actions(header, item, count, roomy, cx);
         }
 
         let main = match self.current() {
@@ -594,6 +596,7 @@ impl ReviewScreen {
         header: PageHeader,
         item: &Item,
         count: usize,
+        show_hints: bool,
         cx: &mut Context<Self>,
     ) -> PageHeader {
         let ship_key = if cfg!(target_os = "macos") {
@@ -647,7 +650,7 @@ impl ReviewScreen {
             ItemKind::Other => "Reply…",
         };
         header
-            .action(hints)
+            .when(show_hints, |h| h.action(hints))
             .action(
                 Button::new("review-skip", "Skip")
                     .ghost()

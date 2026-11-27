@@ -543,6 +543,15 @@ impl Fixture {
         let pr = format!("https://github.com/example/app/pull/{}", 300 + r.number);
         self.step(&mut r, "pr", 79, 1, &format!("Opened {pr}"), 0.0)?;
         r.pr_url = Some(pr.clone());
+        // An earlier approve whose merge failed: Review shows its error above the PR.
+        let mut failed = self.gate(&r, "approve", &format!("Approve PR · {}", r.title), 79)?;
+        failed.status = Status::Failed;
+        failed.finished_at = Some(ago(78));
+        failed.error = Some(format!(
+            "Merge failed: gh pr merge {pr} --squash --delete-branch=false failed: X Pull request is not mergeable: the merge commit cannot be cleanly created.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\nRun the following to resolve the merge conflicts locally:\n  gh pr checkout {n} && git fetch origin main && git merge origin/main",
+            n = 300 + r.number
+        ));
+        self.store.put_task(&failed)?;
         let gate = self.gate(&r, "approve", &format!("Approve PR · {}", r.title), 78)?;
         let v = Variant {
             id: new_id(),
@@ -641,27 +650,24 @@ fn skills_fixture(
     use harness_core::skills::{self, Provenance, SourceKind};
     let mine = conf.join("skills");
     let home = data.parent().unwrap_or(data).join("home-skills");
-    let write = |dir: &std::path::Path,
-                 name: &str,
-                 desc: &str,
-                 prov: Option<Provenance>|
-     -> Result<()> {
-        let d = dir.join(name);
-        std::fs::create_dir_all(&d)?;
-        std::fs::write(
-            d.join("SKILL.md"),
-            format!(
+    let write =
+        |dir: &std::path::Path, name: &str, desc: &str, prov: Option<Provenance>| -> Result<()> {
+            let d = dir.join(name);
+            std::fs::create_dir_all(&d)?;
+            std::fs::write(
+                d.join("SKILL.md"),
+                format!(
                 "---\nname: {name}\ndescription: {desc}\n---\n\nFollow the {name} conventions.\n"
             ),
-        )?;
-        if let Some(p) = prov {
-            std::fs::write(
-                d.join(skills::PROVENANCE_FILE),
-                serde_json::to_string_pretty(&p)?,
             )?;
-        }
-        Ok(())
-    };
+            if let Some(p) = prov {
+                std::fs::write(
+                    d.join(skills::PROVENANCE_FILE),
+                    serde_json::to_string_pretty(&p)?,
+                )?;
+            }
+            Ok(())
+        };
     let prov = |source: &str,
                 kind,
                 label: &str,

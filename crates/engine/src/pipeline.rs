@@ -1255,10 +1255,12 @@ fn run_variant(
     }
     let (files, add, del) = git::diff_stat(&step_diff);
     let summary = out.text.clone();
-    store.update_task(&t.id, |t| {
+    // Close the task even if this write fails, or it stays "running" for good.
+    let saved = store.update_task(&t.id, |t| {
         t.output = json!({"files": files, "added": add, "removed": del});
-    })?;
+    });
     close_task(&store, &t.id, &Ok(summary.clone()));
+    saved?;
     let cost = store.task(&t.id).map(|t| t.cost_usd).unwrap_or(0.0);
     Ok(json!({
         "index": variant.unwrap_or(0),
@@ -2436,5 +2438,8 @@ mod render_path_tests {
         let second = render_path(9, "Render mockups", 'A', "task-pass-2", file);
         assert_ne!(first, second);
         assert_eq!(first.file_stem(), second.file_stem());
+        assert!(
+            first.ends_with("run-9/render-mockups-A/task-pass-1/design__screens__agents.html.png")
+        );
     }
 }
