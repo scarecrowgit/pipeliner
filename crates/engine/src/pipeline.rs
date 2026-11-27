@@ -1245,10 +1245,12 @@ fn run_variant(
     }
     let (files, add, del) = git::diff_stat(&step_diff);
     let summary = out.text.clone();
-    store.update_task(&t.id, |t| {
+    // Close the task even if this write fails, or it stays "running" for good.
+    let saved = store.update_task(&t.id, |t| {
         t.output = json!({"files": files, "added": add, "removed": del});
-    })?;
+    });
     close_task(&store, &t.id, &Ok(summary.clone()));
+    saved?;
     let cost = store.task(&t.id).map(|t| t.cost_usd).unwrap_or(0.0);
     Ok(json!({
         "index": variant.unwrap_or(0),
@@ -2048,9 +2050,24 @@ mod render_path_tests {
 
     #[test]
     fn each_render_task_gets_its_own_file() {
-        let first = render_path(9, "Render mockups", 'B', "task1", "design/screens/agents.html");
-        let redo = render_path(9, "Render mockups", 'B', "task2", "design/screens/agents.html");
-        assert_ne!(first, redo, "a redo must not overwrite the PNG the app has cached");
+        let first = render_path(
+            9,
+            "Render mockups",
+            'B',
+            "task1",
+            "design/screens/agents.html",
+        );
+        let redo = render_path(
+            9,
+            "Render mockups",
+            'B',
+            "task2",
+            "design/screens/agents.html",
+        );
+        assert_ne!(
+            first, redo,
+            "a redo must not overwrite the PNG the app has cached"
+        );
         assert!(first.ends_with("run-9/render-mockups-B/task1/design__screens__agents.html.png"));
     }
 }
