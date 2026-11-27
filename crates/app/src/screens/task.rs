@@ -859,7 +859,12 @@ impl TaskScreen {
                             .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
                             .child("This task failed"),
                     )
-                    .child(div().w_full().min_w_0().text_mono().fg_secondary().child(err)),
+                    .child(ui::selectable_text(
+                        SharedString::from(format!("task-error-{}", t.id)),
+                        &err,
+                        window,
+                        cx,
+                    )),
             );
         }
         if t.status == Status::Done && !t.summary.trim().is_empty() {
@@ -1011,7 +1016,10 @@ impl TaskScreen {
                     .text_body()
                     .fg_muted()
                     .child(ui::icon_sized(AppIcon::Lock, theme::ICON))
-                    .child(format!("This task {}. Steering works only while it is queued, running or waiting.", ended_phrase(t.status))),
+                    .child(format!(
+                        "This task {}. Steering works only while it is queued, running or waiting.",
+                        ended_phrase(t.status)
+                    )),
             );
         }
         let who = if t.actor.is_empty() {
@@ -1501,7 +1509,6 @@ fn caret(id: SharedString) -> impl IntoElement {
             |d, t| d.opacity(t),
         )
 }
-
 
 /// "failed", "is done", "was cancelled": how a task that can't be steered ended.
 fn ended_phrase(s: Status) -> String {

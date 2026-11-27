@@ -69,6 +69,8 @@ Layout rules that the screenshots keep catching:
   `.w_full().max_w(px(N))` or a bare `max_w`: with only a cap, gpui sizes the column from
   its content, so inputs collapse to squares, wrapping rows grow tall and text runs past
   the edge. Check new screens at `scripts/shoot.sh -s 1920x1080` too.
+- Plain `div` text can't be selected. Errors, commands and anything else worth copying go
+  through `ui::selectable_text(id, text, window, cx)` (mono, keeps lines, Ctrl+C copies).
 - Text that should wrap needs a width (`w_full()`/`flex_1()`); words without spaces never
   wrap. Clip or truncate long tokens (paths, URLs, hashes).
 - Never render an unbounded list or diff in full: GPUI re-renders the whole view on every

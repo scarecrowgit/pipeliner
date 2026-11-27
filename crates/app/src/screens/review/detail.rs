@@ -40,7 +40,7 @@ impl ReviewScreen {
             col = col.child(chain(run));
         }
         if let Some(err) = &item.last_failure {
-            col = col.child(last_failure(item.kind, err));
+            col = col.child(last_failure(&id, item.kind, err, window, cx));
         }
         match item.kind {
             ItemKind::Pick => {
@@ -267,16 +267,11 @@ impl ReviewScreen {
                             .child(div().flex_1())
                             .when(multi && pos < 9, |d| d.child(kbd((pos + 1).to_string()))),
                     )
-                    .child(
-                        div()
-                            .text_body_strong()
-                            .fg()
-                            .child(ui::Clamped::new(
-                                SharedString::from(format!("variant-title-{}", v.v.id)),
-                                v.title.clone(),
-                                3,
-                            )),
-                    )
+                    .child(div().text_body_strong().fg().child(ui::Clamped::new(
+                        SharedString::from(format!("variant-title-{}", v.v.id)),
+                        v.title.clone(),
+                        3,
+                    )))
                     .child(
                         div()
                             .flex()
@@ -732,10 +727,12 @@ impl ReviewScreen {
                                     )
                                     .ghost()
                                     .small()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.opened.insert(open_key.clone());
-                                        cx.notify();
-                                    })),
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.opened.insert(open_key.clone());
+                                            cx.notify();
+                                        },
+                                    )),
                                 ),
                         )
                     })
@@ -1021,16 +1018,11 @@ impl ReviewScreen {
                                     )),
                             )
                             .when(!n.detail.is_empty(), |d| {
-                                d.child(
-                                    div()
-                                        .text_label()
-                                        .fg_muted()
-                                        .child(ui::Clamped::new(
-                                            SharedString::from(format!("next-{}", n.name)),
-                                            n.detail.clone(),
-                                            2,
-                                        )),
-                                )
+                                d.child(div().text_label().fg_muted().child(ui::Clamped::new(
+                                    SharedString::from(format!("next-{}", n.name)),
+                                    n.detail.clone(),
+                                    2,
+                                )))
                             }),
                     )
             }))
@@ -1039,7 +1031,13 @@ impl ReviewScreen {
 
 /// Markdown flattened to one wrapping paragraph: markers dropped, lines joined.
 /// "Your last approve didn't go through": the previous attempt's error and what to do.
-fn last_failure(kind: ItemKind, err: &str) -> impl IntoElement {
+fn last_failure(
+    id: &str,
+    kind: ItemKind,
+    err: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     let hint = match kind {
         ItemKind::ApprovePr => {
             "The PR is still open. Resolve it on GitHub (or send it back) and approve again."
@@ -1065,12 +1063,12 @@ fn last_failure(kind: ItemKind, err: &str) -> impl IntoElement {
                 .child(ui::icon_sized(AppIcon::Alert, theme::ICON))
                 .child("Your last decision didn't go through"),
         )
-        .child(
-            div()
-                .text_mono()
-                .fg_secondary()
-                .child(data::truncate(err.trim(), 600)),
-        )
+        .child(ui::selectable_text(
+            SharedString::from(format!("review-failure-{id}")),
+            &data::truncate(err.trim(), 600),
+            window,
+            cx,
+        ))
         .child(div().text_label().fg_muted().child(hint))
 }
 
@@ -1100,7 +1098,6 @@ fn clip_words(s: &str, max: usize) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-
 
 /// A markdown block with a stable id.
 fn markdown_of(id: String, text: &str, window: &mut Window, cx: &mut App) -> impl IntoElement {
