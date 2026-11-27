@@ -29,6 +29,8 @@ pub use templates::Template;
 
 /// Error set on tasks that were running when the app closed.
 pub const INTERRUPTED: &str = "Interrupted: the app was closed while this ran.";
+/// Error of a pipeline step that should change files but ran out of steps before it did.
+pub const STEP_LIMIT: &str = "Stopped at the step limit without changing any files.";
 
 /// Why an active task can't really be running any more, or `None` if it may be.
 /// Gates wait for you and are left alone. Manual tasks run outside the pipeline executor,
@@ -506,6 +508,11 @@ The user reviews and installs staged skills in Settings › Skills; nothing inst
     /// Starts a pipeline run with `input` (issue text) as its source item.
     pub fn start_run(&self, pipeline_id: &str, input: &str, chat_id: Option<&str>) -> Result<Run> {
         pipeline::start(self, pipeline_id, input, chat_id)
+    }
+
+    /// Starts a pipeline run with a title and screenshots (the New task composer's Pipeline mode).
+    pub fn start_run_with(&self, n: pipeline::NewRun) -> Result<Run> {
+        pipeline::start_with(self, n)
     }
 
     pub fn cancel_run(&self, run_id: &str) -> Result<()> {

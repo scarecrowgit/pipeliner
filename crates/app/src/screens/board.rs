@@ -248,7 +248,9 @@ impl BoardScreen {
             |this, _, ev: &NewTaskEvent, window, cx| {
                 match ev {
                     // The board reloads by itself through the store change.
-                    NewTaskEvent::Created(_) | NewTaskEvent::Closed => this.composer_open = false,
+                    NewTaskEvent::Created(_)
+                    | NewTaskEvent::RunStarted(_)
+                    | NewTaskEvent::Closed => this.composer_open = false,
                 }
                 window.focus(&this.focus);
                 cx.notify();
@@ -284,6 +286,14 @@ impl BoardScreen {
             ],
         };
         this.reload(cx);
+        // PIPELINER_NEW_TASK=agent|pipeline: start with the composer open in that mode (and
+        // the images of PIPELINER_DRAFT_IMAGES attached), for headless screenshots.
+        if let Ok(mode) = std::env::var("PIPELINER_NEW_TASK") {
+            this.open_composer(window, cx);
+            this.composer.update(cx, |c, cx| {
+                c.preset_for_shots(mode == "pipeline", window, cx)
+            });
+        }
         this
     }
 
@@ -635,8 +645,18 @@ impl BoardScreen {
                         ),
                     ),
             )
-            .child(div().flex_none().w(px(190.)).child(select::select_sm(&self.pipeline_select)))
-            .child(div().flex_none().w(px(160.)).child(select::select_sm(&self.kind_select)))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(190.))
+                    .child(select::select_sm(&self.pipeline_select)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(160.))
+                    .child(select::select_sm(&self.kind_select)),
+            )
             .child(div().flex_1())
             .child(
                 div()
@@ -748,18 +768,13 @@ impl BoardScreen {
                     .when_some(c.variant, |d, v| {
                         d.child(VariantChip::variant(v).size(px(18.)))
                     })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_body_strong()
-                            .fg()
-                            .child(ui::Clamped::new(
-                                SharedString::from(format!("card-title-{}", c.id)),
-                                c.title.clone(),
-                                2,
-                            )),
-                    ),
+                    .child(div().flex_1().min_w_0().text_body_strong().fg().child(
+                        ui::Clamped::new(
+                            SharedString::from(format!("card-title-{}", c.id)),
+                            c.title.clone(),
+                            2,
+                        ),
+                    )),
             )
             .when_some(c.spawn.clone(), |d, s| {
                 d.child(div().flex().child(Badge::new(s).spawn()))
@@ -768,16 +783,11 @@ impl BoardScreen {
                 d.child(div().text_label().fg_muted().child(t))
             })
             .when(!c.summary.is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_label()
-                        .fg_secondary()
-                        .child(ui::Clamped::new(
-                            SharedString::from(format!("card-sum-{}", c.id)),
-                            c.summary.clone(),
-                            2,
-                        )),
-                )
+                d.child(div().text_label().fg_secondary().child(ui::Clamped::new(
+                    SharedString::from(format!("card-sum-{}", c.id)),
+                    c.summary.clone(),
+                    2,
+                )))
             })
             .when_some(c.error.clone(), |d, e| {
                 d.child(
@@ -889,7 +899,7 @@ impl BoardScreen {
                     .child("draft"),
             )
             .child(div().text_body_strong().fg().child(title))
-            .child(composer.agent_label())
+            .child(composer.preview_label())
     }
 
     fn column(&self, col: usize, cx: &mut Context<Self>) -> impl IntoElement {

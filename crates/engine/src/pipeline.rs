@@ -81,6 +81,34 @@ pub fn start(
     input: &str,
     chat_id: Option<&str>,
 ) -> Result<Run> {
+    start_with(
+        engine,
+        NewRun {
+            pipeline_id: pipeline_id.into(),
+            input: input.into(),
+            chat_id: chat_id.map(String::from),
+            ..Default::default()
+        },
+    )
+}
+
+/// What a run starts from: a chat's `/run`, or a task made in the New task composer.
+#[derive(Clone, Debug, Default)]
+pub struct NewRun {
+    pub pipeline_id: Id,
+    /// The source item (issue text).
+    pub input: String,
+    /// Empty = from the first line of `input`.
+    pub title: String,
+    pub chat_id: Option<Id>,
+    /// Screenshots every agent step gets as images.
+    pub attachments: Vec<Attachment>,
+}
+
+pub fn start_with(engine: &Engine, n: NewRun) -> Result<Run> {
+    let pipeline_id = n.pipeline_id.as_str();
+    let input = n.input.as_str();
+    let chat_id = n.chat_id.as_deref();
     let store = engine.store();
     let p = store.pipeline(pipeline_id).context("pipeline not found")?;
     validate(&p.graph)?;
@@ -102,7 +130,11 @@ pub fn start(
         .find(|l| !l.is_empty())
         .unwrap_or("Run")
         .to_string();
-    let title = run_title(&first);
+    let title = if n.title.trim().is_empty() {
+        run_title(&first)
+    } else {
+        run_title(n.title.trim())
+    };
     let run = Run {
         id: new_id(),
         number,
@@ -111,6 +143,7 @@ pub fn start(
         graph: p.graph.clone(),
         title,
         input: input.trim().to_string(),
+        attachments: n.attachments,
         external_ref: None,
         status: Status::Running,
         chat_id: chat_id.map(String::from),
@@ -365,9 +398,32 @@ fn system_note(store: &Store, thread: &str, text: impl Into<String>) {
     let _ = store.put_message(&m);
 }
 
+/// The run's screenshots, loaded for the model (missing files are skipped).
+fn run_images(run: &Run) -> Vec<crate::llm::ImageData> {
+    run.attachments
+        .iter()
+        .filter_map(crate::attachments::load)
+        .collect()
+}
+
+/// "Screenshots attached to the task (as images): a.png, b.png."
+fn screenshots_note(attachments: &[Attachment]) -> Option<String> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = attachments.iter().map(|a| a.name.as_str()).collect();
+    Some(format!(
+        "Screenshots attached to the task (you get them as images): {}.",
+        names.join(", ")
+    ))
+}
+
 /// Layer 4: the source item and what upstream steps produced, in graph order.
 fn run_context(run: &Run, node: &Node) -> String {
     let mut s = format!("# Task\n{}\n", run.input);
+    if let Some(note) = screenshots_note(&run.attachments) {
+        s.push_str(&format!("\n{note}\n"));
+    }
     let order = upstream_order(&run.graph, &node.id);
     let mut parts = vec![];
     for id in order {
@@ -804,6 +860,7 @@ fn exec_decision(engine: &Engine, run: &Run, node: &Node, d: &DecisionNode) -> R
             context: run_context(run, node),
             environment: prompt::environment(cwd.as_deref(), "", &[]),
             message: format!("Answer the question for this task: {}", d.question),
+            images: run_images(run),
             ..Default::default()
         },
         tools: ToolContext {
@@ -1168,7 +1225,7 @@ fn run_variant(
             skills: r.skills.clone(),
             skills_on_demand: r.skills_on_demand.clone(),
             message,
-            images: vec![],
+            images: run_images(run),
         },
         tools: ToolContext {
             cwd: place.as_ref().map(|p| p.cwd.clone()),
@@ -1250,7 +1307,33 @@ fn run_variant(
         }
     }
     let (files, add, del) = git::diff_stat(&step_diff);
-    let summary = out.text.clone();
+    let mut summary = out.text.clone();
+    let measured = place.as_ref().is_some_and(|p| p.base.is_some());
+    match limit_verdict(out.hit_limit, r.tools, measured, files) {
+        Limit::Finished => {}
+        Limit::Partial => {
+            let note = format!(
+                "Stopped at the step limit ({} steps): this work may be incomplete.",
+                r.max_steps
+            );
+            system_note(&store, &t.id, note.clone());
+            summary = format!("({note})\n\n{summary}");
+        }
+        Limit::Empty => {
+            // Nothing to review: fail the step instead of passing an empty change downstream
+            // (it would otherwise reach the PR as if the step had done its job).
+            let _ = store.update_task(&t.id, |t| {
+                t.output = json!({"files": 0, "added": 0, "removed": 0});
+                t.summary = summary.chars().take(2000).collect();
+            });
+            close_task(&store, &t.id, &Err(anyhow!(crate::STEP_LIMIT)));
+            bail!(
+                "{} ({} steps). Retry with more steps or a stronger model; the next attempt gets this one's notes.",
+                crate::STEP_LIMIT,
+                r.max_steps
+            );
+        }
+    }
     // Close the task even if this write fails, or it stays "running" for good.
     let saved = store.update_task(&t.id, |t| {
         t.output = json!({"files": files, "added": add, "removed": del});
@@ -1990,9 +2073,33 @@ fn exec_gate(engine: &Engine, run: &Run, node: &Node, g: &GateNode) -> Result<St
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Limit {
+    /// The agent finished on its own (or isn't expected to change files).
+    Finished,
+    /// Ran out of steps after changing files: keep the work, flag it as possibly incomplete.
+    Partial,
+    /// A step that writes files ran out of steps before changing any.
+    Empty,
+}
+
+/// `measured`: the step works in a git checkout, so `files` is its real change count.
+fn limit_verdict(hit_limit: bool, access: ToolAccess, measured: bool, files: usize) -> Limit {
+    if !hit_limit {
+        Limit::Finished
+    } else if access == ToolAccess::Full && measured && files == 0 {
+        Limit::Empty
+    } else if files > 0 {
+        Limit::Partial
+    } else {
+        Limit::Finished
+    }
+}
+
 /// When the latest attempts of this step (same node and variant) were cut off by the app
-/// closing, tells the new attempt what they did so it continues instead of starting over:
-/// their last words and the sub-tasks they delegated, with results.
+/// closing or ran out of steps before changing anything, tells the new attempt what they did
+/// so it continues instead of starting over: their last words and the sub-tasks they
+/// delegated, with results.
 fn resume_context(
     store: &Store,
     run_id: &str,
@@ -2013,17 +2120,27 @@ fn resume_context(
     // Consecutive interrupted attempts, newest first, stopping at a finished or sent-back one.
     let interrupted: Vec<Task> = attempts
         .into_iter()
-        .take_while(|t| t.error.as_deref() == Some(crate::INTERRUPTED))
+        .take_while(|t| {
+            matches!(t.error.as_deref(), Some(e) if e == crate::INTERRUPTED || e == crate::STEP_LIMIT)
+        })
         .collect();
     if interrupted.is_empty() {
         return None;
     }
     let all = store.tasks_for_run(run_id);
-    let mut out = String::from(
-        "Your previous attempt at this step was interrupted when the app closed. Its changes are still in the \
-         working directory: start with `git status` and `git diff` to see them, keep what is done and continue \
-         from there instead of starting over.",
-    );
+    let mut out = if interrupted[0].error.as_deref() == Some(crate::STEP_LIMIT) {
+        String::from(
+            "Your previous attempt at this step ran out of steps while still exploring and changed no files. \
+             Don't explore again: its notes below already say what to change and where. Start editing early, \
+             one part at a time, and check each part as you go.",
+        )
+    } else {
+        String::from(
+            "Your previous attempt at this step was interrupted when the app closed. Its changes are still in the \
+             working directory: start with `git status` and `git diff` to see them, keep what is done and continue \
+             from there instead of starting over.",
+        )
+    };
     for a in interrupted.iter().rev() {
         let mut subs: Vec<&Task> = all
             .iter()
@@ -2048,8 +2165,8 @@ fn resume_context(
     });
     if let Some(w) = last_words {
         out.push_str(&format!(
-            "\n\nThe last thing the interrupted attempt wrote:\n{}",
-            crate::tools::truncate_middle(w.trim(), 1500)
+            "\n\nThe last thing the previous attempt wrote:\n{}",
+            crate::tools::truncate_middle(w.trim(), 4000)
         ));
     }
     Some(out)
@@ -2385,6 +2502,37 @@ mod resume_tests {
         // A later attempt that failed for another reason ends the resume chain.
         attempt(&s, Some("model error"));
         assert!(resume_context(&s, "r", "build", None).is_none());
+    }
+
+    #[test]
+    fn step_limit_attempts_pass_their_notes_on() {
+        let s = Store::open_in_memory().unwrap();
+        let a = attempt(&s, Some(crate::STEP_LIMIT));
+        s.put_message(&Message::new(
+            &a.id,
+            Role::Assistant,
+            "Plan: add a picker to the composer in board.rs.",
+        ))
+        .unwrap();
+        let ctx = resume_context(&s, "r", "build", None).unwrap();
+        assert!(ctx.contains("ran out of steps"), "{ctx}");
+        assert!(ctx.contains("Plan: add a picker"), "{ctx}");
+        assert!(!ctx.contains("app closed"), "{ctx}");
+    }
+
+    #[test]
+    fn step_limit_verdicts() {
+        use ToolAccess::*;
+        // Finished on its own: nothing to say.
+        assert_eq!(limit_verdict(false, Full, true, 0), Limit::Finished);
+        // A writer in a git checkout that changed nothing: fail.
+        assert_eq!(limit_verdict(true, Full, true, 0), Limit::Empty);
+        // Changed something: keep it, flag it.
+        assert_eq!(limit_verdict(true, Full, true, 3), Limit::Partial);
+        // Readers and unmeasured folders aren't expected to change files.
+        assert_eq!(limit_verdict(true, ReadOnly, true, 0), Limit::Finished);
+        assert_eq!(limit_verdict(true, ReadAndRun, true, 0), Limit::Finished);
+        assert_eq!(limit_verdict(true, Full, false, 0), Limit::Finished);
     }
 }
 

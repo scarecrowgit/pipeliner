@@ -44,6 +44,9 @@ pub struct Outcome {
     pub text: String,
     pub value: Value,
     pub steps: u32,
+    /// The agent ran out of steps and was told to stop and summarise: its work may be
+    /// unfinished.
+    pub hit_limit: bool,
 }
 
 const STEER_PREFIX: &str = "Message from the user while you work (follow it):\n";
@@ -186,6 +189,7 @@ impl<'a> AgentRun<'a> {
                 }
                 out.text = reply.content;
                 out.steps = step;
+                out.hit_limit = wrap_up;
                 return Ok(out);
             }
 
