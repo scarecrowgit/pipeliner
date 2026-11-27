@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1440">
-<meta name="design:size" content="1440x1880">
+<meta name="design:size" content="1440x2030">
 <title>Board</title>
 <style>
 /* Design tokens (keep in sync with design/tokens.css). */
@@ -323,12 +323,27 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 .nt-ghost b{color:var(--text);font-weight:500;font-size:13px;line-height:20px}
 .nt-add{display:flex;align-items:center;gap:6px;height:32px;padding:0 8px;border:1px dashed var(--line-strong);border-radius:var(--radius-md);background:transparent;color:var(--text-muted);font:inherit;font-size:12px;cursor:pointer;text-align:left}
 .nt-add:hover{background:var(--surface-raised);color:var(--text)}
+.nt-shots{display:flex;flex-wrap:wrap;gap:8px}
+.nt-shot{display:flex;flex-direction:column;gap:4px;width:152px;min-width:0}
+.nt-shot .img{position:relative;height:86px;box-sizing:border-box;padding:8px;display:flex;flex-direction:column;gap:5px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--bg);overflow:hidden}
+.nt-shot .img:hover{border-color:var(--accent-ring)}
+.nt-shot .ln{height:4px;border-radius:var(--radius-sm);background:var(--line-strong)}
+.nt-shot .x{position:absolute;top:4px;right:4px;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-strong);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--text-secondary);padding:0;cursor:pointer}
+.nt-shot .cap{display:flex;gap:6px;font-size:12px;line-height:16px;color:var(--text-muted);min-width:0}
+.nt-shot .cap .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)}
+.nt-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:152px;height:86px;box-sizing:border-box;border:1px dashed var(--line-strong);border-radius:var(--radius-md);background:transparent;color:var(--text-muted);font:inherit;font-size:12px;line-height:16px;cursor:pointer;text-align:center}
+.nt-drop:hover{background:var(--surface-raised);color:var(--text);border-color:var(--accent-ring)}
+.nt-pipe{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--bg-sidebar)}
+.nt-steps{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:12px;line-height:16px;color:var(--text-disabled)}
+.nt-step{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--text-secondary);white-space:nowrap}
+.nt-step.gate{border-color:#6b5a1e;background:var(--warning-soft);color:var(--warning)}
+.nt-step.first{border-color:var(--accent-ring);background:var(--accent-soft);color:var(--accent-text)}
 @media (prefers-reduced-motion: reduce) { .nt, .nt-caret, .nt-ai .d { animation: none; } }
 </style>
 </head>
 <body>
 <div id="dc-root"
-><div style="min-height: 1880px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
+><div style="min-height: 2030px; display: flex; flex-wrap: wrap; background: var(--bg); font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><div style="flex: 0 0 276px; min-width: 0; max-width: 100%; background: var(--bg-sidebar); border-right: 1px solid var(--line);"
 ><nav class="gr-nav" aria-label="Main" style="width: 100%; min-height: 800px; gap: 2px; font-family: var(--font-sans); font-size: 13px; line-height: 20px; color: var(--text-secondary);"
 ><button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0px 8px; border: 0px; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer; text-align: left;"
@@ -695,7 +710,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><path d="M20 3v4M22 5h-4"
 ></path
 ></svg> Filled by AI · Haiku 5.5 · $0.003</span
-><span class="lbl">from the title, PAY-1431 and run #129</span
+><span class="lbl">from the title, 2 screenshots and PAY-1431</span
 ><div style="flex: 1 1 0%;"
 ></div
 ><button type="button" class="gr-btn gr-btn--ghost gr-btn--sm">Undo</button
@@ -721,6 +736,82 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><p
 ><b>Done when</b> the 14 refund tests pass and Load-tester sees 0 timeouts in 500 calls.</p
 ></div
+><div class="nt-dhead"
+><span class="lbl" style="color: var(--text-secondary);">Screenshots</span
+><span class="lbl">2 · every step gets them as images</span
+><div style="flex: 1 1 0%;"
+></div
+><span class="lbl" style="display: inline-flex; align-items: center; gap: 4px;"
+><kbd class="gr-kbd">⌘V</kbd> paste anywhere in the task</span
+></div
+><div class="nt-shots" role="list" aria-label="Screenshots"
+><div class="nt-shot" role="listitem"
+><div class="img" aria-label="Screenshot: provider dashboard showing webhook timeouts"
+><span class="ln" style="width: 46%; background: var(--text-disabled);"
+></span
+><span class="ln" style="width: 88%;"
+></span
+><span class="ln" style="width: 72%; background: var(--danger);"
+></span
+><span class="ln" style="width: 80%; background: var(--danger);"
+></span
+><span class="ln" style="width: 64%;"
+></span
+><span class="ln" style="width: 76%; background: var(--danger);"
+></span
+><button type="button" class="x" aria-label="Remove webhook-timeouts.png"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M18 6 6 18M6 6l12 12"
+></path
+></svg
+></button
+></div
+><span class="cap"
+><span class="n">webhook-timeouts.png</span
+><span>212 KB</span
+></span
+></div
+><div class="nt-shot" role="listitem"
+><div class="img" aria-label="Screenshot: refund latency chart" style="justify-content: flex-end; flex-direction: row; align-items: flex-end; gap: 4px;"
+><span style="flex: 1 1 0%; height: 22%; border-radius: 2px; background: var(--accent-ring);"
+></span
+><span style="flex: 1 1 0%; height: 30%; border-radius: 2px; background: var(--accent-ring);"
+></span
+><span style="flex: 1 1 0%; height: 26%; border-radius: 2px; background: var(--accent-ring);"
+></span
+><span style="flex: 1 1 0%; height: 70%; border-radius: 2px; background: var(--warning);"
+></span
+><span style="flex: 1 1 0%; height: 92%; border-radius: 2px; background: var(--danger);"
+></span
+><span style="flex: 1 1 0%; height: 88%; border-radius: 2px; background: var(--danger);"
+></span
+><span style="flex: 1 1 0%; height: 40%; border-radius: 2px; background: var(--accent-ring);"
+></span
+><button type="button" class="x" aria-label="Remove Screenshot 2025-11-25 at 11.48.02.png"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><path d="M18 6 6 18M6 6l12 12"
+></path
+></svg
+></button
+></div
+><span class="cap"
+><span class="n">Screenshot 2025-11-25 at 11.48.02.png</span
+><span>pasted</span
+></span
+></div
+><button type="button" class="nt-drop"
+><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><rect width="18" height="18" x="3" y="3" rx="2"
+></rect
+><circle cx="9" cy="9" r="2"
+></circle
+><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"
+></path
+></svg
+><span>Add screenshot</span
+><span style="color: var(--text-disabled);">paste, drop or browse</span
+></button
+></div
 ><label class="nt-ask"
 ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94a2 2 0 0 0 1.44-1.44l1.58-6.13a.5.5 0 0 1 .96 0l1.58 6.13a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z"
@@ -736,7 +827,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><dl class="nt-kv" style="margin: 0px; padding: 14px; border-left: 1px solid var(--line); align-content: start;"
 ><dt>Who does it</dt
 ><dd
-><button type="button" class="nt-pick"
+><div role="group" aria-label="Who does it" class="seg"
+><button type="button" class="gr-btn gr-btn--sm gr-btn--ghost" aria-pressed="false" style="flex: 1 1 0%;"
 ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="M12 8V4H8"
 ></path
@@ -744,41 +836,63 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ></rect
 ><path d="M2 14h2M20 14h2M15 13v2M9 13v2"
 ></path
-></svg
-><span class="s">Agent · Fixer v7</span
+></svg>One agent</button
+><button type="button" class="gr-btn gr-btn--sm gr-btn--secondary" aria-pressed="true" style="background: var(--surface-hover); flex: 1 1 0%;"
+><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
+><circle cx="6" cy="6" r="3"
+></circle
+><circle cx="18" cy="18" r="3"
+></circle
+><path d="M6 9v3a3 3 0 0 0 3 3h6"
+></path
+></svg>Pipeline</button
+></div
+></dd
+><dt>Pipeline</dt
+><dd
+><button type="button" class="nt-pick" style="border-color: var(--accent-ring);"
+><span class="gr-dot gr-dot--running gr-dot--sm" aria-hidden="true"
+></span
+><span class="s">Bug triage</span
+><span class="m">v15</span
 ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="m6 9 6 6 6-6"
 ></path
 ></svg
 ></button
+></dd
+><dd style="grid-column: 1 / -1;"
+><div class="nt-pipe" aria-label="What Bug triage will do with this task"
+><div class="nt-steps"
+><span class="nt-step first">Router</span>›<span class="nt-step">Reproducer</span>›<span class="nt-step">Analyst</span>›<span class="nt-step">Fixer ×3</span>›<span class="nt-step gate">Review gate</span>›<span class="nt-step">Reviewer</span>›<span class="nt-step">Open PR</span
+></div
+><span class="lbl">The task is the input of a new run. Title, description and screenshots go to every step.</span
+></div
 ></dd
 ><dt>Run</dt
 ><dd
 ><button type="button" class="nt-pick"
-><span class="s"
-><span class="mono" style="font-size: 12px;">#129</span> Bug triage · PAY-1431</span
+><span class="s">New run <span class="mono" style="font-size: 12px;">#130</span
+></span
+><span class="m">or add to #129</span
 ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
 ><path d="m6 9 6 6 6-6"
 ></path
 ></svg
 ></button
 ></dd
-><dt>Model</dt
+><dt>Models</dt
 ><dd
 ><button type="button" class="nt-pick"
-><span class="s">Sonnet 5.5</span
-><span class="m">agent default</span
-><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="gr-icon"
-><path d="m6 9 6 6 6-6"
-></path
-></svg
+><span class="s">Per step</span
+><span class="m">as set in the pipeline</span
 ></button
 ></dd
 ><dt>Budget</dt
 ><dd
 ><button type="button" class="nt-pick"
-><span class="s">$0.20</span
-><span class="m">run has $1.58 left</span
+><span class="s">$2.00</span
+><span class="m">pipeline default</span
 ></button
 ></dd
 ><dt>Works in</dt
@@ -826,11 +940,11 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 ><div class="nt-ghost" aria-hidden="true"
 ><span style="display: flex; align-items: center; gap: 6px;"
 ><span class="gr-dot gr-dot--draft gr-dot--sm"
-></span>new · <span class="mono" style="font-size: 12px; line-height: 18px;">#129</span
+></span>new · <span class="mono" style="font-size: 12px; line-height: 18px;">#130</span
 ><div style="flex: 1 1 0%;"
 ></div>draft</span
 ><b>Refund webhook: ack first, refund from the queue</b
-><span>Fixer v7 · Sonnet 5.5 · $0.20</span
+><span>Bug triage · new run · 2 screenshots · $2.00</span
 ></div
 ><article class="tcard"
 ><div class="ctop"
