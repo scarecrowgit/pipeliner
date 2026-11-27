@@ -3,6 +3,7 @@
 //! through [`Engine`] and observes it through the [`Store`]'s change feed.
 
 pub mod agent;
+pub mod agents;
 pub mod attachments;
 pub mod chat;
 pub mod git;

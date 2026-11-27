@@ -10,6 +10,9 @@
 //!   pipeliner-cli show <run number>
 //!   pipeliner-cli waiting
 //!   pipeliner-cli adopt-agents <pipeline>  (inline agent steps -> saved agents)
+//!   pipeliner-cli agents                  (lists saved agents)
+//!   pipeliner-cli draft-agent [--save] <description...>  (the workspace model drafts an agent; prints it, saves only with --save)
+//!   pipeliner-cli create-agent <description...>  (drafts an agent with the workspace model and saves it)
 //!   pipeliner-cli install [binary]       (copies a built app to the launcher's bin dir)
 //!   pipeliner-cli delete-run <run number>  (removes the run, its worktrees, branches, renders)
 //!   pipeliner-cli decide <task id> pick <n> | approve | back <note...> | reject
@@ -47,6 +50,48 @@ fn main() -> Result<()> {
                     p.name
                 );
             }
+        }
+        "agents" => {
+            for a in store.agents() {
+                println!(
+                    "{}  v{}  {}  ({} · {})",
+                    a.id,
+                    a.version,
+                    a.name,
+                    a.model,
+                    a.tools.label()
+                );
+            }
+        }
+        "draft-agent" | "create-agent" => {
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let save = cmd == "create-agent" || rest.first().map(String::as_str) == Some("--save");
+            let words = if rest.first().map(String::as_str) == Some("--save") {
+                &rest[1..]
+            } else {
+                rest
+            };
+            let prompt = words.join(" ");
+            let d = if save {
+                engine.create_agent_with_ai(&prompt, cancel)?
+            } else {
+                engine.draft_agent(&prompt, cancel)?
+            };
+            let a = &d.agent;
+            println!("name:             {}", a.name);
+            println!("description:      {}", a.description);
+            println!("model:            {}", a.model);
+            println!("tools:            {}", a.tools.label());
+            println!("max_steps:        {}", a.max_steps);
+            println!("skills:           {}", a.skills.join(", "));
+            println!("skills_on_demand: {}", a.skills_on_demand.join(", "));
+            let saved = if save {
+                format!("(saved as {} v1)", a.id)
+            } else {
+                "(not saved)".to_string()
+            };
+            println!("drafted by {} · ${:.3} {saved}", d.drafted_by, d.cost_usd);
+            println!("role:\n{}", a.role);
         }
         "templates" => {
             for t in engine.templates() {
