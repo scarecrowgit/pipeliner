@@ -2,7 +2,7 @@ use gpui::{
     div, px, App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
     SharedString, StatefulInteractiveElement as _, Styled as _, Window,
 };
-use gpui_component::text::TextView;
+use gpui_component::text::{TextView, TextViewStyle};
 
 use crate::theme::{self, TextStyles as _};
 
@@ -23,6 +23,59 @@ pub fn markdown(
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(theme::TEXT_SECONDARY)
+}
+
+/// Plain text the user can select and copy (drag, then Ctrl+C): errors, commands, paths.
+/// Monospace, wraps at spaces, keeps line breaks and indentation. A plain `div` can't be
+/// selected in gpui, so anything worth copying goes through this.
+pub fn selectable_text(
+    id: impl Into<ElementId>,
+    text: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> TextView {
+    TextView::markdown(id, plain_markdown(text), window, cx)
+        .style(TextViewStyle {
+            paragraph_gap: gpui::rems(0.),
+            ..Default::default()
+        })
+        .selectable(true)
+        .w_full()
+        .min_w_0()
+        .text_mono()
+        .text_color(theme::TEXT_SECONDARY)
+}
+
+/// `text` as Markdown that renders as itself: punctuation escaped (no stray emphasis,
+/// headings or links), leading spaces kept, each line its own paragraph (TextView drops
+/// hard line breaks; `selectable_text` sets the paragraph gap to 0), blank lines kept.
+pub fn plain_markdown(text: &str) -> String {
+    text.trim_end()
+        .lines()
+        .map(|line| {
+            let line = line.trim_end();
+            if line.is_empty() {
+                return "\u{a0}".to_string();
+            }
+            let body = line.trim_start_matches([' ', '\t']);
+            let mut out = String::new();
+            for ch in line[..line.len() - body.len()].chars() {
+                out.push_str(if ch == '\t' {
+                    "\u{a0}\u{a0}\u{a0}\u{a0}"
+                } else {
+                    "\u{a0}"
+                });
+            }
+            for ch in body.chars() {
+                if ch.is_ascii_punctuation() {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Monospace block for logs, commands, tool output. Scrolls horizontally, never wraps.
@@ -144,7 +197,13 @@ impl RenderOnce for Clamped {
                             let run = style.to_run(t.len());
                             window
                                 .text_system()
-                                .shape_text(SharedString::from(t.to_string()), size, &[run], Some(fit_w), None)
+                                .shape_text(
+                                    SharedString::from(t.to_string()),
+                                    size,
+                                    &[run],
+                                    Some(fit_w),
+                                    None,
+                                )
                                 .map(|ls| ls.iter().map(|l| l.wrap_boundaries.len() + 1).sum())
                                 .unwrap_or(1)
                         };
@@ -172,7 +231,11 @@ impl RenderOnce for Clamped {
 
 /// The longest prefix of `text` (cut at a char, trailing spaces dropped) that with "…"
 /// fits in `max` lines, or `None` when the whole text fits. `lines_of` measures.
-pub fn fit_lines(text: &str, max: usize, lines_of: &mut impl FnMut(&str) -> usize) -> Option<String> {
+pub fn fit_lines(
+    text: &str,
+    max: usize,
+    lines_of: &mut impl FnMut(&str) -> usize,
+) -> Option<String> {
     if lines_of(text) <= max {
         return None;
     }
@@ -209,7 +272,9 @@ mod clamp_tests {
 
     /// 10 chars per line, newlines start a new line.
     fn lines(t: &str) -> usize {
-        t.split('\n').map(|l| l.chars().count().max(1).div_ceil(10)).sum()
+        t.split('\n')
+            .map(|l| l.chars().count().max(1).div_ceil(10))
+            .sum()
     }
 
     #[test]
@@ -238,5 +303,24 @@ mod clamp_tests {
     fn newlines_count_as_lines() {
         let fit = fit_lines("one\ntwo\nthree", 2, &mut lines).unwrap();
         assert_eq!(fit, "one\ntwo…");
+    }
+}
+
+#[cfg(test)]
+mod plain_markdown_tests {
+    use super::plain_markdown;
+
+    #[test]
+    fn markdown_syntax_is_escaped_and_lines_kept() {
+        let md = plain_markdown("# not a heading\n  gh pr checkout 29 && git merge *main*\n\nnext");
+        assert_eq!(
+            md,
+            "\\# not a heading\n\n\u{a0}\u{a0}gh pr checkout 29 \\&\\& git merge \\*main\\*\n\n\u{a0}\n\nnext"
+        );
+    }
+
+    #[test]
+    fn trailing_blank_lines_add_nothing() {
+        assert_eq!(plain_markdown("a\n\n"), "a");
     }
 }
