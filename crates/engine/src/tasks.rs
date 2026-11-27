@@ -36,6 +36,8 @@ pub struct NewTask {
     pub cwd: Option<String>,
     /// Create it queued but don't start it.
     pub hold: bool,
+    /// Screenshots the agent gets as images with the task.
+    pub attachments: Vec<Attachment>,
 }
 
 /// Asks the fast model to write or revise a task description.
@@ -47,6 +49,8 @@ pub struct DraftRequest {
     pub current: String,
     /// E.g. "shorter"; empty = write fresh.
     pub instruction: String,
+    /// Screenshots attached to the task; the model looks at them.
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -243,12 +247,32 @@ If the user gives an instruction, revise the current description following it an
     if !instruction.is_empty() {
         user.push_str(&format!("\nInstruction: {instruction}\n"));
     }
+    if !req.attachments.is_empty() {
+        user.push_str(&format!(
+            "\n{} attached (below): use what they show.\n",
+            if req.attachments.len() == 1 {
+                "1 screenshot is".to_string()
+            } else {
+                format!("{} screenshots are", req.attachments.len())
+            }
+        ));
+    }
     if current.is_empty() && instruction.is_empty() {
         user.push_str("\nWrite the description.");
     } else if !instruction.is_empty() {
         user.push_str("\nReturn the full revised description.");
     }
-    vec![Msg::System(system.into()), Msg::User(user)]
+    let images: Vec<_> = req
+        .attachments
+        .iter()
+        .filter_map(attachments::load)
+        .collect();
+    let user = if images.is_empty() {
+        Msg::User(user)
+    } else {
+        Msg::UserImages { text: user, images }
+    };
+    vec![Msg::System(system.into()), user]
 }
 
 impl Engine {
@@ -298,6 +322,7 @@ impl Engine {
         let mut m = Message::new(&t.id, Role::User, text);
         m.author = "you".into();
         m.delivered = true;
+        m.attachments = n.attachments.clone();
         store.put_message(&m)?;
         store.log(
             "task.created",
@@ -398,11 +423,14 @@ impl Engine {
     fn run_manual_agent(&self, task: &Task, cancel: Arc<AtomicBool>) -> Result<String> {
         let store = self.store();
         let config = self.config();
-        let message = take_thread_messages(store, &task.id)
+        let first = take_thread_messages(store, &task.id)
             .into_iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.content)
-            .unwrap_or_else(|| task.title.clone());
+            .find(|m| m.role == Role::User);
+        // Screenshots sent with the task go with its first turn.
+        let (message, images) = match first {
+            Some(m) => attachments::images_for(&m.attachments, m.content),
+            None => (task.title.clone(), vec![]),
+        };
         let agent = task
             .actor
             .as_str()
@@ -446,6 +474,7 @@ impl Engine {
                 skills: agent.as_ref().map(|a| a.skills.clone()).unwrap_or_default(),
                 skills_on_demand: skills_on_demand.clone(),
                 message,
+                images,
                 ..Default::default()
             },
             tools: ToolContext {
@@ -751,6 +780,7 @@ mod tests {
             graph: g,
             title: "Fix login bug".into(),
             input: "Users cannot log in".into(),
+            attachments: vec![],
             external_ref: Some("GH-42".into()),
             status: Status::Running,
             chat_id: None,
@@ -770,8 +800,41 @@ mod tests {
     fn user_text(m: &[Msg]) -> String {
         match &m[1] {
             Msg::User(s) => s.clone(),
+            Msg::UserImages { text, .. } => text.clone(),
             _ => panic!("expected a user message"),
         }
+    }
+
+    #[test]
+    fn prompt_with_screenshots_sends_them_as_images() {
+        let dir = std::env::temp_dir().join(format!("pipeliner-draft-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shot.png");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\nrest").unwrap();
+        let shot = |p: &Path| Attachment {
+            path: p.display().to_string(),
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            width: 10,
+            height: 10,
+            pasted: true,
+        };
+        let req = DraftRequest {
+            title: "Fix the chart".into(),
+            attachments: vec![shot(&path), shot(&dir.join("gone.png"))],
+            ..Default::default()
+        };
+        let m = description_messages(&req, None);
+        match &m[1] {
+            Msg::UserImages { text, images } => {
+                assert!(text.contains("2 screenshots are attached"), "{text}");
+                // The missing file is skipped, the other one is sent.
+                assert_eq!(images.len(), 1);
+                assert_eq!(images[0].mime, "image/png");
+            }
+            _ => panic!("expected images"),
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -797,6 +860,7 @@ mod tests {
             run_id: Some("r1".into()),
             current: "Goal: dark mode".into(),
             instruction: "shorter".into(),
+            ..Default::default()
         };
         let u = user_text(&description_messages(&req, Some(&run())));
         assert!(u.contains("Run #12"));

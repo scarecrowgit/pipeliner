@@ -848,7 +848,7 @@ fn two_turn_model(body: &str) -> (String, Option<(String, String)>) {
 
 #[test]
 fn manual_task_without_a_folder_runs_commands_and_follow_ups() {
-    let url = serve(|body| two_turn_model(body));
+    let url = serve(two_turn_model);
     let e = engine(&url);
     let t = e
         .create_task(harness_engine::tasks::NewTask {
@@ -878,7 +878,7 @@ fn manual_task_without_a_folder_runs_commands_and_follow_ups() {
 
 #[test]
 fn pipeline_step_without_a_workdir_runs_commands_and_follow_ups() {
-    let url = serve(|body| two_turn_model(body));
+    let url = serve(two_turn_model);
     let e = engine(&url);
     let node = |id: &str, kind: NodeKind| Node {
         id: id.into(),
@@ -943,4 +943,242 @@ fn pipeline_step_without_a_workdir_runs_commands_and_follow_ups() {
             .any(|m| m.role == Role::Tool && m.content.contains("two-ok")),
         "{thread:?}"
     );
+}
+
+// ---- step limit ----------------------------------------------------------------------
+
+#[test]
+fn writer_out_of_steps_with_no_changes_fails_and_retry_gets_its_notes() {
+    let repo = std::env::temp_dir().join(format!("pipeliner-limit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    sh(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("README.md"), "x").unwrap();
+    sh(&repo, &["add", "-A"]);
+    sh(&repo, &["commit", "-q", "-m", "init"]);
+
+    // First attempt only explores until told to stop; the retry (which gets the notes)
+    // writes a file and reports.
+    let retry_saw_notes = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw = retry_saw_notes.clone();
+    let url = serve(move |body| {
+        if body.contains("ran out of steps while still exploring") {
+            if body.contains("Plan: write notes.txt") {
+                saw.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if has_tool_result(body, "") {
+                ("Wrote notes.txt.".into(), None)
+            } else {
+                (
+                    String::new(),
+                    Some((
+                        "write_file".into(),
+                        serde_json::json!({"path": "notes.txt", "content": "hi"}).to_string(),
+                    )),
+                )
+            }
+        } else if body.contains("reached your step limit") {
+            ("Plan: write notes.txt next.".into(), None)
+        } else {
+            (
+                String::new(),
+                Some(("list_dir".into(), serde_json::json!({}).to_string())),
+            )
+        }
+    });
+    let e = engine(&url);
+    let node = |id: &str, kind: NodeKind| Node {
+        id: id.into(),
+        name: id.into(),
+        kind,
+        x: 0.0,
+        y: 0.0,
+    };
+    let p = Pipeline {
+        id: new_id(),
+        name: "t".into(),
+        description: String::new(),
+        color: 0,
+        version: 1,
+        draft: None,
+        graph: PipelineGraph {
+            workdirs: vec![Workdir {
+                id: "code".into(),
+                name: "Code".into(),
+                path: repo.display().to_string(),
+                worktree: false,
+                base_branch: "main".into(),
+                branch_prefix: String::new(),
+                setup: String::new(),
+                shell: String::new(),
+                env: Default::default(),
+            }],
+            nodes: vec![
+                node("src", NodeKind::Source(SourceNode::default())),
+                node(
+                    "build",
+                    NodeKind::Agent(AgentNode {
+                        instructions: "BUILD".into(),
+                        workdir: Some("code".into()),
+                        tools: Some(ToolAccess::Full),
+                        max_steps: 3,
+                        ..Default::default()
+                    }),
+                ),
+            ],
+            edges: vec![Edge {
+                from: "src".into(),
+                to: "build".into(),
+                port: None,
+            }],
+        },
+        archived: false,
+        created_at: now(),
+        updated_at: now(),
+    };
+    e.store().put_pipeline(&p).unwrap();
+    let r = e.start_run(&p.id, "build it", None).unwrap();
+    let failed = wait_for(&e, &r.id, Status::Failed);
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .is_some_and(|m| m.contains("step limit")),
+        "{:?}",
+        failed.error
+    );
+    let first = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("build"))
+        .unwrap();
+    assert_eq!(first.status, Status::Failed);
+    assert_eq!(first.error.as_deref(), Some(harness_engine::STEP_LIMIT));
+
+    e.retry(&first.id).unwrap();
+    let done = wait_for(&e, &r.id, Status::Done);
+    assert_eq!(done.outputs["build"].summary, "Wrote notes.txt.");
+    assert!(retry_saw_notes.load(std::sync::atomic::Ordering::SeqCst));
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// ---- screenshots from the New task composer ------------------------------------------
+
+/// A tiny PNG on disk, as an attachment.
+fn shot(dir: &std::path::Path, name: &str) -> Attachment {
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, b"\x89PNG\r\n\x1a\nIHDR-and-the-rest").unwrap();
+    Attachment {
+        path: path.display().to_string(),
+        name: name.into(),
+        mime: "image/png".into(),
+        width: 10,
+        height: 10,
+        pasted: false,
+    }
+}
+
+fn has_image(body: &str) -> bool {
+    body.contains("data:image/png;base64,")
+}
+
+#[test]
+fn new_task_with_screenshots_shows_them_to_the_agent() {
+    let dir = std::env::temp_dir().join(format!("pipeliner-shots-task-{}", std::process::id()));
+    let saw = Arc::new(Mutex::new(false));
+    let s = saw.clone();
+    let url = serve(move |body| {
+        if body.contains("Fix the chart colors") && has_image(body) {
+            *s.lock().unwrap() = true;
+        }
+        ("Done.".into(), None)
+    });
+    let e = engine(&url);
+    let t = e
+        .create_task(harness_engine::tasks::NewTask {
+            title: "Fix the chart colors".into(),
+            attachments: vec![shot(&dir, "chart.png")],
+            ..Default::default()
+        })
+        .unwrap();
+    wait_task(&e, &t.id, Status::Done);
+    assert!(*saw.lock().unwrap(), "the agent never got the screenshot");
+    let first = &e.store().messages(&t.id)[0];
+    assert_eq!(first.attachments.len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn pipeline_run_from_a_task_gets_title_and_screenshots_in_every_step() {
+    let dir = std::env::temp_dir().join(format!("pipeliner-shots-run-{}", std::process::id()));
+    let steps_with_images = Arc::new(Mutex::new(Vec::<String>::new()));
+    let s = steps_with_images.clone();
+    let url = serve(move |body| {
+        for step in ["STEP-ONE", "STEP-TWO"] {
+            if body.contains(step) && has_image(body) && body.contains("board.png") {
+                s.lock().unwrap().push(step.into());
+            }
+        }
+        ("Done.".into(), None)
+    });
+    let e = engine(&url);
+    let node = |id: &str, kind: NodeKind| Node {
+        id: id.into(),
+        name: id.into(),
+        kind,
+        x: 0.0,
+        y: 0.0,
+    };
+    let edge = |f: &str, t: &str| Edge {
+        from: f.into(),
+        to: t.into(),
+        port: None,
+    };
+    let agent = |i: &str| {
+        NodeKind::Agent(AgentNode {
+            instructions: i.into(),
+            tools: Some(ToolAccess::None),
+            ..Default::default()
+        })
+    };
+    let p = Pipeline {
+        id: new_id(),
+        name: "t".into(),
+        description: String::new(),
+        color: 0,
+        version: 1,
+        draft: None,
+        graph: PipelineGraph {
+            workdirs: vec![],
+            nodes: vec![
+                node("src", NodeKind::Source(SourceNode::default())),
+                node("one", agent("STEP-ONE")),
+                node("two", agent("STEP-TWO")),
+            ],
+            edges: vec![edge("src", "one"), edge("one", "two")],
+        },
+        archived: false,
+        created_at: now(),
+        updated_at: now(),
+    };
+    e.store().put_pipeline(&p).unwrap();
+    let r = e
+        .start_run_with(harness_engine::pipeline::NewRun {
+            pipeline_id: p.id.clone(),
+            title: "Pipeline picker in New task".into(),
+            input: "Pipeline picker in New task\n\nLet me pick a pipeline.".into(),
+            attachments: vec![shot(&dir, "board.png")],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(r.title, "Pipeline picker in New task");
+    wait_for(&e, &r.id, Status::Done);
+    let mut seen = steps_with_images.lock().unwrap().clone();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, vec!["STEP-ONE".to_string(), "STEP-TWO".to_string()]);
+    assert_eq!(e.store().run(&r.id).unwrap().attachments.len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
 }

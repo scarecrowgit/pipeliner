@@ -520,6 +520,9 @@ pub struct Run {
     pub title: String,
     /// The source item (issue text). Prompt layer 4.
     pub input: String,
+    /// Screenshots sent with the task that started the run; every agent step sees them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
     #[serde(default)]
     pub external_ref: Option<String>,
     pub status: Status,

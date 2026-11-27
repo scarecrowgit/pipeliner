@@ -152,6 +152,7 @@ impl Fixture {
             input: format!(
                 "{title}\n\nAcceptance: works with 200 tasks; keyboard only; no layout jumps."
             ),
+            attachments: vec![],
             external_ref: Some(format!("GH-{}", 1200 + n)),
             status,
             chat_id: None,

@@ -523,7 +523,9 @@ impl TimelineScreen {
             |this, _, ev: &NewTaskEvent, window, cx| {
                 match ev {
                     // The timeline reloads by itself through the store change.
-                    NewTaskEvent::Created(_) | NewTaskEvent::Closed => {
+                    NewTaskEvent::Created(_)
+                    | NewTaskEvent::RunStarted(_)
+                    | NewTaskEvent::Closed => {
                         this.composer_open = false;
                         this.draft_run = None;
                     }
@@ -887,7 +889,7 @@ impl TimelineScreen {
 
         let draft = self.composer_open.then(|| {
             let composer = self.composer.read(cx);
-            (draft_title(&composer.title(cx)), composer.agent_label())
+            (draft_title(&composer.title(cx)), composer.preview_label())
         });
         let mut labels = div().flex().flex_col();
         let mut lanes = div().flex().flex_col().w(px(width));
@@ -1546,10 +1548,16 @@ mod tests {
         let w = label_w("19");
         let bx = now_badge_left(px(19.75), 960.);
         assert_eq!(bx, px(19.75) + 3.);
-        assert!(!hidden_by_now_badge(px(19.), w, bx), "19 ends before the badge");
+        assert!(
+            !hidden_by_now_badge(px(19.), w, bx),
+            "19 ends before the badge"
+        );
         assert!(hidden_by_now_badge(px(20.), w, bx));
         assert!(hidden_by_now_badge(px(21.), w, bx));
-        assert!(!hidden_by_now_badge(px(22.), w, bx), "22 starts after the badge");
+        assert!(
+            !hidden_by_now_badge(px(22.), w, bx),
+            "22 starts after the badge"
+        );
         // now at 19:05: "19" is right under it.
         let bx = now_badge_left(px(19.0 + 5.0 / 60.0), 960.);
         assert!(hidden_by_now_badge(px(19.), w, bx));
