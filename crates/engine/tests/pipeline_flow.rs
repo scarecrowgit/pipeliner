@@ -726,3 +726,221 @@ fn instructions_to_a_designer_redraw_the_waiting_review() {
     assert_eq!(v["images"][0], after[0].images[0].as_str());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ---- run_command without a working folder ------------------------------------------
+
+/// Names of the tools offered in one request body.
+fn offered_tools(body: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["tools"]
+        .as_array()
+        .map(|t| {
+            t.iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a tool message in the request carries `marker`.
+fn has_tool_result(body: &str, marker: &str) -> bool {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["messages"].as_array().is_some_and(|m| {
+        m.iter().any(|m| {
+            m["role"] == "tool" && m["content"].as_str().is_some_and(|c| c.contains(marker))
+        })
+    })
+}
+
+fn run_cmd(command: &str) -> (String, Option<(String, String)>) {
+    (
+        String::new(),
+        Some((
+            "run_command".into(),
+            serde_json::json!({ "command": command }).to_string(),
+        )),
+    )
+}
+
+fn saved_agent(e: &Engine, name: &str, tools: ToolAccess) -> AgentDef {
+    let a = AgentDef {
+        id: new_id(),
+        name: name.into(),
+        description: String::new(),
+        role: "You run commands.".into(),
+        model: "t/test-sonnet".into(),
+        tools,
+        skills: vec![],
+        skills_on_demand: vec![],
+        max_steps: 8,
+        version: 1,
+        created_at: now(),
+        updated_at: now(),
+    };
+    e.store().put_agent(&a).unwrap();
+    a
+}
+
+#[test]
+fn agent_chat_without_a_folder_runs_commands() {
+    let seen = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+    let s = seen.clone();
+    let url = serve(move |body| {
+        s.lock().unwrap().push(offered_tools(body));
+        if has_tool_result(body, "cmd-chat-ok") {
+            ("Ran it.".into(), None)
+        } else if body.contains("run it") {
+            run_cmd("printf cmd-chat-ok")
+        } else {
+            ("No command.".into(), None)
+        }
+    });
+    let e = engine(&url);
+
+    let agent = saved_agent(&e, "Runner", ToolAccess::ReadAndRun);
+    let mut chat = e.new_chat(ChatMode::Agent).unwrap();
+    chat.agent_id = Some(agent.id.clone());
+    e.store().put_chat(&chat).unwrap();
+    e.send(&chat.id, "run it").unwrap();
+    let task_id = e.store().chat(&chat.id).unwrap().task_id.unwrap();
+    let done = wait_task(&e, &task_id, Status::Done);
+    assert_eq!(done.summary, "Ran it.");
+    // (The chat's title request carries no tools; the agent's own turns do.)
+    assert!(seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|t| t.contains(&"run_command".to_string())));
+    let thread = e.store().messages(&chat.id);
+    assert!(
+        thread
+            .iter()
+            .any(|m| m.role == Role::Tool && m.content.contains("cmd-chat-ok")),
+        "{thread:?}"
+    );
+
+    // A read-only agent is not offered the tool.
+    seen.lock().unwrap().clear();
+    let ro = saved_agent(&e, "Reader", ToolAccess::ReadOnly);
+    let mut chat = e.new_chat(ChatMode::Agent).unwrap();
+    chat.agent_id = Some(ro.id.clone());
+    e.store().put_chat(&chat).unwrap();
+    e.send(&chat.id, "run it").unwrap();
+    let task_id = e.store().chat(&chat.id).unwrap().task_id.unwrap();
+    wait_task(&e, &task_id, Status::Done);
+    let seen = seen.lock().unwrap();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|t| !t.contains(&"run_command".to_string())));
+}
+
+/// First turn runs `printf one-ok`; an instruction containing "second" runs `printf two-ok`.
+fn two_turn_model(body: &str) -> (String, Option<(String, String)>) {
+    if has_tool_result(body, "two-ok") {
+        ("Second done.".into(), None)
+    } else if body.contains("do the second") {
+        run_cmd("printf two-ok")
+    } else if has_tool_result(body, "one-ok") {
+        ("First done.".into(), None)
+    } else {
+        run_cmd("printf one-ok")
+    }
+}
+
+#[test]
+fn manual_task_without_a_folder_runs_commands_and_follow_ups() {
+    let url = serve(|body| two_turn_model(body));
+    let e = engine(&url);
+    let t = e
+        .create_task(harness_engine::tasks::NewTask {
+            title: "Run".into(),
+            description: "Run a command.".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let done = wait_task(&e, &t.id, Status::Done);
+    assert_eq!(done.summary, "First done.");
+    let thread = e.store().messages(&t.id);
+    assert!(thread
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("one-ok")));
+
+    e.steer(&t.id, "do the second one").unwrap();
+    let done = wait_task(&e, &t.id, Status::Done);
+    assert_eq!(done.summary, "Second done.");
+    let thread = e.store().messages(&t.id);
+    assert!(
+        thread
+            .iter()
+            .any(|m| m.role == Role::Tool && m.content.contains("two-ok")),
+        "{thread:?}"
+    );
+}
+
+#[test]
+fn pipeline_step_without_a_workdir_runs_commands_and_follow_ups() {
+    let url = serve(|body| two_turn_model(body));
+    let e = engine(&url);
+    let node = |id: &str, kind: NodeKind| Node {
+        id: id.into(),
+        name: id.into(),
+        kind,
+        x: 0.0,
+        y: 0.0,
+    };
+    let p = Pipeline {
+        id: new_id(),
+        name: "t".into(),
+        description: String::new(),
+        color: 0,
+        version: 1,
+        draft: None,
+        graph: PipelineGraph {
+            workdirs: vec![],
+            nodes: vec![
+                node("src", NodeKind::Source(SourceNode::default())),
+                node(
+                    "work",
+                    NodeKind::Agent(AgentNode {
+                        instructions: "WORK".into(),
+                        tools: Some(ToolAccess::ReadAndRun),
+                        ..Default::default()
+                    }),
+                ),
+            ],
+            edges: vec![Edge {
+                from: "src".into(),
+                to: "work".into(),
+                port: None,
+            }],
+        },
+        archived: false,
+        created_at: now(),
+        updated_at: now(),
+    };
+    e.store().put_pipeline(&p).unwrap();
+    let r = e.start_run(&p.id, "go", None).unwrap();
+    let r = wait_for(&e, &r.id, Status::Done);
+    assert_eq!(r.outputs["work"].summary, "First done.");
+    let work = e
+        .store()
+        .tasks_for_run(&r.id)
+        .into_iter()
+        .find(|t| t.node_id.as_deref() == Some("work"))
+        .unwrap();
+    assert!(work.cwd.is_none());
+    let thread = e.store().messages(&work.id);
+    assert!(thread
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("one-ok")));
+
+    e.steer(&work.id, "do the second one").unwrap();
+    let done = wait_task(&e, &work.id, Status::Done);
+    assert_eq!(done.summary, "Second done.");
+    let thread = e.store().messages(&work.id);
+    assert!(
+        thread
+            .iter()
+            .any(|m| m.role == Role::Tool && m.content.contains("two-ok")),
+        "{thread:?}"
+    );
+}

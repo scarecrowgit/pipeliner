@@ -1174,11 +1174,7 @@ fn run_variant(
             cwd: place.as_ref().map(|p| p.cwd.clone()),
             shell: place.as_ref().map(|p| p.shell.clone()).unwrap_or_default(),
             env: place.as_ref().map(|p| p.env.clone()).unwrap_or_default(),
-            access: if place.is_some() {
-                r.tools
-            } else {
-                ToolAccess::None
-            },
+            access: r.tools,
             workdirs,
             skills_on_demand: r.skills_on_demand.clone(),
             config: config.clone(),
@@ -1389,11 +1385,7 @@ fn followup_agent_turn(
             cwd: cwd.clone(),
             shell: shell.clone(),
             env,
-            access: if cwd.is_some() {
-                r.tools
-            } else {
-                ToolAccess::None
-            },
+            access: r.tools,
             workdirs,
             skills_on_demand: r.skills_on_demand.clone(),
             config: config.clone(),
